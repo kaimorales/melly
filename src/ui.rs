@@ -22,6 +22,16 @@ const BORDER: Color = Color::Rgb(62, 67, 81);
 const ACCENT: Color = Color::Rgb(210, 183, 240);
 const MINT: Color = Color::Rgb(164, 233, 193);
 const SELECTED: Color = Color::Rgb(46, 42, 61);
+const AMBER: Color = Color::Rgb(218, 184, 125);
+
+pub enum Action {
+    Submit(String),
+    Spawn(String),
+    Agents,
+    Collect,
+    Stop,
+    Compact,
+}
 
 #[derive(Default)]
 pub struct Workspace {
@@ -35,7 +45,12 @@ pub struct Workspace {
     activity_focused: bool,
     menu_selection: usize,
     menu_dismissed: bool,
-    thinking_collapsed: bool,
+    thinking_expanded: bool,
+    tools_expanded: bool,
+    managed: bool,
+    action: Option<Action>,
+    pub agent_label: String,
+    pub roster: Vec<Line<'static>>,
     inspector: Inspector,
     render_cache: HashMap<u64, EntryView>,
 }
@@ -59,6 +74,20 @@ enum Inspector {
 }
 
 impl Workspace {
+    pub fn managed() -> Self {
+        Self {
+            managed: true,
+            ..Self::default()
+        }
+    }
+    pub fn take_action(&mut self) -> Option<Action> {
+        self.action.take()
+    }
+    pub fn accept_submission(&mut self) {
+        self.clear_draft();
+        self.chat_scroll = 0;
+        self.activity_focused = false;
+    }
     pub fn synchronize(&mut self, session: &mut Session) {
         if !self.menu_dismissed
             && !session.skills_loaded
@@ -75,9 +104,17 @@ impl Workspace {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('q') => return true,
+                KeyCode::Char('c') if self.managed => {
+                    self.action = Some(Action::Stop);
+                    return false;
+                }
                 KeyCode::Char('c') => return !session.interrupt(),
                 KeyCode::Char('t') => {
-                    self.thinking_collapsed = !self.thinking_collapsed;
+                    self.thinking_expanded = !self.thinking_expanded;
+                    return false;
+                }
+                KeyCode::Char('o') => {
+                    self.tools_expanded = !self.tools_expanded;
                     return false;
                 }
                 KeyCode::Char('b') => {
@@ -157,6 +194,16 @@ impl Workspace {
                     if let Some(row) = menu.rows.get(self.menu_selection) {
                         if menu.kind == Kind::Commands {
                             let command = row.value.clone();
+                            if command == "spawn" && key.code == KeyCode::Enter {
+                                let task =
+                                    self.draft.strip_prefix("/spawn").unwrap_or_default().trim();
+                                if task.is_empty() {
+                                    self.set_draft("/spawn ".into());
+                                } else {
+                                    self.action = Some(Action::Spawn(task.to_owned()));
+                                }
+                                return false;
+                            }
                             if matches!(command.as_str(), "model" | "effort" | "skills")
                                 || key.code == KeyCode::Tab
                             {
@@ -219,6 +266,9 @@ impl Workspace {
                     session.notice("Unknown command. Type / to browse commands.");
                 }
             }
+            KeyCode::Enter if self.managed => {
+                self.action = Some(Action::Submit(self.draft.clone()));
+            }
             KeyCode::Enter if session.submit(&self.draft) => {
                 self.draft.clear();
                 self.cursor = 0;
@@ -280,17 +330,24 @@ impl Workspace {
         match command {
             "quit" => return true,
             "stop" => {
-                if !session.interrupt() {
+                if self.managed {
+                    self.action = Some(Action::Stop);
+                } else if !session.interrupt() {
                     session.notice("No active turn to interrupt.");
                 }
             }
             "compact" => {
-                if !session.compact() {
+                if self.managed {
+                    self.action = Some(Action::Compact);
+                } else if !session.compact() {
                     session
                         .notice("Compaction is available when the session is connected and idle.");
                 }
             }
-            "thinking" => self.thinking_collapsed = !self.thinking_collapsed,
+            "thinking" => self.thinking_expanded = !self.thinking_expanded,
+            "tools" => self.tools_expanded = !self.tools_expanded,
+            "agents" => self.action = Some(Action::Agents),
+            "collect" => self.action = Some(Action::Collect),
             "usage" => {
                 self.inspector = Inspector::Usage;
                 self.activity_focused = true;
@@ -345,6 +402,13 @@ impl Workspace {
             frame.render_widget(Paragraph::new("Resize terminal · Ctrl+Q to quit"), area);
             return;
         }
+        if !self.activity_focused
+            && session.approvals.is_empty()
+            && !session.entries.iter().any(|e| e.speaker != Speaker::Notice)
+        {
+            self.home(frame, area, session);
+            return;
+        }
 
         let [header, content, footer] = Layout::vertical([
             Constraint::Length(3),
@@ -390,7 +454,17 @@ impl Workspace {
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(vec![
-                    Span::styled("  m / melly  ", accent()),
+                    Span::styled(
+                        format!(
+                            "  melly / {}  ",
+                            if self.agent_label.is_empty() {
+                                "lead"
+                            } else {
+                                &self.agent_label
+                            }
+                        ),
+                        accent(),
+                    ),
                     Span::styled(printable(cwd), dim()),
                 ]),
                 Line::styled(settings, dim()),
@@ -440,11 +514,10 @@ impl Workspace {
             state,
         );
 
-        let wide = area.width >= 94;
+        let wide = area.width >= 105;
         if wide {
             let [chat, activity] =
-                Layout::horizontal([Constraint::Percentage(64), Constraint::Percentage(36)])
-                    .areas(content);
+                Layout::horizontal([Constraint::Min(60), Constraint::Length(40)]).areas(content);
             self.chat(frame, chat, session);
             self.activity(frame, activity, session);
         } else if self.activity_focused {
@@ -454,7 +527,7 @@ impl Workspace {
         }
         frame.render_widget(
             Paragraph::new(
-                "  / commands   Tab pane   Ctrl+T thinking   PgUp/Dn scroll   Ctrl+Q quit",
+                "  / commands   Alt+1…9 agents   Ctrl+T thinking   Ctrl+O tool output   Ctrl+Q quit",
             )
             .style(dim()),
             footer,
@@ -474,7 +547,14 @@ impl Workspace {
             );
             frame.render_widget(Clear, popup);
             let block = Block::bordered()
-                .title(" Approval required ")
+                .title(format!(
+                    " Approval required · {} ",
+                    if self.agent_label.is_empty() {
+                        "lead"
+                    } else {
+                        &self.agent_label
+                    }
+                ))
                 .title_bottom(if confirm_visible {
                     " Enter Confirm · n Decline "
                 } else if approval.can_accept {
@@ -498,6 +578,138 @@ impl Workspace {
         } else {
             self.armed_approval = None;
             self.approval_scroll = 0;
+        }
+    }
+
+    fn home(&mut self, frame: &mut Frame, area: Rect, session: &Session) {
+        let width = area.width.saturating_sub(4).min(75);
+        let x = area.x + (area.width - width) / 2;
+        let logo_height = if area.height >= 18 { 4 } else { 0 };
+        let y = area.y + area.height.saturating_sub(logo_height + 10) / 2;
+        if logo_height > 0 {
+            let logo = if width >= 43 {
+                vec![
+                    "███   ███ ███████ ██      ██      ██   ██",
+                    "████ ████ ██▄▄    ██      ██       ██ ██ ",
+                    "██ ███ ██ ██▀▀    ██      ██        ███  ",
+                    "██     ██ ███████ ███████ ███████    ██  ",
+                ]
+            } else {
+                vec![
+                    "█▀▄▀█ █▀▀ █   █   █ █",
+                    "█ ▀ █ █▀▀ █   █   ▀█▀",
+                    "▀   ▀ ▀▀▀ ▀▀▀ ▀▀▀  ▀ ",
+                ]
+            };
+            frame.render_widget(
+                Paragraph::new(
+                    logo.into_iter()
+                        .map(|l| Line::styled(l, Style::default().fg(INK)))
+                        .collect::<Vec<_>>(),
+                )
+                .alignment(ratatui::layout::Alignment::Center),
+                Rect::new(x, y, width, logo_height),
+            );
+        }
+        let composer = Rect::new(
+            x,
+            y + logo_height + 2,
+            width,
+            5.min(area.bottom().saturating_sub(y + logo_height + 3)),
+        );
+        frame.render_widget(Block::default().style(Style::default().bg(PANEL)), composer);
+        let (before, after) = self.draft.split_at(self.cursor);
+        let text = if self.draft.is_empty() {
+            "Ask anything…".into()
+        } else {
+            format!("{before}▌{after}")
+        };
+        let body = Rect::new(
+            composer.x + 2,
+            composer.y + 1,
+            composer.width.saturating_sub(4),
+            composer.height.saturating_sub(3).max(1),
+        );
+        let scroll = Paragraph::new(before)
+            .wrap(Wrap { trim: false })
+            .line_count(body.width)
+            .saturating_sub(body.height as usize);
+        frame.render_widget(
+            Paragraph::new(text)
+                .style(if self.draft.is_empty() {
+                    dim()
+                } else {
+                    Style::default().fg(INK)
+                })
+                .wrap(Wrap { trim: false })
+                .scroll((scroll.min(u16::MAX as usize) as u16, 0)),
+            body,
+        );
+        let metadata = Line::from(vec![
+            Span::styled(
+                format!(
+                    "  {}  ",
+                    if self.agent_label.is_empty() {
+                        "Lead"
+                    } else {
+                        &self.agent_label
+                    }
+                ),
+                accent(),
+            ),
+            Span::styled(session.model.as_deref().unwrap_or("Loading models"), dim()),
+            Span::styled(
+                format!("  {}", session.effort.as_deref().unwrap_or("")),
+                dim(),
+            ),
+        ]);
+        frame.render_widget(
+            Paragraph::new(metadata),
+            Rect::new(x, composer.bottom().saturating_sub(1), width, 1),
+        );
+        if !session.selected_skills.is_empty() && composer.height >= 5 {
+            let skills = session
+                .selected_skills
+                .iter()
+                .map(|s| format!("${}", s.name))
+                .collect::<Vec<_>>()
+                .join("  ");
+            frame.render_widget(
+                Paragraph::new(format!("  {skills}")).style(Style::default().fg(MINT)),
+                Rect::new(x, composer.bottom() - 2, width, 1),
+            );
+        }
+        if composer.bottom() < area.bottom() {
+            frame.render_widget(
+                Paragraph::new("/ commands     /spawn Luna     /agents workspace")
+                    .style(dim())
+                    .alignment(ratatui::layout::Alignment::Right),
+                Rect::new(x, composer.bottom() + 1, width, 1),
+            );
+        }
+        let cwd = std::path::Path::new(&session.cwd)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&session.cwd);
+        frame.render_widget(
+            Paragraph::new(format!("  {cwd}   ·   {}", session.status)).style(dim()),
+            Rect::new(area.x, area.bottom() - 1, area.width, 1),
+        );
+        if let Some(notice) = session.entries.back() {
+            frame.render_widget(
+                Paragraph::new(printable(&notice.text)).style(dim()),
+                Rect::new(x, area.bottom().saturating_sub(3), width, 1),
+            );
+        }
+        if !self.menu_dismissed
+            && let Some(menu) = Menu::from_draft(&self.draft, session)
+        {
+            self.draw_menu(
+                frame,
+                Rect::new(x, area.y, width, composer.y.saturating_sub(area.y)),
+                menu,
+                session,
+            );
         }
     }
 
@@ -553,7 +765,7 @@ impl Workspace {
                 session,
                 false,
                 &mut self.chat_scroll,
-                self.thinking_collapsed,
+                !self.thinking_expanded,
                 &mut self.render_cache,
             );
         }
@@ -735,37 +947,35 @@ impl Workspace {
             .border_style(border());
         let inner = panel.inner(area);
         frame.render_widget(panel, area);
-        let [meta, events] = Layout::vertical([
-            Constraint::Length(if area.height >= 18 { 9 } else { 4 }),
+        let roster_height = (self.roster.len() as u16).min(inner.height.saturating_sub(10));
+        let [roster, meta, events] = Layout::vertical([
+            Constraint::Length(roster_height),
+            Constraint::Length(6),
             Constraint::Min(1),
         ])
         .areas(inner);
+        if roster.height > 0 {
+            frame.render_widget(Paragraph::new(self.roster.clone()), roster);
+        }
         let used = session.context_used.map_or("—".into(), display_tokens);
         let capacity = session.context_window.map_or("—".into(), display_tokens);
-        let ratio = match (session.context_used, session.context_window) {
-            (Some(u), Some(c)) if c > 0 => Some((u as f64 / c as f64).clamp(0.0, 1.0)),
-            _ => None,
+        let percent = match (session.context_used, session.context_window) {
+            (Some(u), Some(c)) if c > 0 => format!(" · ≈{:.0}%", 100.0 * u as f64 / c as f64),
+            _ => String::new(),
         };
-        let percentage = ratio.map_or("—".into(), |r| format!("≈ {:.0}%", r * 100.0));
         let mut lines = vec![
-            Line::default(),
-            Line::styled(format!("  CONTEXT  {percentage}"), dim()),
-            Line::from(vec![
-                Span::styled(
-                    format!("  {}", meter(ratio, 18)),
-                    Style::default().fg(ACCENT),
-                ),
-                Span::styled(format!("  {used} / {capacity}"), dim()),
-            ]),
-            Line::styled("  Latest model-call snapshot", dim()),
-            Line::default(),
-            Line::from(vec![
-                Span::styled("  SESSION  ", dim()),
-                Span::raw(format!(
-                    "{} tokens",
+            Line::styled(
+                "  Context",
+                Style::default().fg(INK).add_modifier(Modifier::BOLD),
+            ),
+            Line::styled(format!("  {used} / {capacity}{percent}"), dim()),
+            Line::styled(
+                format!(
+                    "  {} session tokens",
                     session.tokens.map_or("—".into(), display_tokens)
-                )),
-            ]),
+                ),
+                dim(),
+            ),
         ];
         if let Some(q) = session
             .quota
@@ -820,7 +1030,7 @@ impl Workspace {
                     session,
                     true,
                     &mut self.activity_scroll,
-                    false,
+                    !self.tools_expanded,
                     &mut self.render_cache,
                 );
             }
@@ -829,18 +1039,6 @@ impl Workspace {
             draw_scrollback(frame, events, lines, &mut self.activity_scroll);
         }
     }
-}
-
-fn meter(ratio: Option<f64>, width: usize) -> String {
-    let Some(ratio) = ratio else {
-        return "░".repeat(width);
-    };
-    let filled = (ratio * width as f64).round() as usize;
-    format!(
-        "{}{}",
-        "━".repeat(filled.min(width)),
-        "─".repeat(width.saturating_sub(filled))
-    )
 }
 
 fn window_name(minutes: Option<u64>) -> String {
@@ -875,6 +1073,7 @@ fn inspector_lines(view: Inspector, s: &Session) -> Vec<Line<'static>> {
         Inspector::Help=>vec!["KEYBOARD".into(),String::new(),"/           Commands and search".into(),
             "↑ ↓         Select a menu item".into(),"Tab         Complete menu selection".into(),"Enter       Apply choice / send".into(),
             "Esc         Close menu / return to chat".into(),"Tab, Ctrl+B Switch pane".into(),"Ctrl+T      Toggle thinking summaries".into(),
+            "Ctrl+O      Toggle full tool output".into(),"Alt+1…9     Jump to an agent".into(),"Ctrl+N/P    Next / previous agent".into(),
             "Ctrl+U      Clear draft and skills".into(),"Shift+Enter Newline (terminal dependent)".into(),
             "PgUp/PgDn   Scroll focused pane".into(),"Ctrl+C      Interrupt / quit if idle".into(),"Ctrl+Q      Quit".into(),String::new(),"COMMANDS".into()],
         _=>Vec::new(),
@@ -984,6 +1183,76 @@ fn render_entries(
 }
 
 fn entry_lines(entry: &Entry, collapsed: bool) -> Vec<Line<'static>> {
+    let text = printable(&entry.text);
+    if entry.speaker == Speaker::Thinking {
+        if text.is_empty() && entry.complete {
+            return Vec::new();
+        }
+        let summary = text
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("Waiting for Codex…")
+            .trim_matches('*')
+            .trim_start_matches('#')
+            .trim();
+        let summary: String = summary.chars().take(88).collect();
+        let mut lines = vec![Line::styled(
+            format!(
+                "  {} {}: {summary}",
+                if collapsed { "+" } else { "−" },
+                if entry.complete {
+                    "Thought"
+                } else {
+                    "Thinking"
+                }
+            ),
+            Style::default().fg(AMBER),
+        )];
+        if !collapsed {
+            lines.push(Line::default());
+            lines.extend(
+                text.lines()
+                    .map(|l| Line::styled(format!("    {l}"), dim().bg(PANEL))),
+            );
+        }
+        lines.push(Line::default());
+        return lines;
+    }
+    if entry.speaker == Speaker::Tool && collapsed {
+        let first = text.lines().next().unwrap_or("Tool call");
+        let label = if first.contains("SKILL.md") {
+            let path = first
+                .split_whitespace()
+                .find(|word| word.contains("SKILL.md"))
+                .unwrap_or("SKILL.md");
+            let skill = std::path::Path::new(path)
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|p| p.to_str())
+                .unwrap_or("skill");
+            format!("Read skill · {skill}")
+        } else {
+            first.chars().take(100).collect()
+        };
+        let failed = matches!(
+            entry.outcome.as_deref(),
+            Some("failed" | "declined" | "interrupted")
+        );
+        let status = if failed {
+            "✕ FAILED"
+        } else if entry.complete {
+            "✓"
+        } else {
+            "◌"
+        };
+        return vec![
+            Line::styled(
+                format!("  {status} {label}"),
+                Style::default().fg(if failed { AMBER } else { MUTED }),
+            ),
+            Line::default(),
+        ];
+    }
     let name = entry.model.as_deref().unwrap_or("Codex");
     let title = match entry.speaker {
         Speaker::You => "YOU".into(),
@@ -1155,13 +1424,13 @@ fn border() -> Style {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use melly::session::Approval;
     use ratatui::{Terminal, backend::TestBackend};
     use serde_json::json;
 
-    fn fixture() -> Session {
+    pub(crate) fn fixture() -> Session {
         let mut s = Session::new("/workspace/melly".into(), None, None);
         s.drain_requests();
         s.thread_id = Some("preview-thread".into());
@@ -1177,11 +1446,50 @@ mod tests {
         s
     }
 
+    #[test]
+    fn home_centers_the_composer_without_an_empty_inspector() {
+        let s = fixture();
+        let mut w = Workspace::default();
+        let mut t = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        let text = screen(&t);
+        let row = text
+            .lines()
+            .position(|l| l.contains("Ask anything"))
+            .expect("centered composer");
+        assert!((14..30).contains(&row));
+        assert!(!text.contains("LIVE ACTIVITY"));
+        assert!(!text.contains("Latest model-call snapshot"));
+        capture(&t, "home");
+    }
+
+    #[test]
+    fn tools_are_compact_and_thinking_is_a_disclosure_by_default() {
+        let mut s = fixture();
+        let mut w = Workspace::default();
+        s.receive(json!({"method":"item/completed","params":{"threadId":"preview-thread","item":{
+            "type":"reasoning","id":"r","summary":["Checking the caller","Second paragraph should be collapsed"]}}}));
+        s.receive(json!({"method":"item/completed","params":{"threadId":"preview-thread","item":{
+            "type":"commandExecution","id":"c","command":"cat /tmp/SKILL.md","aggregatedOutput":"INSTRUCTION FILE BODY","exitCode":0,"status":"completed"}}}));
+        let mut t = Terminal::new(TestBackend::new(130, 34)).unwrap();
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        let text = screen(&t);
+        assert!(text.contains("+ Thought:"));
+        assert!(!text.contains("Second paragraph"));
+        assert!(!text.contains("INSTRUCTION FILE BODY"));
+        w.key(
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
+            &mut s,
+        );
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        assert!(screen(&t).contains("INSTRUCTION FILE BODY"));
+    }
+
     fn press(w: &mut Workspace, s: &mut Session, key: KeyCode) {
         w.key(KeyEvent::new(key, KeyModifiers::NONE), s);
     }
 
-    fn screen(t: &Terminal<TestBackend>) -> String {
+    pub(crate) fn screen(t: &Terminal<TestBackend>) -> String {
         let b = t.backend().buffer();
         (0..b.area.height)
             .map(|y| {
@@ -1225,7 +1533,7 @@ mod tests {
         }
     }
 
-    fn capture(t: &Terminal<TestBackend>, name: &str) {
+    pub(crate) fn capture(t: &Terminal<TestBackend>, name: &str) {
         let Ok(dir) = std::env::var("MELLY_UI_CAPTURE_DIR") else {
             return;
         };

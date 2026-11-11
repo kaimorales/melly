@@ -78,6 +78,7 @@ pub struct Session {
     pub skills_loaded: bool,
     pub quota: Vec<Quota>,
     pub quota_loaded: bool,
+    pub quota_updated_at: HashMap<String, Instant>,
     pub context_used: Option<u64>,
     pub input_tokens: Option<u64>,
     pub cached_tokens: Option<u64>,
@@ -95,6 +96,7 @@ pub struct Session {
     compacting: bool,
     next_entry_key: u64,
     summaries: HashMap<String, Vec<String>>,
+    raw_reasoning: HashMap<String, Vec<String>>,
     requested_model: Option<String>,
     resume_id: Option<String>,
     pending: HashMap<u64, Pending>,
@@ -128,6 +130,7 @@ impl Session {
             skills_loaded: false,
             quota: Vec::new(),
             quota_loaded: false,
+            quota_updated_at: HashMap::new(),
             context_used: None,
             input_tokens: None,
             cached_tokens: None,
@@ -145,6 +148,7 @@ impl Session {
             compacting: false,
             next_entry_key: 1,
             summaries: HashMap::new(),
+            raw_reasoning: HashMap::new(),
             requested_model: model,
             resume_id: resume,
             pending: HashMap::new(),
@@ -170,6 +174,32 @@ impl Session {
             }),
         );
         session
+    }
+
+    /// Open a child thread on the already initialized shared connection.
+    pub fn worker(cwd: String, model: Model, read_only: bool) -> Self {
+        let mut session = Self::new(cwd, Some(model.id.clone()), None);
+        session.pending.clear();
+        session.outbox.clear();
+        session.model = Some(model.id.clone());
+        session.effort = if model.efforts.iter().any(|effort| effort.id == "low") {
+            Some("low".into())
+        } else {
+            model.default_effort.clone()
+        };
+        session.models = vec![model];
+        session.models_loaded = true;
+        session.settings_selected = true;
+        session.open_thread(false);
+        if read_only && let Some(request) = session.outbox.last_mut() {
+            request["params"]["sandbox"] = json!("read-only");
+            request["params"]["approvalPolicy"] = json!("never");
+        }
+        session
+    }
+
+    pub fn active_turn_id(&self) -> Option<&str> {
+        self.turn_id.as_deref()
     }
 
     fn request(&mut self, purpose: Pending, method: &str, params: Value) {
@@ -560,6 +590,11 @@ impl Session {
             Pending::Compact => {} // Acceptance is not completion; wait for contextCompaction.
             Pending::Quota => {
                 self.quota = quota_windows(result);
+                self.quota_updated_at.clear();
+                for quota in &self.quota {
+                    self.quota_updated_at
+                        .insert(quota.bucket_id.clone(), Instant::now());
+                }
                 self.quota_loaded = true;
             }
             Pending::Skills => {
@@ -681,10 +716,33 @@ impl Session {
     }
 
     fn notification(&mut self, method: &str, params: &Value) -> bool {
+        if method == "account/updated" {
+            self.account = owned_string(&params["authMode"]);
+            self.quota.clear();
+            self.quota_updated_at.clear();
+            self.quota_loaded = false;
+            let stale: Vec<u64> = self
+                .pending
+                .iter()
+                .filter(|(_, purpose)| **purpose == Pending::Quota)
+                .map(|(id, _)| *id)
+                .collect();
+            self.pending.retain(|_, purpose| *purpose != Pending::Quota);
+            self.outbox
+                .retain(|request| request["id"].as_u64().is_none_or(|id| !stale.contains(&id)));
+            self.refresh_quota();
+            return true;
+        }
         if method == "account/rateLimits/updated" {
             let id = params["rateLimits"]["limitId"].as_str().unwrap_or("codex");
             self.quota.retain(|q| q.bucket_id != id);
-            self.quota.extend(quota_windows(params));
+            let windows = quota_windows(params);
+            if windows.is_empty() {
+                self.quota_updated_at.remove(id);
+            } else {
+                self.quota_updated_at.insert(id.to_owned(), Instant::now());
+            }
+            self.quota.extend(windows);
             self.quota_loaded = true;
             return true;
         }
@@ -716,6 +774,7 @@ impl Session {
                 self.compacting = false;
                 self.finish_timer();
                 self.summaries.clear();
+                self.raw_reasoning.clear();
                 for entry in &mut self.entries {
                     if !entry.complete {
                         entry.complete = true;
@@ -777,6 +836,14 @@ impl Session {
                     }
                 }
                 if let Some(mut entry) = item_entry(item) {
+                    if entry.speaker == Speaker::Thinking
+                        && reasoning_text(&item["summary"]).is_empty()
+                        && let Some(parts) =
+                            item["id"].as_str().and_then(|id| self.summaries.get(id))
+                        && parts.iter().any(|part| !part.is_empty())
+                    {
+                        entry.text = parts.join("\n\n");
+                    }
                     entry.complete = method == "item/completed";
                     entry.model.clone_from(&self.active_model);
                     if let Some(prior) = self.entries.iter_mut().find(|prior| prior.id == entry.id)
@@ -800,9 +867,13 @@ impl Session {
                     }
                 }
             }
-            "item/reasoning/summaryPartAdded" | "item/reasoning/summaryTextDelta" => {
+            "item/reasoning/summaryPartAdded"
+            | "item/reasoning/summaryTextDelta"
+            | "item/reasoning/textDelta" => {
+                let raw = method == "item/reasoning/textDelta";
+                let index_key = if raw { "contentIndex" } else { "summaryIndex" };
                 let (Some(id), Some(index)) =
-                    (params["itemId"].as_str(), params["summaryIndex"].as_u64())
+                    (params["itemId"].as_str(), params[index_key].as_u64())
                 else {
                     return false;
                 };
@@ -814,7 +885,19 @@ impl Session {
                 {
                     return false;
                 }
-                let parts = self.summaries.entry(id.into()).or_default();
+                if raw
+                    && self
+                        .summaries
+                        .get(id)
+                        .is_some_and(|parts| parts.iter().any(|p| !p.is_empty()))
+                {
+                    return false;
+                }
+                let parts = if raw {
+                    self.raw_reasoning.entry(id.into()).or_default()
+                } else {
+                    self.summaries.entry(id.into()).or_default()
+                };
                 parts.resize(parts.len().max(index as usize + 1), String::new());
                 parts[index as usize].push_str(params["delta"].as_str().unwrap_or_default());
                 let text = parts.join("\n\n");
@@ -957,8 +1040,21 @@ impl Session {
         let offers_accept = params["availableDecisions"]
             .as_array()
             .is_none_or(|decisions| decisions.iter().any(|decision| decision == "accept"));
-        let can_accept = action.is_some() && offers_accept && params["grantRoot"].is_null();
+        let additional_permissions = match &params["additionalPermissions"] {
+            Value::Null => false,
+            Value::Object(fields) => !fields.is_empty(),
+            Value::Array(values) => !values.is_empty(),
+            Value::String(text) => !text.is_empty(),
+            _ => true,
+        };
+        let can_accept = action.is_some()
+            && offers_accept
+            && params["grantRoot"].is_null()
+            && !additional_permissions;
         let mut details: Vec<String> = action.into_iter().collect();
+        if additional_permissions {
+            details.push("Additional permissions were requested and cannot be reviewed or approved from Melly.".into());
+        }
         if let Some(cwd) = params["cwd"].as_str() {
             details.push(format!("Directory  {cwd}"));
         }
@@ -1023,16 +1119,15 @@ fn item_entry(item: &Value) -> Option<Entry> {
             Speaker::Codex,
             item["text"].as_str().unwrap_or_default().to_owned(),
         ),
-        "reasoning" => (
-            Speaker::Thinking,
-            item["summary"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .collect::<Vec<_>>()
-                .join("\n\n"),
-        ),
+        "reasoning" => {
+            let summary = reasoning_text(&item["summary"]);
+            let text = if summary.is_empty() {
+                reasoning_text(&item["content"])
+            } else {
+                summary
+            };
+            (Speaker::Thinking, text)
+        }
         "userMessage" => {
             let text = item["content"]
                 .as_array()?
@@ -1091,6 +1186,16 @@ fn item_entry(item: &Value) -> Option<Entry> {
             owned_string(&item["status"])
         },
     })
+}
+
+fn reasoning_text(parts: &Value) -> String {
+    parts
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|part| part.as_str().or_else(|| part["text"].as_str()))
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 fn patch_preview(item: &Value) -> Option<String> {

@@ -423,3 +423,112 @@ fn thinking_summaries_stream_in_order_and_complete_without_duplication() {
     );
     assert!(!session.transcript().contains("private raw content"));
 }
+
+#[test]
+fn emitted_raw_reasoning_is_shown_until_a_summary_arrives() {
+    let mut session = ready(None);
+    session.receive(json!({"method":"item/reasoning/textDelta","params":{
+        "threadId":"thread-1","turnId":"turn-1","itemId":"thought",
+        "contentIndex":0,"delta":"Explicit backend reasoning."
+    }}));
+    assert!(session.transcript().contains("Explicit backend reasoning."));
+    session.receive(json!({"method":"item/reasoning/summaryTextDelta","params":{
+        "threadId":"thread-1","turnId":"turn-1","itemId":"thought",
+        "summaryIndex":0,"delta":"Concise summary."
+    }}));
+    assert!(session.transcript().contains("Concise summary."));
+    assert!(!session.transcript().contains("Explicit backend reasoning."));
+    session.receive(json!({"method":"item/reasoning/textDelta","params":{
+        "threadId":"thread-1","turnId":"turn-1","itemId":"thought",
+        "contentIndex":0,"delta":"Late raw output."
+    }}));
+    assert!(!session.transcript().contains("Late raw output."));
+}
+
+#[test]
+fn emitted_raw_reasoning_content_is_visible_without_a_summary() {
+    let mut session = ready(None);
+    session.receive(json!({"method":"item/completed","params":{
+        "threadId":"thread-1","turnId":"turn-1","item":{
+            "type":"reasoning","id":"thought","summary":[],
+            "content":["Explicit backend content."]
+        }
+    }}));
+    assert!(session.transcript().contains("Explicit backend content."));
+}
+
+#[test]
+fn worker_starts_fresh_without_handshake_and_keeps_selected_low_effort() {
+    let model = melly::catalog::Model::parse(&json!({"model":"gpt-6-luna",
+        "defaultReasoningEffort":"medium", "supportedReasoningEfforts":[{"reasoningEffort":"low"}]})).unwrap();
+    let mut session = Session::worker("/tmp/project".into(), model, true);
+    let requests = session.drain_requests();
+    assert_eq!(requests.len(), 1);
+    let request = &requests[0];
+    assert_eq!(request["method"], "thread/start");
+    assert_eq!(request["params"]["sandbox"], "read-only");
+    assert_eq!(request["params"]["approvalPolicy"], "never");
+    assert!(request["params"].get("dynamicTools").is_none());
+    assert!(!session.submit("too early"));
+    session.receive(json!({"id":request["id"],"result":{"thread":{"id":"worker"},"model":"gpt-6-luna","reasoningEffort":"medium"}}));
+    assert!(session.submit("Inspect one module"));
+    let turn = take_request(&mut session, "turn/start");
+    assert_eq!(turn["params"]["effort"], "low");
+    session.receive(json!({"id":turn["id"],"result":{"turn":{"id":"work-turn"}}}));
+    assert_eq!(session.active_turn_id(), Some("work-turn"));
+}
+
+#[test]
+fn quota_snapshots_record_per_bucket_freshness() {
+    let mut session = ready(None);
+    assert!(session.quota_updated_at.is_empty());
+    session.receive(
+        json!({"method":"account/rateLimits/updated","params":{"rateLimits":{
+        "limitId":"codex","primary":{"usedPercent":10}}}}),
+    );
+    assert!(session.quota_updated_at.contains_key("codex"));
+}
+
+#[test]
+fn account_changes_invalidate_quota_and_request_a_fresh_snapshot() {
+    let mut session = ready(None);
+    session.receive(
+        json!({"method":"account/rateLimits/updated","params":{"rateLimits":{
+        "limitId":"codex","primary":{"usedPercent":10}}}}),
+    );
+    assert!(session.receive(json!({"method":"account/updated","params":{"authMode":"chatgpt"}})));
+    assert!(session.quota_updated_at.is_empty());
+    assert!(!session.quota_loaded);
+    assert!(session.quota.is_empty());
+    assert_eq!(
+        take_request(&mut session, "account/rateLimits/read")["method"],
+        "account/rateLimits/read"
+    );
+}
+
+#[test]
+fn final_raw_reasoning_never_replaces_an_already_streamed_summary() {
+    let mut session = ready(None);
+    session.receive(json!({"method":"item/reasoning/summaryTextDelta","params":{
+        "threadId":"thread-1","itemId":"thought","summaryIndex":0,"delta":"Concise summary."
+    }}));
+    session.receive(
+        json!({"method":"item/completed","params":{"threadId":"thread-1",
+        "item":{"type":"reasoning","id":"thought","summary":[],"content":["Raw content."]}}}),
+    );
+    assert!(session.transcript().contains("Concise summary."));
+    assert!(!session.transcript().contains("Raw content."));
+}
+
+#[test]
+fn commands_requesting_additional_permissions_cannot_be_approved_without_review() {
+    let mut session = ready(None);
+    session.receive(json!({"id":"extra-permissions","method":"item/commandExecution/requestApproval","params":{
+        "threadId":"thread-1","command":"cargo test","additionalPermissions":{"fileSystem":{"write":["/outside/workspace"]}}
+    }}));
+    assert!(!session.approvals.front().unwrap().can_accept);
+    session.approve(true);
+    assert!(session.drain_requests().is_empty());
+    session.approve(false);
+    assert_eq!(session.drain_requests()[0]["result"]["decision"], "decline");
+}

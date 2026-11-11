@@ -16,6 +16,16 @@ pub struct Rpc {
 impl Rpc {
     pub fn connect(executable: &OsStr, cwd: &Path) -> Result<Self> {
         let mut process = Command::new(executable)
+            .args([
+                "-c",
+                "features.multi_agent=false",
+                "-c",
+                "features.multi_agent_v2=false",
+                "-c",
+                "features.multi_agent_v2_dynamic_tools=false",
+                "-c",
+                "show_raw_agent_reasoning=true",
+            ])
             .arg("app-server")
             .current_dir(cwd)
             .stdin(Stdio::piped())

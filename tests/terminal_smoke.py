@@ -17,6 +17,9 @@ import tempfile
 import termios
 import time
 import json
+from terminal_screen import Screen
+
+screens = {}
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("binary", type=Path)
@@ -44,7 +47,9 @@ def expect(master, needle, timeout):
         if not chunk:
             break
         output.extend(chunk)
-        if (needle in output if isinstance(needle, bytes) else needle.search(output)):
+        screen = screens.setdefault(master, Screen())
+        screen.feed(chunk)
+        if (needle in (output if b"\x1b" in needle else screen.text()) if isinstance(needle, bytes) else needle.search(output)):
             return bytes(output)
     tail = bytes(output[-1500:]).decode(errors="replace")
     raise AssertionError(f"Terminal did not show {needle!r}. Output tail: {tail!r}")
@@ -78,6 +83,8 @@ def run(directory):
 
     try:
         expect(master, b"Ready", 30)
+        if args.live:
+            os.write(master,b"\x0f")  # Ctrl+O: explicitly expand tool output for shell verification.
         if args.features:
             assert not args.live
             os.write(master, b"/mod\t")

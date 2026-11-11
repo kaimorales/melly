@@ -1,15 +1,25 @@
 use melly::session::Session;
 
 pub const COMMANDS: &[(&str, &str)] = &[
+    ("agents", "Jump to the lead or a Luna worker"),
+    (
+        "spawn",
+        "Start Luna: /spawn task · /spawn --edit paths -- task",
+    ),
     ("model", "Choose a model for the next turn"),
     ("effort", "Set reasoning strength"),
     ("skills", "Attach a Codex skill to your next message"),
-    ("compact", "Compact this conversation's context"),
+    ("compact", "Compact the lead conversation's context"),
     ("context", "Inspect context and capacity"),
     ("usage", "Account limits and session tokens"),
     ("status", "Session details and response timing"),
     ("thinking", "Expand or collapse thinking summaries"),
     ("activity", "Focus live commands and file changes"),
+    ("tools", "Expand or collapse full tool output"),
+    (
+        "collect",
+        "Return to the lead; results join its next message",
+    ),
     ("help", "Keyboard shortcuts and commands"),
     ("stop", "Interrupt the active turn"),
     ("quit", "Close Melly"),

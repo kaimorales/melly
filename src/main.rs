@@ -1,3 +1,4 @@
+mod agent_ui;
 mod commands;
 mod rpc;
 mod ui;
@@ -17,12 +18,12 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures_util::StreamExt;
-use melly::session::Session;
+use melly::delegation::Harness;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use tokio::time::{self, MissedTickBehavior};
 
+use agent_ui::AgentWorkspace;
 use rpc::Rpc;
-use ui::Workspace;
 
 const HELP: &str = "melly — a terminal workspace for Codex\n\nUsage: melly [--model MODEL] [--resume THREAD_ID]\n\nRun it from your project directory with Codex installed and signed in.";
 
@@ -57,8 +58,9 @@ async fn run(
         .to_str()
         .context("Melly requires a UTF-8 project path")?
         .to_owned();
-    let mut session = Session::new(cwd_text, options.model, options.resume);
-    let mut workspace = Workspace::default();
+    let mut session = Harness::new(cwd_text, options.model, options.resume);
+    let mut workspace = AgentWorkspace::default();
+    workspace.synchronize(&mut session);
     terminal.draw(|frame| workspace.draw(frame, &session))?;
 
     let mut connection = match Rpc::connect(&codex, &cwd) {
@@ -79,6 +81,7 @@ async fn run(
 
     loop {
         workspace.synchronize(&mut session);
+        dirty |= session.tick();
         if let Some(rpc) = connection.as_mut() {
             for request in session.drain_requests() {
                 if let Err(error) = rpc.send(&request).await {
@@ -124,7 +127,7 @@ async fn run(
                     }
                 }
             }
-            _ = heartbeat.tick(), if session.busy() || session.connecting() => dirty = true,
+            _ = heartbeat.tick(), if session.busy() || session.agents.iter().any(|a|a.session.connecting()) => dirty = true,
             _ = tick.tick(), if dirty => {
                 terminal.draw(|frame| workspace.draw(frame, &session))?;
                 dirty = false;
