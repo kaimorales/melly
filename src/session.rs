@@ -1,4 +1,6 @@
+use crate::catalog::{Model, Quota, Skill, quota_windows};
 use std::collections::{HashMap, VecDeque};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -11,6 +13,7 @@ pub enum Speaker {
     You,
     Codex,
     Tool,
+    Thinking,
     Notice,
 }
 
@@ -20,6 +23,7 @@ impl Speaker {
             Self::You => "You",
             Self::Codex => "Codex",
             Self::Tool => "Tool",
+            Self::Thinking => "Thinking",
             Self::Notice => "Session",
         }
     }
@@ -29,7 +33,11 @@ pub struct Entry {
     pub speaker: Speaker,
     pub text: String,
     id: Option<String>,
-    complete: bool,
+    pub complete: bool,
+    pub key: u64,
+    pub revision: u64,
+    pub model: Option<String>,
+    pub outcome: Option<String>,
 }
 
 pub struct Approval {
@@ -48,6 +56,9 @@ enum Pending {
     Start,
     Steer,
     Interrupt,
+    Compact,
+    Skills,
+    Quota,
 }
 
 pub struct Session {
@@ -60,6 +71,30 @@ pub struct Session {
     pub tokens: Option<u64>,
     pub context_window: Option<u64>,
     pub approvals: VecDeque<Approval>,
+    pub models: Vec<Model>,
+    pub models_loaded: bool,
+    pub effort: Option<String>,
+    pub skills: Vec<Skill>,
+    pub skills_loaded: bool,
+    pub quota: Vec<Quota>,
+    pub quota_loaded: bool,
+    pub context_used: Option<u64>,
+    pub input_tokens: Option<u64>,
+    pub cached_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub reasoning_tokens: Option<u64>,
+    pub startup_duration: Option<Duration>,
+    pub first_event_duration: Option<Duration>,
+    pub last_turn_duration: Option<Duration>,
+    pub selected_skills: Vec<Skill>,
+    pub content_revision: u64,
+    started_at: Instant,
+    turn_started_at: Option<Instant>,
+    pub active_model: Option<String>,
+    pub active_effort: Option<String>,
+    compacting: bool,
+    next_entry_key: u64,
+    summaries: HashMap<String, Vec<String>>,
     requested_model: Option<String>,
     resume_id: Option<String>,
     pending: HashMap<u64, Pending>,
@@ -71,6 +106,7 @@ pub struct Session {
     patches: HashMap<String, String>,
     interrupt_requested: bool,
     stopped: bool,
+    settings_selected: bool,
 }
 
 impl Session {
@@ -85,6 +121,30 @@ impl Session {
             tokens: None,
             context_window: None,
             approvals: VecDeque::new(),
+            models: Vec::new(),
+            models_loaded: false,
+            effort: None,
+            skills: Vec::new(),
+            skills_loaded: false,
+            quota: Vec::new(),
+            quota_loaded: false,
+            context_used: None,
+            input_tokens: None,
+            cached_tokens: None,
+            output_tokens: None,
+            reasoning_tokens: None,
+            startup_duration: None,
+            first_event_duration: None,
+            last_turn_duration: None,
+            selected_skills: Vec::new(),
+            content_revision: 0,
+            started_at: Instant::now(),
+            turn_started_at: None,
+            active_model: None,
+            active_effort: None,
+            compacting: false,
+            next_entry_key: 1,
+            summaries: HashMap::new(),
             requested_model: model,
             resume_id: resume,
             pending: HashMap::new(),
@@ -96,6 +156,7 @@ impl Session {
             patches: HashMap::new(),
             interrupt_requested: false,
             stopped: false,
+            settings_selected: false,
         };
         session.request(
             Pending::Initialize,
@@ -123,15 +184,114 @@ impl Session {
         std::mem::take(&mut self.outbox)
     }
 
+    pub fn busy(&self) -> bool {
+        self.compacting
+            || self.turn_id.is_some()
+            || self.pending.values().any(|p| *p == Pending::Start)
+    }
+
+    pub fn connecting(&self) -> bool {
+        (self.thread_id.is_none() || !self.models_loaded) && !self.stopped
+    }
+
+    pub fn elapsed(&self) -> Option<Duration> {
+        self.turn_started_at
+            .map(|start| start.elapsed())
+            .or(self.last_turn_duration)
+    }
+
+    pub fn current_model(&self) -> Option<&Model> {
+        self.models
+            .iter()
+            .find(|m| Some(&m.id) == self.model.as_ref())
+    }
+
+    pub fn select_model(&mut self, id: &str) -> bool {
+        let Some(model) = self.models.iter().find(|m| m.id == id) else {
+            return false;
+        };
+        self.model = Some(model.id.clone());
+        self.effort.clone_from(&model.default_effort);
+        self.settings_selected = true;
+        true
+    }
+
+    pub fn select_effort(&mut self, effort: &str) -> bool {
+        if !self
+            .current_model()
+            .is_some_and(|m| m.efforts.iter().any(|e| e.id == effort))
+        {
+            return false;
+        }
+        self.effort = Some(effort.into());
+        self.settings_selected = true;
+        true
+    }
+
+    pub fn notice(&mut self, text: impl Into<String>) {
+        self.push(Entry::complete(Speaker::Notice, text));
+    }
+
+    pub fn compact(&mut self) -> bool {
+        if self.stopped || self.connecting() || self.busy() {
+            return false;
+        }
+        self.compacting = true;
+        self.turn_started_at = Some(Instant::now());
+        self.first_event_duration = None;
+        self.last_turn_duration = None;
+        self.status = "Compacting".into();
+        self.request(
+            Pending::Compact,
+            "thread/compact/start",
+            json!({"threadId":self.thread_id}),
+        );
+        true
+    }
+
+    pub fn load_skills(&mut self) {
+        if self.stopped || self.connecting() || self.pending.values().any(|p| *p == Pending::Skills)
+        {
+            return;
+        }
+        self.skills_loaded = false;
+        self.request(
+            Pending::Skills,
+            "skills/list",
+            json!({"cwds":[self.cwd],"forceReload":false}),
+        );
+    }
+
+    pub fn refresh_quota(&mut self) {
+        if self.stopped || self.connecting() || self.pending.values().any(|p| *p == Pending::Quota)
+        {
+            return;
+        }
+        self.request(Pending::Quota, "account/rateLimits/read", json!({}));
+    }
+
+    pub fn attach_skill(&mut self, index: usize) {
+        if let Some(skill) = self.skills.get(index)
+            && !self.selected_skills.iter().any(|s| s.path == skill.path)
+        {
+            self.selected_skills.push(skill.clone());
+        }
+    }
+
     pub fn submit(&mut self, prompt: &str) -> bool {
         let Some(thread_id) = self.thread_id.clone() else {
             return false;
         };
-        if self.stopped || prompt.trim().is_empty() {
+        if self.stopped || !self.models_loaded || self.compacting || prompt.trim().is_empty() {
             return false;
         }
 
-        let input = json!([{"type": "text", "text": prompt}]);
+        let mut input = vec![json!({"type": "text", "text": prompt})];
+        input.extend(
+            self.selected_skills
+                .iter()
+                .map(|skill| json!({"type":"skill","name":skill.name,"path":skill.path})),
+        );
         if let Some(turn_id) = &self.turn_id {
             self.request(
                 Pending::Steer,
@@ -151,11 +311,18 @@ impl Session {
                 Pending::Start,
                 "turn/start",
                 json!({
-                    "threadId": thread_id, "input": input
+                    "threadId": thread_id, "input": input,
+                    "model": self.model, "effort": self.effort, "summary": "auto"
                 }),
             );
             self.status = "Sending".into();
+            self.active_model.clone_from(&self.model);
+            self.active_effort.clone_from(&self.effort);
+            self.turn_started_at = Some(Instant::now());
+            self.first_event_duration = None;
+            self.last_turn_duration = None;
         }
+        self.selected_skills.clear();
         self.push(Entry::complete(Speaker::You, prompt));
         true
     }
@@ -169,10 +336,11 @@ impl Session {
             return true;
         }
         let (Some(thread_id), Some(turn_id)) = (&self.thread_id, &self.turn_id) else {
-            if self
-                .pending
-                .values()
-                .any(|pending| *pending == Pending::Start)
+            if self.compacting
+                || self
+                    .pending
+                    .values()
+                    .any(|pending| *pending == Pending::Start)
             {
                 self.interrupt_requested = true;
                 self.status = "Interrupt pending".into();
@@ -210,6 +378,8 @@ impl Session {
     pub fn disconnected(&mut self, message: &str) {
         self.stopped = true;
         self.turn_id = None;
+        self.compacting = false;
+        self.turn_started_at = None;
         self.pending.clear();
         self.approvals.clear();
         self.outbox.clear();
@@ -217,20 +387,23 @@ impl Session {
         self.push(Entry::complete(Speaker::Notice, message));
     }
 
-    pub fn receive(&mut self, message: Value) {
+    pub fn receive(&mut self, message: Value) -> bool {
         match (
             message.get("method").and_then(Value::as_str),
             message.get("id"),
         ) {
             (Some(method), Some(id)) => self.server_request(method, id, &message["params"]),
-            (Some(method), None) => self.notification(method, &message["params"]),
+            (Some(method), None) => return self.notification(method, &message["params"]),
             (None, Some(id)) => {
                 if let Some(purpose) = id.as_u64().and_then(|id| self.pending.remove(&id)) {
                     self.response(purpose, &message);
+                } else {
+                    return false;
                 }
             }
-            (None, None) => {}
+            (None, None) => return false,
         }
+        true
     }
 
     fn response(&mut self, purpose: Pending, message: &Value) {
@@ -238,8 +411,15 @@ impl Session {
             match purpose {
                 Pending::Initialize | Pending::Thread => self.disconnected(error),
                 Pending::Models => {
+                    self.models_loaded = true;
                     self.push(Entry::complete(Speaker::Notice, error));
-                    self.open_thread(false);
+                    if self.thread_id.is_none()
+                        && !self.pending.values().any(|p| *p == Pending::Thread)
+                    {
+                        self.open_thread(false);
+                    } else if self.thread_id.is_some() && self.startup_duration.is_none() {
+                        self.ready_with_settings();
+                    }
                 }
                 Pending::Start | Pending::Interrupt => {
                     self.interrupt_requested = false;
@@ -249,7 +429,25 @@ impl Session {
                         "Ready"
                     }
                     .into();
+                    if self.turn_id.is_none() {
+                        self.finish_timer();
+                    }
                     self.push(Entry::complete(Speaker::Notice, error));
+                }
+                Pending::Compact => {
+                    self.compacting = false;
+                    self.interrupt_requested = false;
+                    self.status = "Ready".into();
+                    self.finish_timer();
+                    self.notice(error);
+                }
+                Pending::Skills => {
+                    self.skills_loaded = true;
+                    self.notice(error);
+                }
+                Pending::Quota => {
+                    self.quota_loaded = true;
+                    self.notice(format!("Account usage unavailable: {error}"));
                 }
                 _ => self.push(Entry::complete(Speaker::Notice, error)),
             }
@@ -267,6 +465,10 @@ impl Session {
                     json!({"refreshToken": false}),
                 );
                 self.request(Pending::Models, "model/list", json!({"limit": 100}));
+                self.request(Pending::Quota, "account/rateLimits/read", json!({}));
+                if self.requested_model.is_some() || self.resume_id.is_some() {
+                    self.open_thread(false);
+                }
             }
             Pending::Account => {
                 self.account = owned_string(&result["account"]["type"]);
@@ -278,10 +480,32 @@ impl Session {
                 }
             }
             Pending::Models => {
-                let sol_available = result["data"].as_array().is_some_and(|models| {
-                    models.iter().any(|model| model["model"] == "gpt-6.1-sol")
-                });
-                self.open_thread(sol_available);
+                self.models_loaded = result["nextCursor"].is_null();
+                self.models.extend(
+                    result["data"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Model::parse),
+                );
+                if self.models_loaded
+                    && self.thread_id.is_none()
+                    && !self.pending.values().any(|p| *p == Pending::Thread)
+                {
+                    let sol_available = self.models.iter().any(|m| m.id == "gpt-6.1-sol");
+                    self.open_thread(sol_available);
+                }
+                if self.models_loaded && self.thread_id.is_some() && self.startup_duration.is_none()
+                {
+                    self.ready_with_settings();
+                }
+                if let Some(cursor) = result["nextCursor"].as_str() {
+                    self.request(
+                        Pending::Models,
+                        "model/list",
+                        json!({"limit":100,"cursor":cursor}),
+                    );
+                }
             }
             Pending::Thread => {
                 self.thread_id = owned_string(&result["thread"]["id"]);
@@ -289,11 +513,18 @@ impl Session {
                     self.disconnected("Codex did not return a thread ID.");
                     return;
                 }
-                self.model = owned_string(&result["model"]);
+                if !self.settings_selected {
+                    self.model = owned_string(&result["model"]);
+                    self.effort = owned_string(&result["reasoningEffort"]);
+                }
                 if let Some(cwd) = owned_string(&result["cwd"]) {
                     self.cwd = cwd;
                 }
-                self.status = "Ready".into();
+                if self.models_loaded {
+                    self.ready_with_settings();
+                } else {
+                    self.status = "Loading models".into();
+                }
                 if self.resume_id.is_some() {
                     self.request_history(None);
                 }
@@ -302,10 +533,13 @@ impl Session {
                 self.older_cursor = owned_string(&result["nextCursor"]);
                 if let Some(rows) = result["data"].as_array() {
                     for row in rows {
-                        if let Some(entry) = item_entry(&row["item"])
+                        if let Some(mut entry) = item_entry(&row["item"])
                             && !self.entries.iter().any(|prior| prior.id == entry.id)
                         {
+                            entry.key = self.next_entry_key;
+                            self.next_entry_key += 1;
                             self.entries.push_front(entry);
+                            self.content_revision += 1;
                         }
                     }
                     self.entries.truncate(MAX_ENTRIES);
@@ -323,10 +557,47 @@ impl Session {
                 }
             }
             Pending::Steer | Pending::Interrupt => {}
+            Pending::Compact => {} // Acceptance is not completion; wait for contextCompaction.
+            Pending::Quota => {
+                self.quota = quota_windows(result);
+                self.quota_loaded = true;
+            }
+            Pending::Skills => {
+                self.skills.clear();
+                for group in result["data"].as_array().into_iter().flatten() {
+                    for skill in group["skills"].as_array().into_iter().flatten() {
+                        if skill["enabled"] != true {
+                            continue;
+                        }
+                        if let (Some(name), Some(path)) =
+                            (skill["name"].as_str(), skill["path"].as_str())
+                        {
+                            self.skills.push(Skill {
+                                name: name.into(),
+                                path: path.into(),
+                                description: skill["interface"]["shortDescription"]
+                                    .as_str()
+                                    .or(skill["shortDescription"].as_str())
+                                    .or(skill["description"].as_str())
+                                    .unwrap_or_default()
+                                    .into(),
+                            });
+                        }
+                    }
+                    for error in group["errors"].as_array().into_iter().flatten() {
+                        if let Some(message) = error["message"].as_str() {
+                            self.notice(format!("Skill could not load: {message}"));
+                        }
+                    }
+                }
+                self.skills.sort_by(|a, b| a.name.cmp(&b.name));
+                self.skills_loaded = true;
+            }
         }
     }
 
     fn open_thread(&mut self, sol_available: bool) {
+        self.status = "Opening session".into();
         let mut params = json!({});
         if let Some(model) = &self.requested_model {
             params["model"] = json!(model);
@@ -342,6 +613,17 @@ impl Session {
             }
             self.request(Pending::Thread, "thread/start", params);
         }
+    }
+
+    fn ready_with_settings(&mut self) {
+        if self.resume_id.is_none()
+            && !self.settings_selected
+            && let Some(default) = self.current_model().and_then(|m| m.default_effort.clone())
+        {
+            self.effort = Some(default);
+        }
+        self.status = "Ready".into();
+        self.startup_duration = Some(self.started_at.elapsed());
     }
 
     fn request_history(&mut self, cursor: Option<String>) {
@@ -371,23 +653,47 @@ impl Session {
 
     fn mark_running(&mut self, id: &str) {
         if self.last_finished_turn.as_deref() != Some(id) {
+            let already_running = self.turn_id.as_deref() == Some(id);
             self.turn_id = Some(id.to_owned());
             if self.interrupt_requested {
                 self.interrupt_requested = false;
                 self.interrupt();
-            } else if !self
-                .pending
-                .values()
-                .any(|pending| *pending == Pending::Interrupt)
+            } else if !already_running
+                && !self
+                    .pending
+                    .values()
+                    .any(|pending| *pending == Pending::Interrupt)
             {
-                self.status = "Running".into();
+                self.status = if self.compacting {
+                    "Compacting"
+                } else {
+                    "Thinking"
+                }
+                .into();
             }
         }
     }
 
-    fn notification(&mut self, method: &str, params: &Value) {
+    fn finish_timer(&mut self) {
+        if let Some(start) = self.turn_started_at.take() {
+            self.last_turn_duration = Some(start.elapsed());
+        }
+    }
+
+    fn notification(&mut self, method: &str, params: &Value) -> bool {
+        if method == "account/rateLimits/updated" {
+            let id = params["rateLimits"]["limitId"].as_str().unwrap_or("codex");
+            self.quota.retain(|q| q.bucket_id != id);
+            self.quota.extend(quota_windows(params));
+            self.quota_loaded = true;
+            return true;
+        }
+        if method == "skills/changed" {
+            self.load_skills();
+            return true;
+        }
         if self.thread_id.is_none() || params["threadId"].as_str() != self.thread_id.as_deref() {
-            return;
+            return false;
         }
 
         match method {
@@ -399,14 +705,25 @@ impl Session {
             "turn/completed" => {
                 let turn = &params["turn"];
                 let Some(id) = turn["id"].as_str() else {
-                    return;
+                    return false;
                 };
                 if self.turn_id.as_deref().is_some_and(|current| current != id) {
-                    return;
+                    return false;
                 }
                 self.last_finished_turn = Some(id.to_owned());
                 self.turn_id = None;
                 self.interrupt_requested = false;
+                self.compacting = false;
+                self.finish_timer();
+                self.summaries.clear();
+                for entry in &mut self.entries {
+                    if !entry.complete {
+                        entry.complete = true;
+                        entry.outcome = owned_string(&turn["status"]);
+                        entry.revision += 1;
+                    }
+                }
+                self.content_revision += 1;
                 self.approvals.clear();
                 self.patches.clear();
                 self.status = match turn["status"].as_str() {
@@ -422,7 +739,33 @@ impl Session {
             "item/started" | "item/completed" => {
                 let item = &params["item"];
                 if item["type"] == "userMessage" {
-                    return;
+                    return false;
+                }
+                if self.first_event_duration.is_none() {
+                    self.first_event_duration = self.turn_started_at.map(|t| t.elapsed());
+                }
+                if item["type"] == "contextCompaction" {
+                    self.status = if self.compacting || method == "item/started" {
+                        "Compacting"
+                    } else {
+                        "Running"
+                    }
+                    .into();
+                    if method == "item/completed" {
+                        self.context_used = None;
+                        self.notice(
+                            "Context compacted. The next usage snapshot will update the meter.",
+                        );
+                    }
+                }
+                if method == "item/started" {
+                    self.status = match item["type"].as_str() {
+                        Some("reasoning") => "Thinking",
+                        Some("agentMessage") => "Responding",
+                        Some("commandExecution" | "fileChange" | "mcpToolCall") => "Running tool",
+                        _ => &self.status,
+                    }
+                    .into();
                 }
                 if item["type"] == "fileChange"
                     && let Some(id) = item["id"].as_str()
@@ -435,6 +778,7 @@ impl Session {
                 }
                 if let Some(mut entry) = item_entry(item) {
                     entry.complete = method == "item/completed";
+                    entry.model.clone_from(&self.active_model);
                     if let Some(prior) = self.entries.iter_mut().find(|prior| prior.id == entry.id)
                     {
                         if entry.complete || prior.text.is_empty() {
@@ -443,17 +787,70 @@ impl Session {
                             {
                                 entry.text.clone_from(&prior.text);
                             }
+                            if entry.speaker == Speaker::Thinking && entry.text.is_empty() {
+                                entry.text.clone_from(&prior.text);
+                            }
+                            entry.key = prior.key;
+                            entry.revision = prior.revision + 1;
                             *prior = entry;
+                            self.content_revision += 1;
                         }
                     } else {
                         self.push(entry);
                     }
                 }
             }
+            "item/reasoning/summaryPartAdded" | "item/reasoning/summaryTextDelta" => {
+                let (Some(id), Some(index)) =
+                    (params["itemId"].as_str(), params["summaryIndex"].as_u64())
+                else {
+                    return false;
+                };
+                if index > 1024
+                    || self
+                        .entries
+                        .iter()
+                        .any(|e| e.id.as_deref() == Some(id) && e.complete)
+                {
+                    return false;
+                }
+                let parts = self.summaries.entry(id.into()).or_default();
+                parts.resize(parts.len().max(index as usize + 1), String::new());
+                parts[index as usize].push_str(params["delta"].as_str().unwrap_or_default());
+                let text = parts.join("\n\n");
+                if let Some(entry) = self
+                    .entries
+                    .iter_mut()
+                    .find(|e| e.id.as_deref() == Some(id))
+                {
+                    entry.text = text;
+                    entry.revision += 1;
+                    self.content_revision += 1;
+                } else {
+                    let mut entry = Entry::complete(Speaker::Thinking, text);
+                    entry.id = Some(id.into());
+                    entry.complete = false;
+                    entry.model.clone_from(&self.active_model);
+                    self.push(entry);
+                }
+                self.status = "Thinking".into();
+                if self.first_event_duration.is_none() {
+                    self.first_event_duration = self.turn_started_at.map(|t| t.elapsed());
+                }
+            }
             "item/agentMessage/delta" | "item/commandExecution/outputDelta" => {
+                if self.first_event_duration.is_none() {
+                    self.first_event_duration = self.turn_started_at.map(|t| t.elapsed());
+                }
+                self.status = if method == "item/agentMessage/delta" {
+                    "Responding"
+                } else {
+                    "Running tool"
+                }
+                .into();
                 let (Some(id), Some(delta)) = (params["itemId"].as_str(), params["delta"].as_str())
                 else {
-                    return;
+                    return false;
                 };
                 if let Some(entry) = self
                     .entries
@@ -465,6 +862,8 @@ impl Session {
                             entry.text.push('\n');
                         }
                         entry.text.push_str(delta);
+                        entry.revision += 1;
+                        self.content_revision += 1;
                         if entry.speaker == Speaker::Tool {
                             truncate_tool(&mut entry.text);
                         }
@@ -480,19 +879,40 @@ impl Session {
                         text: delta.to_owned(),
                         id: Some(id.to_owned()),
                         complete: false,
+                        key: 0,
+                        revision: 0,
+                        model: self.active_model.clone(),
+                        outcome: None,
                     });
                 }
             }
             "thread/tokenUsage/updated" => {
                 self.tokens = params["tokenUsage"]["total"]["totalTokens"].as_u64();
                 self.context_window = params["tokenUsage"]["modelContextWindow"].as_u64();
+                self.context_used = params["tokenUsage"]["last"]["totalTokens"].as_u64();
+                let total = &params["tokenUsage"]["total"];
+                self.input_tokens = total["inputTokens"].as_u64();
+                self.cached_tokens = total["cachedInputTokens"].as_u64();
+                self.output_tokens = total["outputTokens"].as_u64();
+                self.reasoning_tokens = total["reasoningOutputTokens"].as_u64();
             }
-            "model/rerouted" => self.model = owned_string(&params["toModel"]),
+            "model/rerouted" => {
+                if params["turnId"].as_str() != self.turn_id.as_deref() {
+                    return false;
+                }
+                self.active_model = owned_string(&params["toModel"]);
+                self.active_effort = None;
+                self.notice(format!(
+                    "Codex routed this turn to {}. Your next-turn selection is unchanged.",
+                    self.active_model.as_deref().unwrap_or("another model")
+                ));
+            }
             "serverRequest/resolved" => self
                 .approvals
                 .retain(|approval| approval.id != params["requestId"]),
-            _ => {}
+            _ => return false,
         }
+        true
     }
 
     fn server_request(&mut self, method: &str, id: &Value, params: &Value) {
@@ -504,6 +924,9 @@ impl Session {
             || self.thread_id.is_none()
             || params["threadId"].as_str() != self.thread_id.as_deref()
         {
+            self.notice(format!(
+                "Codex requested {method}, which Melly cannot handle yet."
+            ));
             self.outbox.push(json!({"id": id, "error": {"code": -32601, "message": "Melly cannot handle this request"}}));
             return;
         }
@@ -555,7 +978,10 @@ impl Session {
         });
     }
 
-    fn push(&mut self, entry: Entry) {
+    fn push(&mut self, mut entry: Entry) {
+        entry.key = self.next_entry_key;
+        self.next_entry_key += 1;
+        self.content_revision += 1;
         if self.entries.len() >= MAX_ENTRIES {
             self.entries.pop_front();
         }
@@ -578,6 +1004,10 @@ impl Entry {
             text: text.into(),
             id: None,
             complete: true,
+            key: 0,
+            revision: 0,
+            model: None,
+            outcome: None,
         }
     }
 }
@@ -592,6 +1022,16 @@ fn item_entry(item: &Value) -> Option<Entry> {
         "agentMessage" => (
             Speaker::Codex,
             item["text"].as_str().unwrap_or_default().to_owned(),
+        ),
+        "reasoning" => (
+            Speaker::Thinking,
+            item["summary"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join("\n\n"),
         ),
         "userMessage" => {
             let text = item["content"]
@@ -642,6 +1082,14 @@ fn item_entry(item: &Value) -> Option<Entry> {
         speaker,
         text,
         complete: true,
+        key: 0,
+        revision: 0,
+        model: None,
+        outcome: if item["exitCode"].as_i64().is_some_and(|code| code != 0) {
+            Some("failed".into())
+        } else {
+            owned_string(&item["status"])
+        },
     })
 }
 
@@ -651,7 +1099,7 @@ fn patch_preview(item: &Value) -> Option<String> {
         let path = change["path"].as_str()?;
         let kind = change["kind"]["type"].as_str()?;
         let diff = change["diff"].as_str()?;
-        let target = change["kind"]["movePath"]
+        let target = change["kind"]["move_path"]
             .as_str()
             .map_or(String::new(), |to| format!(" → {to}"));
         lines.push(format!("{kind}  {path}{target}\n{diff}"));

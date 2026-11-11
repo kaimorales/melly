@@ -36,14 +36,15 @@ fn ready(resume: Option<&str>) -> Session {
         "data": [{"model": "gpt-6.1-sol"}], "nextCursor": null
     }}));
 
-    let open = take_request(
-        &mut session,
-        if resume.is_some() {
-            "thread/resume"
-        } else {
-            "thread/start"
-        },
-    );
+    let open = if resume.is_some() {
+        requests
+            .iter()
+            .find(|r| r["method"] == "thread/resume")
+            .unwrap()
+            .clone()
+    } else {
+        take_request(&mut session, "thread/start")
+    };
     if let Some(id) = resume {
         assert!(open["params"].get("cwd").is_none());
         assert_eq!(open["params"]["threadId"], id);
@@ -56,6 +57,197 @@ fn ready(resume: Option<&str>) -> Session {
         "thread": {"id": "thread-1"}, "model": "gpt-6.1-sol"
     }}));
     session
+}
+
+#[test]
+fn model_and_effort_apply_to_the_next_turn_and_validate_catalog_choices() {
+    let mut s = ready(None);
+    s.models = vec![melly::catalog::Model::parse(&json!({"model":"gpt-6-astra",
+        "defaultReasoningEffort":"medium","supportedReasoningEfforts":[
+        {"reasoningEffort":"medium","description":"Balanced"},{"reasoningEffort":"high","description":"More reasoning"}]})).unwrap()];
+    assert!(!s.select_model("made-up"));
+    assert!(s.select_model("gpt-6-astra"));
+    assert_eq!(s.effort.as_deref(), Some("medium"));
+    assert!(!s.select_effort("impossible"));
+    assert!(s.select_effort("high"));
+    let r = start(&mut s);
+    assert_eq!(r["params"]["model"], "gpt-6-astra");
+    assert_eq!(r["params"]["effort"], "high");
+    assert_eq!(r["params"]["summary"], "auto");
+    s.receive(json!({"id":r["id"],"result":{"turn":{"id":"t"}}}));
+    s.select_effort("medium");
+    s.submit("Small correction");
+    let r = take_request(&mut s, "turn/steer");
+    assert!(r["params"].get("effort").is_none());
+}
+
+#[test]
+fn compaction_waits_for_completion_and_blocks_new_prompts() {
+    let mut s = ready(None);
+    assert!(s.compact());
+    let r = take_request(&mut s, "thread/compact/start");
+    s.receive(json!({"id":r["id"],"result":{}}));
+    assert!(!s.submit("Should wait"));
+    assert!(!s.compact());
+    s.receive(json!({"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"compact-turn"}}}));
+    s.receive(
+        json!({"method":"item/completed","params":{"threadId":"thread-1","item":{
+        "type":"contextCompaction","id":"c"}}}),
+    );
+    assert!(!s.submit("Still waiting for the compaction turn"));
+    s.receive(json!({"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"compact-turn","status":"completed"}}}));
+    assert!(s.submit("Continue"));
+}
+
+#[test]
+fn interrupting_pending_compaction_does_not_exit() {
+    let mut s = ready(None);
+    assert!(s.compact());
+    take_request(&mut s, "thread/compact/start");
+    assert!(s.interrupt());
+    s.receive(json!({"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"c"}}}));
+    assert_eq!(
+        take_request(&mut s, "turn/interrupt")["params"]["turnId"],
+        "c"
+    );
+}
+
+#[test]
+fn rejected_compaction_does_not_interrupt_the_next_turn() {
+    let mut s = ready(None);
+    s.compact();
+    let r = take_request(&mut s, "thread/compact/start");
+    s.interrupt();
+    s.receive(json!({"id":r["id"],"error":{"message":"Cannot compact"}}));
+    let r = start(&mut s);
+    s.receive(json!({"id":r["id"],"result":{"turn":{"id":"next"}}}));
+    assert!(s.drain_requests().is_empty());
+}
+
+#[test]
+fn rerouting_preserves_queued_model_and_effort() {
+    let mut s = ready(None);
+    let request = start(&mut s);
+    s.receive(json!({"id":request["id"],"result":{"turn":{"id":"t"}}}));
+    s.model = Some("next-model".into());
+    s.effort = Some("next-effort".into());
+    s.receive(json!({"method":"model/rerouted","params":{"threadId":"thread-1","turnId":"t","toModel":"routed-model"}}));
+    assert_eq!(s.model.as_deref(), Some("next-model"));
+    assert_eq!(s.effort.as_deref(), Some("next-effort"));
+    s.receive(json!({"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"t","itemId":"a","delta":"Hello"}}));
+    assert_eq!(
+        s.entries.back().unwrap().model.as_deref(),
+        Some("routed-model")
+    );
+}
+
+#[test]
+fn quota_notifications_preserve_other_buckets() {
+    let mut s = ready(None);
+    for (id, used) in [("codex", 10), ("astra", 20), ("codex", 15)] {
+        s.receive(json!({"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":id,"primary":{"usedPercent":used}}}}));
+    }
+    assert_eq!(s.quota.len(), 2);
+    assert_eq!(
+        s.quota
+            .iter()
+            .find(|q| q.bucket_id == "codex")
+            .unwrap()
+            .used_percent,
+        15
+    );
+    assert_eq!(
+        s.quota
+            .iter()
+            .find(|q| q.bucket_id == "astra")
+            .unwrap()
+            .used_percent,
+        20
+    );
+}
+
+#[test]
+fn rename_approval_includes_the_destination() {
+    let mut s = ready(None);
+    s.receive(json!({"method":"item/started","params":{"threadId":"thread-1","item":{"id":"patch","type":"fileChange",
+        "changes":[{"path":"old.txt","kind":{"type":"update","move_path":"new.txt"},"diff":"-old\n+new"}]}}}));
+    s.receive(json!({"id":"approval","method":"item/fileChange/requestApproval","params":{"threadId":"thread-1","itemId":"patch"}}));
+    assert!(s.approvals[0].description.contains("old.txt → new.txt"));
+}
+
+#[test]
+fn new_chat_uses_catalog_effort_even_when_thread_opens_before_models() {
+    let mut s = Session::new("/tmp/project".into(), Some("gpt-6-astra".into()), None);
+    let init = take_request(&mut s, "initialize");
+    s.receive(json!({"id":init["id"],"result":{}}));
+    let requests = s.drain_requests();
+    let thread = requests
+        .iter()
+        .find(|r| r["method"] == "thread/start")
+        .unwrap();
+    let models = requests
+        .iter()
+        .find(|r| r["method"] == "model/list")
+        .unwrap();
+    s.receive(json!({"id":thread["id"],"result":{"thread":{"id":"thread-1"},"model":"gpt-6-astra","reasoningEffort":"xhigh"}}));
+    assert!(!s.submit("Wait for discovered settings"));
+    s.receive(json!({"id":models["id"],"result":{"data":[{"model":"gpt-6-astra","defaultReasoningEffort":"medium"}]}}));
+    let turn = start(&mut s);
+    assert_eq!(turn["params"]["effort"], "medium");
+}
+
+#[test]
+fn new_chat_waits_for_all_model_catalog_pages() {
+    let mut s = Session::new("/tmp/project".into(), None, None);
+    let init = take_request(&mut s, "initialize");
+    s.receive(json!({"id":init["id"],"result":{}}));
+    let models = take_request(&mut s, "model/list");
+    s.receive(
+        json!({"id":models["id"],"result":{"data":[{"model":"other"}],"nextCursor":"page-2"}}),
+    );
+    let requests = s.drain_requests();
+    assert!(!requests.iter().any(|r| r["method"] == "thread/start"));
+    let models = requests
+        .iter()
+        .find(|r| r["method"] == "model/list")
+        .unwrap();
+    s.receive(json!({"id":models["id"],"result":{"data":[{"model":"gpt-6.1-sol","defaultReasoningEffort":"low"}]}}));
+    assert_eq!(
+        take_request(&mut s, "thread/start")["params"]["model"],
+        "gpt-6.1-sol"
+    );
+}
+
+#[test]
+fn context_snapshot_is_separate_from_cumulative_tokens() {
+    let mut s = ready(None);
+    s.receive(json!({"method":"thread/tokenUsage/updated","params":{"threadId":"thread-1",
+        "tokenUsage":{"total":{"totalTokens":90000,"inputTokens":80000,"cachedInputTokens":60000,
+            "outputTokens":10000,"reasoningOutputTokens":8000},"last":{"totalTokens":12000},"modelContextWindow":200000}}}));
+    assert_eq!(s.tokens, Some(90000));
+    assert_eq!(s.context_used, Some(12000));
+    assert_eq!(s.cached_tokens, Some(60000));
+}
+
+#[test]
+fn skills_attach_as_typed_inputs_and_are_consumed_once() {
+    let mut s = ready(None);
+    s.load_skills();
+    let r = take_request(&mut s, "skills/list");
+    s.receive(json!({"id":r["id"],"result":{"data":[{"skills":[
+        {"name":"review","path":"/tmp/skills/review/SKILL.md","enabled":true},
+        {"name":"disabled","path":"/tmp/skills/disabled/SKILL.md","enabled":false}
+    ],"errors":[]}]}}));
+    assert_eq!(s.skills.len(), 1);
+    s.attach_skill(0);
+    s.attach_skill(0);
+    let r = start(&mut s);
+    assert_eq!(r["params"]["input"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        r["params"]["input"][1],
+        json!({"type":"skill","name":"review","path":"/tmp/skills/review/SKILL.md"})
+    );
+    assert!(s.selected_skills.is_empty());
 }
 
 fn start(session: &mut Session) -> Value {
@@ -203,4 +395,31 @@ fn interrupt_waits_for_the_turn_id_and_sends_once() {
     session.receive(json!({"id":stop["id"],"result":{}}));
     session.receive(json!({"id":start["id"],"result":{"turn":{"id":"turn-1"}}}));
     assert!(session.drain_requests().is_empty());
+}
+
+#[test]
+fn thinking_summaries_stream_in_order_and_complete_without_duplication() {
+    let mut session = ready(None);
+    for (index, delta) in [(0, "Inspect the tests."), (1, "Check the caller.")] {
+        session.receive(json!({"method":"item/reasoning/summaryTextDelta","params":{
+            "threadId":"thread-1","turnId":"turn-1","itemId":"thought",
+            "summaryIndex":index,"delta":delta
+        }}));
+    }
+    assert!(
+        session
+            .transcript()
+            .contains("Inspect the tests.\n\nCheck the caller.")
+    );
+    session.receive(json!({"method":"item/completed","params":{
+        "threadId":"thread-1","turnId":"turn-1","item":{
+            "type":"reasoning","id":"thought","summary":["Inspect the tests.","Check the caller."],
+            "content":["private raw content is not a summary"]
+        }
+    }}));
+    assert_eq!(
+        session.transcript().matches("Inspect the tests.").count(),
+        1
+    );
+    assert!(!session.transcript().contains("private raw content"));
 }

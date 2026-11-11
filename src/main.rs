@@ -1,3 +1,4 @@
+mod commands;
 mod rpc;
 mod ui;
 
@@ -72,9 +73,12 @@ async fn run(
     let mut keys = EventStream::new();
     let mut tick = time::interval(Duration::from_millis(16));
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut heartbeat = time::interval(Duration::from_millis(100));
+    heartbeat.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut dirty = true;
 
     loop {
+        workspace.synchronize(&mut session);
         if let Some(rpc) = connection.as_mut() {
             for request in session.drain_requests() {
                 if let Err(error) = rpc.send(&request).await {
@@ -107,18 +111,20 @@ async fn run(
             }
             message = async { connection.as_mut().expect("connection is present").receive().await }, if connection.is_some() => {
                 match message {
-                    Ok(Some(message)) => session.receive(message),
+                    Ok(Some(message)) => dirty |= session.receive(message),
                     Ok(None) => {
                         session.disconnected("Codex closed the connection. Reopen Melly to continue.");
                         connection = None;
+                        dirty = true;
                     }
                     Err(error) => {
                         session.disconnected(&format!("{error:#}"));
                         connection = None;
+                        dirty = true;
                     }
                 }
-                dirty = true;
             }
+            _ = heartbeat.tick(), if session.busy() || session.connecting() => dirty = true,
             _ = tick.tick(), if dirty => {
                 terminal.draw(|frame| workspace.draw(frame, &session))?;
                 dirty = false;

@@ -16,10 +16,13 @@ import subprocess
 import tempfile
 import termios
 import time
+import json
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("binary", type=Path)
 parser.add_argument("--live", action="store_true", help="use a signed-in Codex and run one Luna turn")
+parser.add_argument("--features", action="store_true", help="exercise model, effort, skill and compaction menus with the fixture")
+parser.add_argument("--live-model", default="gpt-6-luna", help="model for the opt-in live test")
 args = parser.parse_args()
 binary = args.binary.resolve(strict=True)
 fake_codex = Path(__file__).with_name("fake_codex.py").resolve(strict=True)
@@ -69,10 +72,24 @@ def run(directory):
         fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 110, 0, 0))
         os.environ["TERM"] = "xterm-256color"
         os.environ["MELLY_CODEX_BIN"] = str(codex)
-        os.execv(binary, [str(binary), "--model", "gpt-6-luna"])
+        if not args.live:
+            os.environ["MELLY_TEST_RPC_LOG"] = str(Path(directory, "rpc.jsonl"))
+        os.execv(binary, [str(binary), "--model", args.live_model if args.live else "gpt-6-luna"])
 
     try:
         expect(master, b"Ready", 30)
+        if args.features:
+            assert not args.live
+            os.write(master, b"/mod\t")
+            expect(master, b"Choose model", 5)
+            os.write(master, b"astra\t\r")
+            expect(master, b"astra", 5)
+            os.write(master, b"/effort \x1b[B\x1b[B\r")
+            expect(master, b"high", 5)
+            os.write(master, b"/skills\r")
+            expect(master, b"review", 5)
+            os.write(master, b"\r")
+            expect(master, b"$review", 5)
         prompt = (
             b"Create hello.txt containing melly-smoke-ok and a newline. "
             b"Use a shell command to print its contents, then reply with MELLY_SMOKE_OK."
@@ -81,14 +98,22 @@ def run(directory):
         os.write(master, prompt + b"\r")
         if args.live:
             # Ratatui can leave the unchanged "R" on screen when Running becomes Ready.
-            ready_header = re.compile(rb"\x1b\[1;\d+H(?:\x1b\[[;\d]*m)*R?eady")
+            ready_header = re.compile(rb"\x1b\[1;\d+H[^\n]{0,150}R?eady")
             output = expect(master, ready_header, 120)
             path = Path(directory, "hello.txt")
             assert path.exists(), f"Codex did not create the file. Output tail: {output[-2000:]!r}"
             assert path.read_text() == "melly-smoke-ok\n"
             assert b"Exited" in output, "No shell exit status was visible in the terminal"
         else:
-            expect(master, b"MELLY_SMOKE_OK", 10)
+            output = expect(master, b"MELLY_SMOKE_OK", 10)
+            assert b"Checking" in output, output[-2000:]
+            if args.features:
+                requests = [json.loads(line) for line in Path(directory,"rpc.jsonl").read_text().splitlines()]
+                turn = next(r for r in requests if r.get("method") == "turn/start")["params"]
+                assert turn["model"] == "gpt-6-astra" and turn["effort"] == "high", turn
+                assert turn["input"][1]["type"] == "skill", turn
+                os.write(master, b"/compact\r")
+                expect(master, b"Context compacted", 5)
         os.write(master, b"\x11")  # Ctrl+Q
         expect(master, b"\x1b[?1049l", 5)  # Drain the PTY while the terminal is restored.
         deadline = time.monotonic() + 5
