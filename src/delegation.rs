@@ -332,6 +332,12 @@ impl Harness {
                     };
                     if matches!(method.as_str(), "thread/start" | "thread/resume") {
                         request["params"]["developerInstructions"] = json!(guidance);
+                        request["params"]["config"]["skills"]["max_context_tokens"] =
+                            json!(if index == 0 { 3000 } else { 1200 });
+                        if index > 0 {
+                            // Workers get a scoped brief; personal memory adds unrelated context.
+                            request["params"]["config"]["memories"]["use_memories"] = json!(false);
+                        }
                         if index == 0 {
                             request["params"]["sandbox"] = json!("read-only");
                             request["params"]["approvalPolicy"] = json!("never");

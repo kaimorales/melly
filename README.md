@@ -101,6 +101,8 @@ Commands and skill-file reads stay inside the chat’s collapsed activity by def
 
 Context is a compact **estimate from the last model-call token snapshot**, divided by the reported capacity. It is not a live tokenizer. It clears after compaction until a new snapshot arrives. Each agent's totals accumulate across calls; input, cached input, output and reasoning details are separate in `/usage`. Account percentages are shared across agents and come directly from Codex, with each available quota bucket retained. Melly does not infer plan consumption or prices from tokens.
 
+Melly limits the automatic skill catalog to 3,000 context tokens for the conductor and 1,200 for each worker. Workers skip personal memory injection because their scoped brief supplies the task context. Skills remain available through `/skills`, and the conductor retains its normal memory setting. These limits apply to new and resumed Melly threads; they do not change your global Codex configuration. See [token-efficiency notes](docs/token-efficiency.md) for a measured example and its limits.
+
 The terminal draws on changes, ignores unrelated notifications, caches formatting and wrapping measurements per message or activity group, and renders only visible entries. The local UI cannot shorten server inference time. `/status` separates startup time, first-event latency and turn elapsed time.
 
 ## Development

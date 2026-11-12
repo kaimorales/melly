@@ -45,6 +45,11 @@ fn ready(quota: Option<u64>, resume: bool) -> Harness {
     let role = open["params"]["developerInstructions"].as_str().unwrap();
     assert!(role.contains("Melly's conductor"));
     assert!(role.contains("acceptance checks"));
+    assert_eq!(
+        open["params"]["config"]["skills"]["max_context_tokens"],
+        3000
+    );
+    assert!(open["params"]["config"].get("memories").is_none());
     if resume {
         assert!(open["params"].get("dynamicTools").is_none());
     } else {
@@ -1193,6 +1198,8 @@ fn edit_worker_uses_its_own_permissions_across_spawn_revision_and_restore() {
         assert!(!instructions.contains(conductor_environment));
         assert!(params.get("sandbox").is_none());
         assert!(params.get("approvalPolicy").is_none());
+        assert_eq!(params["config"]["skills"]["max_context_tokens"], 1200);
+        assert_eq!(params["config"]["memories"]["use_memories"], false);
     };
     let check_turn = |request: &Value, expected_input: &str| {
         let params = &request["params"];
