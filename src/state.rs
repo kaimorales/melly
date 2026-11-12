@@ -3,6 +3,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
+    time::SystemTime,
 };
 
 use anyhow::{Context, Result, bail};
@@ -35,9 +36,39 @@ impl Default for Settings {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct SavedWorkspace {
     pub version: u32,
+    #[serde(default)]
+    pub title: String,
     pub team: SavedTeam,
     pub selected: String,
     pub drafts: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SessionSummary {
+    pub id: String,
+    pub title: String,
+    pub cwd: String,
+    pub workers: usize,
+    pub modified: SystemTime,
+}
+
+// History does not need transcripts, briefs or command output. Skip those fields while
+// deserializing so opening the picker doesn't allocate every saved worker's evidence.
+#[derive(Deserialize)]
+struct HistoryWorkspace {
+    version: u32,
+    #[serde(default)]
+    title: String,
+    team: HistoryTeam,
+    drafts: BTreeMap<String, String>,
+}
+
+#[derive(Deserialize)]
+struct HistoryTeam {
+    lead_id: String,
+    cwd: String,
+    lead_started: bool,
+    workers: Vec<serde::de::IgnoredAny>,
 }
 
 pub struct State {
@@ -77,30 +108,60 @@ impl State {
     }
 
     pub fn latest(&self, cwd: &Path) -> Result<Option<String>> {
+        Ok(self
+            .history()?
+            .into_iter()
+            .find(|s| Path::new(&s.cwd) == cwd)
+            .map(|s| s.id))
+    }
+
+    /// A separate lock owner lets us prepare a switch without releasing the current session.
+    pub fn fork(&self) -> Self {
+        Self {
+            root: self.root.clone(),
+            lock: None,
+            last_saved: None,
+            allow_rekey: false,
+        }
+    }
+
+    /// Read only on explicit history requests, never on the render or streaming path.
+    pub fn history(&self) -> Result<Vec<SessionSummary>> {
         let entries = match fs::read_dir(self.root.join("workspaces")) {
             Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(vec![]),
             Err(error) => return Err(error.into()),
         };
-        let mut latest = None;
+        let mut sessions = Vec::new();
         for entry in entries {
             let entry = entry?;
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
                 continue;
             }
-            let Ok(Some(workspace)) = read::<SavedWorkspace>(&path) else {
+            let Ok(Some(workspace)) = read::<HistoryWorkspace>(&path) else {
                 continue;
             };
-            if workspace.version != 1 || Path::new(&workspace.team.cwd) != cwd {
+            if workspace.version != 1
+                || self.workspace_path(&workspace.team.lead_id).ok().as_ref() != Some(&path)
+                || (!workspace.team.lead_started
+                    && workspace.team.workers.is_empty()
+                    && workspace.title.is_empty()
+                    && workspace.drafts.values().all(String::is_empty))
+            {
                 continue;
             }
             let modified = entry.metadata()?.modified()?;
-            if latest.as_ref().is_none_or(|(time, _)| modified > *time) {
-                latest = Some((modified, workspace.team.lead_id));
-            }
+            sessions.push(SessionSummary {
+                id: workspace.team.lead_id,
+                title: workspace.title,
+                cwd: workspace.team.cwd,
+                workers: workspace.team.workers.len(),
+                modified,
+            });
         }
-        Ok(latest.map(|(_, id)| id))
+        sessions.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.id.cmp(&b.id)));
+        Ok(sessions)
     }
 
     pub fn load(&mut self, id: &str) -> Result<Option<SavedWorkspace>> {
@@ -213,4 +274,119 @@ fn write(path: &Path, bytes: &[u8]) -> Result<()> {
         let _ = fs::remove_file(&temporary);
     }
     result.with_context(|| format!("Could not save {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        sync::atomic::{AtomicU64, Ordering},
+        time::Duration,
+    };
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    struct Fixture(State);
+    impl Fixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "melly-history-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            Self(State {
+                root,
+                lock: None,
+                last_saved: None,
+                allow_rekey: false,
+            })
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0.root);
+        }
+    }
+
+    fn saved(id: &str, cwd: &str) -> SavedWorkspace {
+        SavedWorkspace {
+            version: 1,
+            title: format!("Task {id}"),
+            selected: "lead".into(),
+            drafts: BTreeMap::new(),
+            team: SavedTeam {
+                lead_id: id.into(),
+                cwd: cwd.into(),
+                lead_started: true,
+                lead_model: None,
+                workers: vec![],
+            },
+        }
+    }
+
+    #[test]
+    fn history_sorts_all_projects_skips_corrupt_and_mismatched_files_and_reads_legacy_titles() {
+        let f = Fixture::new();
+        let old = saved("old", "/work/a");
+        let new = saved("new", "/work/b");
+        let mut legacy = serde_json::to_value(&old).unwrap();
+        legacy.as_object_mut().unwrap().remove("title");
+        write(
+            &f.0.workspace_path("old").unwrap(),
+            &serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+        File::open(f.0.workspace_path("old").unwrap())
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
+        write(
+            &f.0.workspace_path("new").unwrap(),
+            &serde_json::to_vec(&new).unwrap(),
+        )
+        .unwrap();
+        write(&f.0.workspace_path("broken").unwrap(), b"{").unwrap();
+        write(
+            &f.0.workspace_path("wrong-id").unwrap(),
+            &serde_json::to_vec(&new).unwrap(),
+        )
+        .unwrap();
+        let sessions = f.0.history().unwrap();
+        assert_eq!(
+            sessions.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["new", "old"]
+        );
+        assert!(sessions[1].title.is_empty());
+        assert_eq!(
+            f.0.latest(Path::new("/work/a")).unwrap().as_deref(),
+            Some("old")
+        );
+        assert_eq!(f.0.latest(Path::new("/work/c")).unwrap(), None);
+    }
+
+    #[test]
+    fn destination_lock_failure_keeps_current_workspace_lock_and_data() {
+        let mut f = Fixture::new();
+        f.0.save(&saved("current", "/work/a")).unwrap();
+        let mut other = f.0.fork();
+        other.save(&saved("destination", "/work/a")).unwrap();
+        let mut next = f.0.fork();
+        assert!(next.load("destination").is_err());
+        assert!(f.0.fork().load("current").is_err());
+        f.0.save(&saved("current", "/work/a")).unwrap();
+        drop(other);
+        assert!(next.load("destination").unwrap().is_some());
+    }
+
+    #[test]
+    fn empty_launches_do_not_clutter_history_but_drafts_are_kept() {
+        let mut f = Fixture::new();
+        let mut s = saved("empty", "/work/a");
+        s.title.clear();
+        s.team.lead_started = false;
+        f.0.save(&s).unwrap();
+        assert!(f.0.history().unwrap().is_empty());
+        s.drafts.insert("lead".into(), "unsent work".into());
+        f.0.save(&s).unwrap();
+        assert_eq!(f.0.history().unwrap().len(), 1);
+    }
 }

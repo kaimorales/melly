@@ -755,6 +755,21 @@ impl Harness {
             || !self.waits.is_empty()
     }
 
+    /// Local harness state, independent of model-generated progress messages.
+    pub fn lead_wait_status(&self) -> Option<&'static str> {
+        if self
+            .waits
+            .iter()
+            .any(|wait| matches!(wait.kind, WaitFor::Workers(_)))
+        {
+            Some("Waiting for Luna")
+        } else if !self.waits.is_empty() {
+            Some("Checking quota")
+        } else {
+            None
+        }
+    }
+
     pub fn active_workers(&self) -> usize {
         self.agents
             .iter()

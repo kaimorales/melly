@@ -22,6 +22,8 @@ Type `/` to open the palette. Type to filter, use Up/Down to select, Tab to comp
 
 | Command | Action |
 | --- | --- |
+| `/sessions` | Search saved sessions; Enter resumes the full team, Tab toggles this project / all projects |
+| `/new` | Start a fresh conductor session in the current project when the team is idle |
 | `/agents` | Open the agent switcher; Up/Down selects and Enter opens an observation view |
 | `/review` | Open the latest worker’s brief and review |
 | `/model` | Pick from the models available to your account |
@@ -50,6 +52,8 @@ Model and effort changes apply to the next turn. New chats start at the selected
 | Up / Down | Navigate a menu |
 | Tab | Complete a menu choice; otherwise switch panes |
 | Ctrl+B | Switch panes |
+| Ctrl+S | Open or close session history from any agent view |
+| Ctrl+G | Open or close the agent switcher from any agent view |
 | Ctrl+R | Open or close the selected worker’s brief and review; from conductor, open the latest worker |
 | Ctrl+T | Expand or collapse completed thinking summaries |
 | Ctrl+O | Expand or collapse full tool output |
@@ -62,7 +66,17 @@ Model and effort changes apply to the next turn. New chats start at the selected
 | Ctrl+C | Interrupt a running turn, or quit when idle |
 | Ctrl+Q | Quit |
 
-The inspector sits beside the chat in wide terminals, with active agent tasks, selected-agent context and account quota. Completed agents collapse to a count; `/agents` keeps every agent accessible. Worker token totals remain visible when observing them. Narrow terminals switch between panes. The conductor keeps your draft. Luna views preserve their scroll position. Esc returns from a Luna view to the conductor. Typing brings the composer back into view.
+The inspector sits beside the chat in wide terminals, with each active agent's task, current command or file edit, elapsed turn time, selected-agent context and account quota. The conductor's waiting state comes from the harness. Workers awaiting review, requesting changes or interrupted stay visible; accepted workers collapse into the remaining-agent count. Short terminals prioritize the selected agent and active work. `/agents` or Ctrl+G keeps every agent accessible, including its review state and measured token total. Worker token totals remain visible when observing them. Narrow terminals switch between panes. The conductor keeps your draft. Luna views preserve their scroll position. Esc returns from a Luna view to the conductor. Typing brings the composer back into view.
+
+## Session history
+
+Press **Ctrl+S** or use `/sessions`. History starts in the current project; Tab includes all projects. Type to search titles, project paths or thread IDs, use arrows to select, and Enter to resume. Each row shows its project, last saved time and Luna count. Ctrl+N inside history starts a new session without discarding the previous draft; `/new` is also available from the conductor. Esc returns to the current view.
+
+Melly names a session locally from its first submitted message and shows the title in the chat header. Older saved sessions without titles appear as “Untitled session” with their project and ID; their next submitted message supplies a title. Empty launches are hidden unless they contain a draft or agents. The picker reads Melly's saved workspaces, not unrelated stock Codex chats.
+
+Switching saves the current session first and restores the destination's full team, selected agent, conductor draft, briefs and recorded reviews. It uses the same Codex resume flow as `--continue`, including automatic delegation. You can browse while a team runs, but switching waits until idle; Esc then Ctrl+C interrupts the current team if needed. Approval prompts take priority. A missing workspace, locked session or immediate connection-launch failure keeps the current workspace open. A closed Melly process does not keep workers running in the background.
+
+Searching and viewing agents make no model calls. History is loaded only when opened, and skips saved command output during metadata parsing. Live activity comes from existing Codex events; it does not ask agents to send extra status reports. Briefs, full output and review evidence remain in Ctrl+R and Ctrl+O rather than filling the sidebar.
 
 When a supported command or patch needs approval, inspect the action, press `y` to select allow, then Enter to confirm. Press `n` to decline. Melly preserves the sandbox and approval policy configured in Codex.
 
@@ -118,7 +132,7 @@ python3 tests/terminal_smoke.py target/release/melly --features
 python3 tests/team_terminal_smoke.py target/release/melly
 ```
 
-The smoke tests use deterministic local App Server fixtures. They exercise model and effort selection, skills, thinking, compaction, interleaved agent activity, launch caps, reopening a workspace with settings and drafts, and resumed delegation and compaction without spending model usage. Opt-in live tests spend Codex usage in disposable repositories:
+The smoke tests use deterministic local App Server fixtures. They exercise model and effort selection, skills, thinking, compaction, interleaved agent activity, launch caps, reopening a workspace with settings and drafts, resumed delegation and compaction, searchable history, switching full teams, busy protection and fresh sessions without spending model usage. Opt-in live tests spend Codex usage in disposable repositories:
 
 ```sh
 python3 tests/terminal_smoke.py target/release/melly --live

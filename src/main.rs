@@ -2,6 +2,7 @@ mod agent_ui;
 mod commands;
 mod handoff_ui;
 mod rpc;
+mod session_ui;
 mod state;
 mod ui;
 
@@ -26,6 +27,7 @@ use tokio::time::{self, MissedTickBehavior};
 
 use agent_ui::AgentWorkspace;
 use rpc::Rpc;
+use session_ui::SessionAction;
 use state::{SavedWorkspace, State};
 
 const HELP: &str = "melly — a terminal workspace for Codex\n\nUsage: melly [--model MODEL] [--resume THREAD_ID | --continue]\n\nRun it from your project directory with Codex installed and signed in.";
@@ -73,6 +75,7 @@ async fn main() -> Result<()> {
     session.automatic_enabled = settings.auto_delegate;
     let mut workspace = AgentWorkspace::with_settings(settings);
     if let Some(saved) = saved {
+        workspace.title = saved.title;
         session.restore_team(saved.team);
         workspace.restore(&mut session, &saved.selected, saved.drafts);
     }
@@ -154,6 +157,11 @@ async fn run(
                         {
                             workspace.settings_error(format!("{error:#}"));
                         }
+                        if let Some(action) = workspace.take_session_action()
+                            && let Err(error) = handle_session_action(action, &codex, &mut connection, session, workspace, state)
+                        {
+                            workspace.session_error(format!("{error:#}"), session);
+                        }
                         needs_save = true;
                         dirty = true;
                     }
@@ -230,11 +238,76 @@ fn save_workspace(state: &mut State, session: &Harness, workspace: &AgentWorkspa
         let (selected, drafts) = workspace.snapshot(session);
         state.save(&SavedWorkspace {
             version: 1,
+            title: workspace.title.clone(),
             team,
             selected,
             drafts,
         })?;
     }
+    Ok(())
+}
+
+fn handle_session_action(
+    action: SessionAction,
+    codex: &std::ffi::OsStr,
+    connection: &mut Option<Rpc>,
+    session: &mut Harness,
+    workspace: &mut AgentWorkspace,
+    state: &mut State,
+) -> Result<()> {
+    if action == SessionAction::History {
+        save_workspace(state, session, workspace)?;
+        workspace.show_sessions(state.history()?, session);
+        return Ok(());
+    }
+    if let SessionAction::Resume(id) = &action
+        && session.agents[0].session.thread_id.as_deref() == Some(id)
+    {
+        workspace.close_sessions();
+        return Ok(());
+    }
+    if session.busy()
+        || session
+            .agents
+            .iter()
+            .any(|a| !a.session.approvals.is_empty())
+    {
+        bail!("Team is working. Wait, or Esc then Ctrl+C to stop before switching.");
+    }
+    save_workspace(state, session, workspace)?;
+    // Prepare and lock the destination before changing anything in the current workspace.
+    // A missing file, lock conflict or launch error leaves the existing team usable.
+    let mut next_state = state.fork();
+    let saved = match &action {
+        SessionAction::Resume(id) => Some(
+            next_state
+                .load(id)?
+                .context("Saved session no longer exists")?,
+        ),
+        _ => None,
+    };
+    let cwd = saved
+        .as_ref()
+        .map(|s| s.team.cwd.clone())
+        .unwrap_or_else(|| session.agents[0].session.cwd.clone());
+    let model = saved
+        .as_ref()
+        .and_then(|s| s.team.lead_model.clone())
+        .or_else(|| session.agents[0].session.model.clone());
+    let resume = saved.as_ref().map(|s| s.team.lead_id.clone());
+    let mut next_session = Harness::new(cwd.clone(), model, resume);
+    next_session.automatic_enabled = workspace.settings().auto_delegate;
+    let mut next_workspace = AgentWorkspace::with_settings(workspace.settings().clone());
+    if let Some(saved) = saved {
+        next_workspace.title = saved.title;
+        next_session.restore_team(saved.team);
+        next_workspace.restore(&mut next_session, &saved.selected, saved.drafts);
+    }
+    let next_connection = Rpc::connect(codex, std::path::Path::new(&cwd))?;
+    *connection = Some(next_connection);
+    *state = next_state;
+    *session = next_session;
+    *workspace = next_workspace;
     Ok(())
 }
 

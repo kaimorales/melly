@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use melly::delegation::Harness;
+use melly::{
+    delegation::{Agent, Harness, ReviewVerdict},
+    session::Speaker,
+};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -12,7 +15,8 @@ use ratatui::{
 
 use crate::{
     handoff_ui::HandoffView,
-    state::Settings,
+    session_ui::{SessionAction, SessionPicker, session_title},
+    state::{SessionSummary, Settings},
     ui::{Action, Workspace},
 };
 
@@ -31,6 +35,9 @@ const ACCENTS: &[(&str, Color)] = &[
 
 #[derive(Default)]
 pub struct AgentWorkspace {
+    pub title: String,
+    sessions: Option<SessionPicker>,
+    session_action: Option<SessionAction>,
     views: Vec<Workspace>,
     selected: usize,
     picker: Option<usize>,
@@ -42,6 +49,34 @@ pub struct AgentWorkspace {
 }
 
 impl AgentWorkspace {
+    pub fn take_session_action(&mut self) -> Option<SessionAction> {
+        self.session_action.take()
+    }
+
+    pub fn show_sessions(&mut self, sessions: Vec<SessionSummary>, harness: &Harness) {
+        let lead = &harness.agents[0].session;
+        self.sessions = Some(SessionPicker::new(
+            sessions,
+            lead.cwd.clone(),
+            lead.thread_id.clone(),
+        ));
+        self.picker = None;
+        self.handoff = None;
+        self.settings_row = None;
+    }
+
+    pub fn session_error(&mut self, message: String, harness: &mut Harness) {
+        if let Some(picker) = &mut self.sessions {
+            picker.error = Some(message);
+        } else {
+            harness.agents[0].session.notice(&message);
+        }
+    }
+
+    pub fn close_sessions(&mut self) {
+        self.sessions = None;
+    }
+
     pub fn with_settings(settings: Settings) -> Self {
         Self {
             settings,
@@ -120,6 +155,8 @@ impl AgentWorkspace {
             self.picker = None;
             self.settings_row = None;
             self.handoff = None;
+            self.sessions = None;
+            self.session_action = None;
         }
         for (view, agent) in self.views.iter_mut().zip(&mut harness.agents) {
             view.agent_label = agent.id.clone();
@@ -128,6 +165,10 @@ impl AgentWorkspace {
     }
 
     pub fn insert(&mut self, text: &str) {
+        if let Some(picker) = &mut self.sessions {
+            picker.insert(text);
+            return;
+        }
         if self.selected == 0
             && self.settings_row.is_none()
             && self.picker.is_none()
@@ -144,6 +185,42 @@ impl AgentWorkspace {
             return false;
         }
         let approval = !harness.agents[self.selected].session.approvals.is_empty();
+        if !approval
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.code == KeyCode::Char('g')
+        {
+            self.picker = if self.picker.is_some() {
+                None
+            } else {
+                Some(self.selected)
+            };
+            self.sessions = None;
+            self.settings_row = None;
+            self.handoff = None;
+            return false;
+        }
+        if !approval
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.code == KeyCode::Char('s')
+        {
+            if self.sessions.is_some() {
+                self.sessions = None;
+            } else {
+                self.session_action = Some(SessionAction::History);
+            }
+            return false;
+        }
+        if let Some(picker) = &mut self.sessions {
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('q') {
+                return true;
+            }
+            if key.code == KeyCode::Esc {
+                self.sessions = None;
+            } else {
+                self.session_action = picker.key(key);
+            }
+            return false;
+        }
         if let Some(row) = self.settings_row {
             return self.settings_key(key, harness, row);
         }
@@ -269,12 +346,17 @@ impl AgentWorkspace {
             match action {
                 Action::Submit(prompt) => {
                     if harness.submit(0, &prompt) {
+                        if self.title.is_empty() {
+                            self.title = session_title(&prompt);
+                        }
                         self.views[self.selected].accept_submission();
                     }
                 }
                 Action::Agents => self.picker = Some(self.selected),
                 Action::Review => self.open_handoff(harness),
                 Action::Settings => self.settings_row = Some(0),
+                Action::Sessions => self.session_action = Some(SessionAction::History),
+                Action::New => self.session_action = Some(SessionAction::New),
                 Action::Collect => {
                     self.selected = 0;
                     harness.agents[0].session.notice("Your next lead message will include any uncollected worker results. Use /agents to inspect them now.");
@@ -303,55 +385,77 @@ impl AgentWorkspace {
             ),
             Line::default(),
         ];
-        let completed = harness.agents.iter().skip(1).filter(|a| a.finished).count();
-        let available_rows = frame.area().height.saturating_sub(15) as usize / 3;
+        let available_rows = frame.area().height.saturating_sub(15) as usize / 4;
         let mut visible: Vec<usize> = (0..harness.agents.len())
-            .filter(|&i| i == 0 || i == self.selected || !harness.agents[i].finished)
+            .filter(|&i| i == 0 || i == self.selected || needs_attention(&harness.agents[i]))
             .collect();
         // Keep the observed worker visible even on short terminals.
-        visible.sort_by_key(|&i| (i != self.selected, i != 0, i));
+        visible.sort_by_key(|&i| {
+            (
+                i != self.selected,
+                i != 0,
+                harness.agents[i].finished,
+                std::cmp::Reverse(i),
+            )
+        });
         visible.truncate(available_rows.max(1));
         visible.sort_unstable();
+        let hidden = harness.agents.len().saturating_sub(visible.len());
         for index in visible {
             let agent = &harness.agents[index];
             let focus = index == self.selected;
-            let status = if !agent.session.approvals.is_empty() {
-                "Approval needed"
-            } else {
-                &agent.session.status
-            };
             let name = if index == 0 { "Conductor" } else { &agent.id };
+            let elapsed = if agent.session.busy() {
+                agent
+                    .session
+                    .elapsed()
+                    .map(|d| format!(" · {}s", d.as_secs()))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
             roster.push(Line::styled(
-                format!(
-                    "  {} {name}{}",
-                    if focus { "›" } else { " " },
-                    if index == 0 {
-                        String::new()
-                    } else {
-                        format!(" · {}", crate::ui::ellipsis(status, 17))
-                    }
-                ),
+                format!("  {} {name}{elapsed}", if focus { "›" } else { " " },),
                 Style::default().fg(if focus { self.accent() } else { INK }),
             ));
+            if index > 0 {
+                roster.push(Line::styled(
+                    format!("    {}", crate::ui::ellipsis(&safe(&agent.title), 28)),
+                    Style::default().fg(INK),
+                ));
+            }
             let detail = if index == 0 {
-                status.to_owned()
+                harness.lead_wait_status().map(str::to_owned)
             } else {
-                safe(&agent.title)
+                None
+            }
+            .unwrap_or_else(|| agent_activity(agent));
+            let indicator = if agent.session.busy() && self.settings.motion {
+                ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"][agent
+                    .session
+                    .elapsed()
+                    .map_or(0, |d| (d.as_millis() / 120) as usize)
+                    % 8]
+            } else {
+                " "
             };
             roster.push(Line::styled(
-                format!("    {}", crate::ui::ellipsis(&detail, 28)),
+                format!("  {indicator} {}", crate::ui::ellipsis(&detail, 28)),
                 Style::default().fg(MUTED),
             ));
             roster.push(Line::default());
         }
-        if completed > 0 {
+        if hidden > 0 {
             roster.push(Line::styled(
-                format!("  {completed} completed · /agents"),
+                format!("  {hidden} more · /agents"),
                 Style::default().fg(MUTED),
             ));
             roster.push(Line::default());
         }
         self.views[self.selected].agent_label = harness.agents[self.selected].id.clone();
+        self.views[self.selected]
+            .session_title
+            .clone_from(&self.title);
         self.views[self.selected].roster = roster;
         self.views[self.selected].draw(frame, &harness.agents[self.selected].session);
         if let Some(index) = self.picker {
@@ -363,6 +467,9 @@ impl AgentWorkspace {
         let accent = self.accent();
         if let Some((index, view)) = &mut self.handoff {
             view.draw(frame, &harness.agents[*index], accent, self.settings.motion);
+        }
+        if let Some(picker) = &self.sessions {
+            picker.draw(frame, accent, harness.busy());
         }
     }
 
@@ -510,7 +617,7 @@ impl AgentWorkspace {
         }
         let width = area.width.saturating_sub(4).min(75);
         let height =
-            (harness.agents.len().min(6) as u16 * 3 + 5).min(area.height.saturating_sub(2));
+            (harness.agents.len().min(6) as u16 * 4 + 5).min(area.height.saturating_sub(2));
         let popup = Rect::new(
             (area.width - width) / 2,
             (area.height - height) / 2,
@@ -525,7 +632,7 @@ impl AgentWorkspace {
             .border_style(Style::default().fg(self.accent()));
         let inner = block.inner(popup);
         frame.render_widget(block, popup);
-        let capacity = inner.height.saturating_sub(2).div_euclid(3).max(1) as usize;
+        let capacity = inner.height.saturating_sub(2).div_euclid(4).max(1) as usize;
         let first = index.saturating_sub(capacity - 1);
         for (row, (i, agent)) in harness
             .agents
@@ -538,17 +645,17 @@ impl AgentWorkspace {
             let active = i == index;
             let rect = Rect::new(
                 inner.x,
-                inner.y + row as u16 * 3,
+                inner.y + row as u16 * 4,
                 inner.width,
-                3.min(inner.height.saturating_sub(row as u16 * 3)),
+                4.min(inner.height.saturating_sub(row as u16 * 4)),
             );
             let lines = vec![
                 Line::from(vec![Span::styled(
                     format!(
                         " {} {} · {}",
                         if active { "›" } else { " " },
-                        agent.id,
-                        agent.session.model.as_deref().unwrap_or("Luna")
+                        if i == 0 { "Conductor" } else { &agent.id },
+                        crate::ui::model_name(agent.session.model.as_deref().unwrap_or("Luna"))
                     ),
                     Style::default()
                         .fg(if active { self.accent() } else { INK })
@@ -556,15 +663,38 @@ impl AgentWorkspace {
                 )]),
                 Line::styled(
                     format!(
-                        "   {} · {} tokens · {}",
-                        agent.session.status,
+                        "   {} · {} tokens",
+                        if i == 0 {
+                            harness
+                                .lead_wait_status()
+                                .unwrap_or_else(|| agent_phase(agent))
+                        } else {
+                            agent_phase(agent)
+                        },
                         agent.session.tokens.map_or("—".into(), tokens),
-                        agent.mode.label()
                     ),
                     Style::default().fg(MUTED),
                 ),
                 Line::styled(
-                    format!("   {}", safe(&agent.title)),
+                    format!(
+                        "   {}",
+                        if i == 0 {
+                            session_title(&self.title)
+                        } else {
+                            safe(&agent.title)
+                        }
+                    ),
+                    Style::default().fg(MUTED),
+                ),
+                Line::styled(
+                    format!(
+                        "   {}",
+                        if agent.session.busy() {
+                            agent_activity(agent)
+                        } else {
+                            String::new()
+                        }
+                    ),
                     Style::default().fg(MUTED),
                 ),
             ];
@@ -587,6 +717,77 @@ impl AgentWorkspace {
             Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1),
         );
     }
+}
+
+fn needs_attention(agent: &Agent) -> bool {
+    !agent.finished
+        || agent.session.busy()
+        || agent.session.connecting()
+        || !agent.session.approvals.is_empty()
+        || !agent
+            .handoff
+            .review
+            .as_ref()
+            .is_some_and(|r| r.verdict == ReviewVerdict::Accepted)
+        || agent.session.status != "completed"
+}
+
+fn agent_phase(agent: &Agent) -> &str {
+    if !agent.session.approvals.is_empty() {
+        return "Approval needed";
+    }
+    if agent.session.connecting() || agent.session.busy() {
+        return &agent.session.status;
+    }
+    if agent.finished {
+        if agent.session.status != "completed" {
+            return &agent.session.status;
+        }
+        return match &agent.handoff.review {
+            Some(review) if review.verdict == ReviewVerdict::Accepted => "Accepted",
+            Some(_) => "Changes requested",
+            None if agent.handoff.prompt.is_none() => "Review unknown",
+            None => "Awaiting review",
+        };
+    }
+    &agent.session.status
+}
+
+fn agent_activity(agent: &Agent) -> String {
+    if !agent.session.approvals.is_empty() {
+        return "Approval needed".into();
+    }
+    if agent.session.busy() {
+        if let Some(entry) = agent.session.entries.iter().rev().find(|e| !e.complete) {
+            if entry.speaker == Speaker::Tool {
+                let first = entry.text.lines().next().unwrap_or("Running tool");
+                if first.starts_with("Files ·") {
+                    let path = entry.text.lines().nth(1).unwrap_or("files");
+                    let name = std::path::Path::new(path)
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(path);
+                    return format!("Editing {}", safe(name));
+                }
+                if let Some(command) = first.strip_prefix("$ ") {
+                    let command = command
+                        .strip_prefix("/bin/zsh -lc ")
+                        .or_else(|| command.strip_prefix("/bin/bash -lc "))
+                        .unwrap_or(command)
+                        .trim_matches(['\'', '"']);
+                    return format!("$ {}", safe(command));
+                }
+                return safe(first);
+            }
+            if entry.speaker == Speaker::Thinking {
+                return "Thinking".into();
+            }
+        }
+        if agent.session.status == "Running tool" {
+            return "Working".into();
+        }
+    }
+    safe(agent_phase(agent))
 }
 
 fn tokens(n: u64) -> String {
@@ -619,6 +820,69 @@ mod tests {
             .unwrap(),
         );
         h
+    }
+
+    #[test]
+    fn session_history_and_new_are_discoverable_commands() {
+        let h = harness();
+        for command in ["sessions", "new"] {
+            let menu =
+                crate::commands::Menu::from_draft(&format!("/{command}"), &h.agents[0].session)
+                    .unwrap();
+            assert!(menu.rows.iter().any(|r| r.value == command));
+        }
+    }
+
+    #[test]
+    fn local_navigation_preserves_draft_and_approval_preempts_history() {
+        let mut h = harness();
+        let mut w = AgentWorkspace::default();
+        w.synchronize(&mut h);
+        w.insert("Keep this draft");
+        let control = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+        w.key(control('s'), &mut h);
+        assert_eq!(w.take_session_action(), Some(SessionAction::History));
+        w.show_sessions(vec![], &h);
+        w.insert("search only");
+        w.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut h);
+        assert!(w.take_session_action().is_none());
+        assert_eq!(w.views[0].draft(), "Keep this draft");
+        w.key(control('g'), &mut h);
+        assert!(w.sessions.is_none());
+        assert_eq!(w.picker, Some(0));
+        w.show_sessions(vec![], &h);
+        h.agents[0]
+            .session
+            .approvals
+            .push_back(melly::session::Approval {
+                id: json!("approval"),
+                description: "Approve this command".into(),
+                can_accept: true,
+            });
+        w.synchronize(&mut h);
+        assert!(w.sessions.is_none());
+        assert_eq!(w.views[0].draft(), "Keep this draft");
+        w.key(control('s'), &mut h);
+        assert!(w.take_session_action().is_none());
+    }
+
+    #[test]
+    fn finished_unreviewed_worker_stays_visible_without_opening_its_chat() {
+        let mut h = harness();
+        h.spawn_manual("Fix session restoration".into(), WorkerMode::Read, vec![])
+            .unwrap();
+        h.agents[1].finished = true;
+        h.agents[1].session.thread_id = Some("finished-worker".into());
+        h.agents[1].session.status = "completed".into();
+        h.agents[1].result = Some("Checks passed".into());
+        h.agents[1].handoff.prompt = Some("Fix session restoration".into());
+        h.agents[0].session.receive(json!({"method":"item/completed","params":{"threadId":"preview-thread","item":{
+            "type":"agentMessage","id":"a","phase":"final_answer","text":"Session visibility fixture"}}}));
+        let mut w = AgentWorkspace::default();
+        let mut t = Terminal::new(TestBackend::new(130, 38)).unwrap();
+        t.draw(|f| w.draw(f, &h)).unwrap();
+        assert!(screen(&t).contains("Awaiting review"));
+        assert!(screen(&t).contains("Fix session restoration"));
     }
 
     #[test]
@@ -763,6 +1027,7 @@ mod tests {
         let s = &mut h.agents[1].session;
         s.thread_id = Some("worker".into());
         s.status = "Working".into();
+        s.receive(json!({"method":"turn/started","params":{"threadId":"worker","turn":{"id":"live-worker-turn"}}}));
         s.receive(json!({"method":"item/completed","params":{"threadId":"worker","item":{
             "type":"reasoning","id":"r","summary":["Tracing cache invalidation","Checking whether configuration changes invalidate the catalog."]}}}));
         s.receive(
@@ -783,6 +1048,12 @@ mod tests {
         assert!(text.contains("luna-2"));
         assert!(text.contains("14.2k"));
         assert!(text.contains("Running checks"));
+        assert!(
+            w.views[1]
+                .roster
+                .iter()
+                .any(|line| line.to_string().contains("$ cargo test catalog"))
+        );
         assert!(text.contains("+ Thought"));
         capture(&t, "team");
         for (width, height) in [(80, 24), (40, 16), (24, 8), (20, 5)] {

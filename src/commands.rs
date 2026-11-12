@@ -1,6 +1,8 @@
 use melly::session::Session;
 
 pub const COMMANDS: &[(&str, &str)] = &[
+    ("sessions", "Search saved sessions and resume a team"),
+    ("new", "Start a new session in this project"),
     ("agents", "Observe the conductor or a Luna worker"),
     ("review", "Inspect the latest worker's brief and review"),
     ("model", "Choose a model for the next turn"),

@@ -32,6 +32,8 @@ pub enum Action {
     Stop,
     Compact,
     Settings,
+    Sessions,
+    New,
 }
 
 #[derive(Default)]
@@ -51,6 +53,7 @@ pub struct Workspace {
     managed: bool,
     action: Option<Action>,
     pub agent_label: String,
+    pub session_title: String,
     pub roster: Vec<Line<'static>>,
     inspector: Inspector,
     render_cache: HashMap<u64, EntryView>,
@@ -380,6 +383,8 @@ impl Workspace {
             "agents" => self.action = Some(Action::Agents),
             "review" => self.action = Some(Action::Review),
             "settings" => self.action = Some(Action::Settings),
+            "sessions" => self.action = Some(Action::Sessions),
+            "new" => self.action = Some(Action::New),
             "collect" => self.action = Some(Action::Collect),
             "usage" => {
                 self.inspector = Inspector::Usage;
@@ -464,6 +469,14 @@ impl Workspace {
             Paragraph::new(Line::from(vec![
                 Span::styled("  melly", self.accent()),
                 Span::styled(format!("  /  {}", printable(cwd)), dim()),
+                Span::styled(
+                    if self.session_title.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  /  {}", printable(&self.session_title))
+                    },
+                    dim(),
+                ),
             ])),
             identity,
         );
@@ -498,7 +511,7 @@ impl Workspace {
             } else if session.busy() {
                 "  Ctrl+C interrupt   Ctrl+O activity   /agents switch"
             } else {
-                "  / commands   /agents switch   Ctrl+O activity"
+                "  / commands   Ctrl+S sessions   Ctrl+G agents"
             })
             .style(dim()),
             footer,
@@ -620,7 +633,7 @@ impl Workspace {
             Span::styled(
                 format!(
                     "  {}  ",
-                    if self.agent_label.is_empty() {
+                    if matches!(self.agent_label.as_str(), "" | "lead") {
                         "Conductor"
                     } else {
                         &self.agent_label
@@ -655,7 +668,7 @@ impl Workspace {
         }
         if composer.bottom() < area.bottom() {
             frame.render_widget(
-                Paragraph::new("/ commands     /agents workspace")
+                Paragraph::new("/ commands     Ctrl+S sessions")
                     .style(dim())
                     .alignment(ratatui::layout::Alignment::Right),
                 Rect::new(x, composer.bottom() + 1, width, 1),
@@ -990,7 +1003,7 @@ impl Workspace {
         frame.render_widget(Paragraph::new(lines), meta);
         let events = Rect::new(events.x, events.y, events.width, events.height);
         if self.inspector == Inspector::Activity {
-            let mut lines = vec![Line::styled("  /agents  browse all", dim())];
+            let mut lines = vec![Line::styled("  Ctrl+G  browse agents", dim())];
             if self.agent_label != "lead" && !self.agent_label.is_empty() {
                 lines.push(Line::default());
                 lines.push(Line::styled(
@@ -1043,6 +1056,9 @@ fn inspector_lines(view: Inspector, s: &Session) -> Vec<Line<'static>> {
             "↑ ↓         Select a menu item".into(),"Tab         Complete menu selection".into(),"Enter       Apply choice / send".into(),
             "Esc         Close menu / return to chat".into(),"Tab, Ctrl+B Switch pane".into(),"Ctrl+T      Toggle thinking summaries".into(),
             "Ctrl+O      Toggle full tool output".into(),"Alt+1…9     Jump to an agent".into(),"Ctrl+N/P    Next / previous agent".into(),
+            "Ctrl+S      Search and resume saved sessions".into(),
+            "Ctrl+G      Browse agents".into(),
+            "Ctrl+R      Worker brief and review".into(),
             "Ctrl+U      Clear draft and skills".into(),"Shift+Enter Newline (terminal dependent)".into(),
             "PgUp/PgDn   Scroll focused pane".into(),"Ctrl+C      Interrupt / quit if idle".into(),"Ctrl+Q      Quit".into(),String::new(),"COMMANDS".into()],
         _=>Vec::new(),
@@ -1469,7 +1485,7 @@ fn entry_lines(entry: &Entry, style: &EntryStyle<'_>) -> Vec<Line<'static>> {
     lines
 }
 
-fn model_name(id: &str) -> String {
+pub(crate) fn model_name(id: &str) -> String {
     match id {
         "gpt-6-astra" => "Astra".into(),
         "gpt-6-luna" => "Luna".into(),

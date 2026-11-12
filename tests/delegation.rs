@@ -233,6 +233,7 @@ fn spawn_can_return_the_finished_report_without_another_conductor_call() {
     let mut args = spawn_args(json!([]));
     args["wait_for_result"] = json!(true);
     let requests = tool(&mut h, "assign", "spawn", args.clone());
+    assert_eq!(h.lead_wait_status(), Some("Waiting for Luna"));
     assert!(!requests.iter().any(|r| r["id"] == "assign"));
     let start = requests
         .iter()
@@ -261,6 +262,7 @@ fn spawn_can_return_the_finished_report_without_another_conductor_call() {
     }
     assert!(h.agents[1].handoff.report_delivered);
     assert!(h.agents[1].handoff.review.is_none());
+    assert_eq!(h.lead_wait_status(), None);
 }
 
 #[test]

@@ -169,4 +169,60 @@ with tempfile.TemporaryDirectory(prefix="melly-team-pty-", dir="/tmp") as direct
     ]
     assert not missing.exists()
 
-print("Team terminal smoke passed (launch cap, restored roster and draft, saved settings, resumed delegation and compaction).")
+peer = Path(__file__).with_name("fake_history.py").resolve(strict=True)
+with tempfile.TemporaryDirectory(prefix="melly-history-pty-", dir="/tmp") as directory:
+    log = Path(directory, "history-rpc.log")
+    workspaces = Path(directory, "state", "workspaces")
+    workspaces.mkdir(parents=True)
+    # Use the earlier real harness snapshot to exercise full roster + handoff migration.
+    saved["team"].update(lead_id="history-one", cwd=directory, lead_started=True)
+    saved_workers = [worker["thread_id"] for worker in saved["team"]["workers"]]
+    saved.update(title="Fix portfolio transition", selected="luna-1", drafts={"lead": "preserved first draft"})
+    (workspaces / "history-one.json").write_text(json.dumps(saved))
+    second = json.loads(json.dumps(saved))
+    second.update(title="Add session search", selected="lead", drafts={"lead": "second draft"})
+    second["team"].update(lead_id="history-two", workers=[])
+    (workspaces / "history-two.json").write_text(json.dumps(second))
+    with terminal(directory, log, "--resume", "history-one") as fd:
+        expect(fd, b"Restored worker-1")
+        os.write(fd, b"\x13")  # Ctrl+S works from an observation view.
+        expect(fd, b"This project")
+        expect(fd, b"Fix portfolio transition")
+        os.write(fd, b"session search\r")
+        expect(fd, b"Restored history-two")
+        expect(fd, b"second draft")
+        os.write(fd, b"\x15hold this turn\r")
+        expect(fd, b"Ctrl+C interrupt")
+        os.write(fd, b"\x13portfolio\r")
+        expect(fd, b"Team is working")  # Browsing never silently stops a turn.
+        dismiss(fd)
+        os.write(fd, b"\x03")
+        expect(fd, b"Interrupted")
+        os.write(fd, b"\x13portfolio\r")
+        expect(fd, b"Restored worker-1")
+        expect(fd, b"Observing Luna")
+        os.write(fd, b"\x12\t")
+        expect(fd, b"Accepted by conductor")
+        dismiss(fd)
+        dismiss(fd)
+        expect(fd, b"preserved first draft")
+        os.write(fd, b"\x13")
+        expect(fd, b"This project")
+        os.write(fd, b"\x0e")  # Ctrl+N starts a fresh session without clearing the old draft.
+        expect(fd, b"Conductor  Sol  low")  # Unique fresh-home metadata, not a stale Ready label.
+        os.write(fd, b"Fresh session title\r")
+        expect(fd, b"HISTORY_TURN_COMPLETE")
+        os.write(fd, b"\x13")
+        expect(fd, b"Fresh session title")
+        expect(fd, b"Fix portfolio transition")
+    messages = [json.loads(line) for line in log.read_text().splitlines()]
+    resumed = [m["params"]["threadId"] for m in messages if m.get("method") == "thread/resume"]
+    assert resumed == ["history-one", *saved_workers, "history-two", "history-one", *saved_workers], resumed
+    assert sum(m.get("method") == "thread/start" for m in messages) == 1
+    assert sum(m.get("method") == "turn/start" for m in messages) == 2, "History browsing must never call a model"
+    assert json.loads((workspaces / "history-one.json").read_text())["drafts"]["lead"] == "preserved first draft"
+    fresh = list(workspaces.glob("history-new-*.json"))
+    assert len(fresh) == 1
+    assert json.loads(fresh[0].read_text())["title"] == "Fresh session title"
+
+print("Team terminal smoke passed (delegation, restore, handoffs, searchable history, switching, drafts, busy protection and new sessions).")
