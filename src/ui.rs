@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -33,8 +33,10 @@ pub enum Action {
 pub struct Workspace {
     draft: String,
     cursor: usize,
-    chat_scroll: usize,
+    chat_scroll: ChatScroll,
     activity_scroll: usize,
+    chat_area: Rect,
+    activity_area: Rect,
     approval_scroll: u16,
     shown_approval: Option<(Value, bool)>,
     armed_approval: Option<Value>,
@@ -54,6 +56,32 @@ pub struct Workspace {
     reduced_motion: bool,
     intro_started: Option<Instant>,
     showing_home: bool,
+}
+
+/// Follow the tail until the user scrolls, then anchor to a message and wrapped row.
+/// This survives appended output and prepended history without copying transcript text.
+#[derive(Default)]
+struct ChatScroll {
+    offset: usize,
+    anchor: Option<(u64, usize)>,
+    pending: isize,
+}
+
+impl ChatScroll {
+    fn move_by(&mut self, rows: isize) {
+        self.pending = self.pending.saturating_add(rows);
+    }
+
+    fn latest(&mut self) {
+        *self = Self::default();
+    }
+
+    fn oldest(&mut self) {
+        *self = Self {
+            offset: usize::MAX,
+            ..Self::default()
+        };
+    }
 }
 
 struct EntryView {
@@ -126,7 +154,7 @@ impl Workspace {
     }
     pub fn accept_submission(&mut self) {
         self.clear_draft();
-        self.chat_scroll = 0;
+        self.chat_scroll.latest();
         self.activity_focused = false;
     }
     pub fn synchronize(&mut self, session: &mut Session) {
@@ -136,6 +164,35 @@ impl Workspace {
         {
             session.load_skills();
         }
+    }
+
+    pub fn mouse(&mut self, mouse: MouseEvent, session: &mut Session) -> bool {
+        let rows = match mouse.kind {
+            MouseEventKind::ScrollUp => -3,
+            MouseEventKind::ScrollDown => 3,
+            _ => return false,
+        };
+        if !session.approvals.is_empty() {
+            self.approval_scroll = self.approval_scroll.saturating_add_signed(rows as i16);
+            return true;
+        }
+        if !self.menu_dismissed && Menu::from_draft(&self.draft, session).is_some() {
+            return false;
+        }
+        let point = (mouse.column, mouse.row).into();
+        if self.chat_area.contains(point) {
+            self.activity_focused = false;
+            self.chat_scroll.move_by(rows);
+            if rows < 0 {
+                session.load_older();
+            }
+        } else if self.activity_area.contains(point) {
+            self.activity_focused = true;
+            self.activity_scroll = self.activity_scroll.saturating_add_signed(-rows);
+        } else {
+            return false;
+        }
+        true
     }
 
     pub fn key(&mut self, key: KeyEvent, session: &mut Session) -> bool {
@@ -279,19 +336,45 @@ impl Workspace {
             }
         }
 
-        let scroll = if self.activity_focused {
-            &mut self.activity_scroll
-        } else {
-            &mut self.chat_scroll
-        };
         match key.code {
             KeyCode::Tab => self.activity_focused = !self.activity_focused,
             KeyCode::Esc => self.activity_focused = false,
             KeyCode::PageUp => {
-                *scroll = scroll.saturating_add(10);
-                session.load_older();
+                if self.activity_focused {
+                    self.activity_scroll = self.activity_scroll.saturating_add(10);
+                } else {
+                    self.chat_scroll.move_by(-10);
+                    session.load_older();
+                }
             }
-            KeyCode::PageDown => *scroll = scroll.saturating_sub(10),
+            KeyCode::PageDown => {
+                if self.activity_focused {
+                    self.activity_scroll = self.activity_scroll.saturating_sub(10);
+                } else {
+                    self.chat_scroll.move_by(10);
+                }
+            }
+            KeyCode::Up if self.activity_focused => {
+                self.activity_scroll = self.activity_scroll.saturating_add(1)
+            }
+            KeyCode::Down if self.activity_focused => {
+                self.activity_scroll = self.activity_scroll.saturating_sub(1)
+            }
+            KeyCode::Home if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if self.activity_focused {
+                    self.activity_scroll = usize::MAX;
+                } else {
+                    self.chat_scroll.oldest();
+                    session.load_older();
+                }
+            }
+            KeyCode::End if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if self.activity_focused {
+                    self.activity_scroll = 0;
+                } else {
+                    self.chat_scroll.latest();
+                }
+            }
             KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => self.insert("\n"),
             KeyCode::Enter if self.draft.starts_with('/') && !self.menu_dismissed => {
                 self.menu_dismissed = false;
@@ -305,7 +388,7 @@ impl Workspace {
             KeyCode::Enter if session.submit(&self.draft) => {
                 self.draft.clear();
                 self.cursor = 0;
-                self.chat_scroll = 0;
+                self.chat_scroll.latest();
                 self.activity_focused = false;
             }
             KeyCode::Left => {
@@ -438,6 +521,8 @@ impl Workspace {
     pub fn draw(&mut self, frame: &mut Frame, session: &Session) {
         self.shown_approval = None;
         self.showing_home = false;
+        self.chat_area = Rect::default();
+        self.activity_area = Rect::default();
         let area = frame.area();
         frame.render_widget(
             Block::default().style(Style::default().bg(BG).fg(INK)),
@@ -730,6 +815,7 @@ impl Workspace {
             Layout::vertical([Constraint::Min(1), Constraint::Length(composer_height)]).areas(area);
         let [history, waiting] =
             Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(history);
+        self.chat_area = history;
         if session.entries.is_empty() {
             let greeting = vec![
                 Line::default(),
@@ -771,7 +857,12 @@ impl Workspace {
                 &mut self.render_cache,
             );
         }
-        if waiting.height > 0 && session.busy() {
+        if waiting.height > 0 && self.chat_scroll.offset > 0 {
+            frame.render_widget(
+                Paragraph::new("  ↑ History · Ctrl+End latest").style(dim()),
+                waiting,
+            );
+        } else if waiting.height > 0 && session.busy() {
             let color = if session.status == "Thinking" {
                 AMBER
             } else {
@@ -1064,6 +1155,7 @@ impl Workspace {
             frame.render_widget(Paragraph::new(lines), events);
         } else {
             let lines = inspector_lines(self.inspector, session);
+            self.activity_area = events;
             draw_scrollback(frame, events, lines, &mut self.activity_scroll);
         }
     }
@@ -1106,7 +1198,9 @@ fn inspector_lines(view: Inspector, s: &Session) -> Vec<Line<'static>> {
             "Ctrl+G      Browse agents".into(),
             "Ctrl+R      Worker brief and review".into(),
             "Ctrl+U      Clear draft and skills".into(),"Shift+Enter Newline (terminal dependent)".into(),
-            "PgUp/PgDn   Scroll focused pane".into(),"Ctrl+C      Interrupt / quit if idle".into(),"Ctrl+Q      Quit".into(),String::new(),"COMMANDS".into()],
+            "PgUp/PgDn   Scroll focused pane".into(),"Wheel       Scroll under pointer".into(),
+            "Ctrl+Home   Oldest loaded content".into(),"Ctrl+End    Return to latest".into(),
+            "Ctrl+C      Interrupt / quit if idle".into(),"Ctrl+Q      Quit".into(),String::new(),"COMMANDS".into()],
         _=>Vec::new(),
     };
     if view == Inspector::Usage {
@@ -1156,7 +1250,7 @@ fn render_entries(
     area: Rect,
     session: &Session,
     style: EntryStyle<'_>,
-    offset: &mut usize,
+    scroll: &mut ChatScroll,
     cache: &mut HashMap<u64, EntryView>,
 ) {
     if area.width == 0 || area.height == 0 {
@@ -1218,8 +1312,21 @@ fn render_entries(
         total += cache[&entry.key].height;
     }
     let bottom = total.saturating_sub(area.height as usize);
-    *offset = (*offset).min(bottom);
-    let top = bottom.saturating_sub(*offset);
+    let mut position = 0;
+    let anchored_top = scroll.anchor.and_then(|(key, row)| {
+        groups.iter().find_map(|group| {
+            let view = &cache[&group[0].key];
+            let top = position;
+            position += view.height;
+            (group[0].key == key).then(|| top + row.min(view.height.saturating_sub(1)))
+        })
+    });
+    let top = anchored_top
+        .unwrap_or_else(|| bottom.saturating_sub(scroll.offset))
+        .saturating_add_signed(std::mem::take(&mut scroll.pending))
+        .min(bottom);
+    scroll.offset = bottom - top;
+    scroll.anchor = None;
     let mut position = 0usize;
     for group in groups {
         let entry = group[0];
@@ -1227,6 +1334,9 @@ fn render_entries(
         let end = position + view.height;
         if end > top && position < top + area.height as usize {
             let skip = top.saturating_sub(position);
+            if scroll.offset > 0 && scroll.anchor.is_none() {
+                scroll.anchor = Some((entry.key, skip));
+            }
             let y = position.saturating_sub(top);
             let height = (view.height - skip).min(area.height as usize - y);
             let rect = Rect::new(area.x, area.y + y as u16, area.width, height as u16);
@@ -1684,6 +1794,117 @@ pub(crate) mod tests {
                     {"reasoningEffort":"high","description":"More reasoning for difficult problems"}]})).unwrap()).collect();
         s.select_model("gpt-6-astra");
         s
+    }
+
+    #[test]
+    fn reading_history_stays_anchored_while_the_answer_grows() {
+        let mut s = fixture();
+        s.submit("Show a long answer");
+        let text = (0..100)
+            .map(|i| format!("READING_LINE_{i:03}\n"))
+            .collect::<String>();
+        s.receive(json!({"method":"item/agentMessage/delta","params":{
+            "threadId":"preview-thread","itemId":"long-answer","delta":text}}));
+        let mut w = Workspace::default();
+        let mut t = Terminal::new(TestBackend::new(80, 34)).unwrap();
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        w.key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), &mut s);
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        let visible = |t: &Terminal<TestBackend>| {
+            screen(t)
+                .lines()
+                .filter(|line| line.contains("READING_LINE_"))
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+        let before = visible(&t);
+        assert!(!before.is_empty());
+        s.receive(json!({"method":"item/agentMessage/delta","params":{
+            "threadId":"preview-thread","itemId":"long-answer","delta":"More streamed text\n".repeat(20)}}));
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        assert_eq!(
+            visible(&t),
+            before,
+            "Streaming moved the history being read"
+        );
+
+        // A history page prepends entries; the visible message remains anchored.
+        s.notice("Older history page\n".repeat(30));
+        let older = s.entries.pop_back().unwrap();
+        s.entries.push_front(older);
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        assert_eq!(
+            visible(&t),
+            before,
+            "Loading older history moved the viewport"
+        );
+
+        w.key(KeyEvent::new(KeyCode::End, KeyModifiers::CONTROL), &mut s);
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        assert_eq!(w.chat_scroll.offset, 0);
+        assert!(!screen(&t).contains("↑ History"));
+        s.receive(json!({"method":"item/agentMessage/delta","params":{
+            "threadId":"preview-thread","itemId":"long-answer","delta":"FOLLOWING_LATEST"}}));
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        assert!(screen(&t).contains("FOLLOWING_LATEST"));
+    }
+
+    #[test]
+    fn wheel_scrolls_chat_without_changing_the_draft_or_modal_input() {
+        let mut s = fixture();
+        s.submit("Long answer");
+        s.receive(json!({"method":"item/agentMessage/delta","params":{
+            "threadId":"preview-thread","itemId":"answer","delta":"Long transcript row\n".repeat(100)}}));
+        let mut w = Workspace::default();
+        w.insert("Draft to keep");
+        let mut t = Terminal::new(TestBackend::new(130, 34)).unwrap();
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        let wheel = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 10,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert!(w.mouse(wheel, &mut s));
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        assert_eq!(w.chat_scroll.offset, 3);
+        assert_eq!(w.draft(), "Draft to keep");
+        assert!(screen(&t).contains("↑ History"));
+        assert!(!w.mouse(
+            MouseEvent {
+                column: 125,
+                ..wheel
+            },
+            &mut s
+        ));
+        assert!(!w.mouse(
+            MouseEvent {
+                kind: MouseEventKind::Moved,
+                ..wheel
+            },
+            &mut s
+        ));
+        w.set_draft("/".into());
+        assert!(!w.mouse(wheel, &mut s));
+        assert_eq!(w.menu_selection, 0);
+        w.clear_draft();
+        s.approvals.push_back(Approval {
+            id: json!("pending"),
+            can_accept: true,
+            description: "Long approval\n".repeat(50),
+        });
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        assert!(w.mouse(
+            MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                ..wheel
+            },
+            &mut s
+        ));
+        assert_eq!(w.approval_scroll, 3);
+        assert_eq!(s.approvals.len(), 1);
+        assert!(w.armed_approval.is_none());
+        assert_eq!(w.chat_scroll.offset, 3);
     }
 
     #[test]

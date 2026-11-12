@@ -17,7 +17,10 @@ use std::{
 use anyhow::{Context, Result, bail};
 use crossterm::{
     cursor::{Hide, Show},
-    event::{DisableBracketedPaste, EnableBracketedPaste, Event, EventStream},
+    event::{
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event, EventStream,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -174,6 +177,7 @@ async fn run(
                         dirty = true;
                     }
                     Some(Ok(Event::Resize(_, _))) => dirty = true,
+                    Some(Ok(Event::Mouse(mouse))) => dirty |= workspace.mouse(mouse, session),
                     Some(Ok(_)) => {}
                     Some(Err(error)) => return Err(error).context("Could not read terminal input"),
                     None => return Ok(()),
@@ -325,6 +329,7 @@ impl TerminalMode {
             io::stdout(),
             EnterAlternateScreen,
             EnableBracketedPaste,
+            EnableMouseCapture,
             Hide
         )?;
         Ok(mode)
@@ -336,6 +341,7 @@ impl Drop for TerminalMode {
         let _ = execute!(
             io::stdout(),
             DisableBracketedPaste,
+            DisableMouseCapture,
             Show,
             LeaveAlternateScreen
         );

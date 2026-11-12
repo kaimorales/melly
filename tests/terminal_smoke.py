@@ -25,6 +25,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("binary", type=Path)
 parser.add_argument("--live", action="store_true", help="use a signed-in Codex and run one Luna turn")
 parser.add_argument("--features", action="store_true", help="exercise model, effort, skill and compaction menus with the fixture")
+parser.add_argument("--scroll", action="store_true", help="exercise chat wheel and keyboard scrolling with the fixture")
 parser.add_argument("--live-model", default="gpt-6-luna", help="model for the opt-in live test")
 args = parser.parse_args()
 binary = args.binary.resolve(strict=True)
@@ -83,7 +84,7 @@ def run(directory):
         os.execv(binary, [str(binary), "--model", args.live_model if args.live else "gpt-6-luna"])
 
     try:
-        expect(master, b"Ready", 30)
+        startup = expect(master, b"Ready", 30)
         if args.live:
             os.write(master,b"\x0f")  # Ctrl+O: explicitly expand tool output for shell verification.
         if args.features:
@@ -125,8 +126,26 @@ def run(directory):
                 assert turn["input"][1]["type"] == "skill", turn
                 os.write(master, b"/compact\r")
                 expect(master, b"Context compacted", 5)
+        if args.scroll:
+            assert not args.live
+            os.write(master, b"Scroll fixture\r")
+            expect(master, b"SCROLL_LINE_099", 5)
+            assert b"SCROLL_LINE_000" not in screens[master].text()
+            # SGR mouse reports, as emitted by mouse wheels and terminal trackpads.
+            os.write(master, b"\x1b[<64;10;10M" * 35)
+            expect(master, b"SCROLL_LINE_000", 5)
+            assert b"SCROLL_LINE_099" not in screens[master].text()
+            assert b"\x1b[?1006h" in startup, "Terminal never enabled SGR mouse input"
+            os.write(master, b"\x1b[<65;10;10M" * 40)
+            expect(master, b"SCROLL_LINE_099", 5)
+            os.write(master, b"\x1b[5~" * 12)  # Page Up
+            expect(master, b"SCROLL_LINE_000", 5)
+            os.write(master, b"\x1b[1;5F")  # Ctrl+End returns to latest.
+            expect(master, b"SCROLL_LINE_099", 5)
         os.write(master, b"\x11")  # Ctrl+Q
-        expect(master, b"\x1b[?1049l", 5)  # Drain the PTY while the terminal is restored.
+        cleanup = expect(master, b"\x1b[?1049l", 5)  # Drain the PTY while the terminal is restored.
+        if args.scroll:
+            assert b"\x1b[?1006l" in cleanup, "Mouse capture was not restored on exit"
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             result, status = os.waitpid(pid, os.WNOHANG)

@@ -61,12 +61,16 @@ Model and effort changes apply to the next turn. New chats start at the selected
 | Ctrl+N / Ctrl+P | Next / previous agent (portable fallback) |
 | Ctrl+U | Clear the draft and attached skills |
 | Page Up / Page Down | Scroll the focused pane |
+| Mouse wheel / trackpad | Scroll the chat or inspector beneath the pointer |
+| Ctrl+Home / Ctrl+End | Jump to the oldest loaded content / latest content in the focused pane |
 | Shift+Enter | Newline, if supported by the terminal; multiline paste also works |
 | Esc | Close a menu or return to the conversation |
 | Ctrl+C | Interrupt a running turn, or quit when idle |
 | Ctrl+Q | Quit |
 
 The inspector sits beside the chat in wide terminals, with each active agent's task, current command or file edit, elapsed turn time, selected-agent context and account quota. The conductor's waiting state comes from the harness. Workers awaiting review, requesting changes or interrupted stay visible; accepted workers collapse into the remaining-agent count. Short terminals prioritize the selected agent and active work. `/agents` or Ctrl+G keeps every agent accessible, including its review state and measured token total. Worker token totals remain visible when observing them. Narrow terminals switch between panes. The conductor keeps your draft. Luna views preserve their scroll position. Esc returns from a Luna view to the conductor. Typing brings the composer back into view.
+
+Scrolling up anchors the visible message while new output streams or older history loads. Scrolling back to the bottom, Ctrl+End, or sending a message restores following the latest output. Each agent has its own position. The quiet “History · Ctrl+End latest” hint appears only while reading earlier messages. Wheel input does not change the draft, send prompts, or scroll behind an open picker.
 
 ## Session history
 

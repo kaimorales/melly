@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent};
 use melly::{
     delegation::{Agent, Harness, ReviewVerdict},
     session::Speaker,
@@ -184,6 +184,19 @@ impl AgentWorkspace {
         }
     }
 
+    pub fn mouse(&mut self, mouse: MouseEvent, harness: &mut Harness) -> bool {
+        self.synchronize(harness);
+        // Modal surfaces own input; never scroll the hidden conversation underneath.
+        if self.sessions.is_some()
+            || self.settings_row.is_some()
+            || self.picker.is_some()
+            || self.handoff.is_some()
+        {
+            return false;
+        }
+        self.views[self.selected].mouse(mouse, &mut harness.agents[self.selected].session)
+    }
+
     pub fn key(&mut self, key: KeyEvent, harness: &mut Harness) -> bool {
         self.synchronize(harness);
         if key.kind == KeyEventKind::Release {
@@ -335,9 +348,14 @@ impl AgentWorkspace {
         if self.selected != 0 && !approval {
             if key.code == KeyCode::Esc {
                 self.selected = 0;
-            } else if matches!(key.code, KeyCode::Tab | KeyCode::PageUp | KeyCode::PageDown)
-                || (key.modifiers.contains(KeyModifiers::CONTROL)
-                    && matches!(key.code, KeyCode::Char('b' | 't' | 'o' | 'q')))
+            } else if matches!(
+                key.code,
+                KeyCode::Tab | KeyCode::PageUp | KeyCode::PageDown | KeyCode::Up | KeyCode::Down
+            ) || (key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(
+                    key.code,
+                    KeyCode::Home | KeyCode::End | KeyCode::Char('b' | 't' | 'o' | 'q')
+                ))
             {
                 return self.views[self.selected]
                     .key(key, &mut harness.agents[self.selected].session);
@@ -827,6 +845,46 @@ mod tests {
             .unwrap(),
         );
         h
+    }
+
+    #[test]
+    fn worker_chat_scrolls_without_sending_input_and_overlays_own_input() {
+        let mut h = harness();
+        h.spawn_manual("Inspect the code".into(), WorkerMode::Read, vec![])
+            .unwrap();
+        h.agents[1].session.thread_id = Some("worker-scroll".into());
+        h.agents[1].session.receive(json!({"method":"item/completed","params":{
+            "threadId":"worker-scroll","item":{"type":"agentMessage","id":"worker-answer","phase":"final_answer",
+            "text": (0..100).map(|i| format!("WORKER_ROW_{i:03}\n")).collect::<String>()}}}));
+        h.drain_requests();
+        let mut w = AgentWorkspace::default();
+        w.synchronize(&mut h);
+        w.insert("Conductor draft");
+        w.key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::ALT), &mut h);
+        let mut t = Terminal::new(TestBackend::new(130, 38)).unwrap();
+        t.draw(|f| w.draw(f, &h)).unwrap();
+        let before = screen(&t);
+        let wheel = MouseEvent {
+            kind: crossterm::event::MouseEventKind::ScrollUp,
+            column: 10,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert!(w.mouse(wheel, &mut h));
+        t.draw(|f| w.draw(f, &h)).unwrap();
+        assert_ne!(screen(&t), before);
+        assert!(screen(&t).contains("↑ History"));
+        w.key(KeyEvent::new(KeyCode::End, KeyModifiers::CONTROL), &mut h);
+        t.draw(|f| w.draw(f, &h)).unwrap();
+        assert!(screen(&t).contains("WORKER_ROW_099"));
+        assert!(!screen(&t).contains("↑ History"));
+        w.show_sessions(vec![], &h);
+        assert!(!w.mouse(wheel, &mut h));
+        assert_eq!(w.views[0].draft(), "Conductor draft");
+        assert!(
+            h.drain_requests().is_empty(),
+            "Inspecting history must not call the model"
+        );
     }
 
     #[test]

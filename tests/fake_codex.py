@@ -54,6 +54,12 @@ for line in sys.stdin:
         continue
     elif method == "turn/start":
         assert message["params"]["threadId"] == THREAD
+        if message["params"]["input"][0]["text"] == "Scroll fixture":
+            send({"id": message["id"], "result": {"turn": {"id": "scroll-turn"}}})
+            notify("item/completed", item={"id": "scroll-answer", "type": "agentMessage",
+                "phase": "final_answer", "text": "\n".join(f"SCROLL_LINE_{i:03}" for i in range(100))})
+            notify("turn/completed", turn={"id": "scroll-turn", "status": "completed"})
+            continue
         assert message["params"]["input"][0]["text"] == "Test the terminal connection"
         assert message["params"]["summary"] == "auto"
         send({"id": message["id"], "result": {"turn": {"id": TURN}}})
