@@ -14,14 +14,14 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const BG: Color = Color::Rgb(20, 23, 30);
-const PANEL: Color = Color::Rgb(27, 30, 39);
+const BG: Color = Color::Rgb(11, 11, 11);
+const PANEL: Color = Color::Rgb(24, 24, 24);
 const INK: Color = Color::Rgb(235, 232, 228);
-const MUTED: Color = Color::Rgb(162, 166, 177);
-const BORDER: Color = Color::Rgb(62, 67, 81);
+const MUTED: Color = Color::Rgb(144, 144, 144);
+const BORDER: Color = Color::Rgb(42, 42, 42);
 const ACCENT: Color = Color::Rgb(210, 183, 240);
 const MINT: Color = Color::Rgb(164, 233, 193);
-const SELECTED: Color = Color::Rgb(46, 42, 61);
+const SELECTED: Color = Color::Rgb(36, 36, 36);
 const AMBER: Color = Color::Rgb(218, 184, 125);
 
 pub enum Action {
@@ -61,6 +61,7 @@ struct EntryView {
     revision: u64,
     width: u16,
     collapsed: bool,
+    expanded_tools: bool,
     lines: Vec<Line<'static>>,
     height: usize,
 }
@@ -142,10 +143,12 @@ impl Workspace {
                 KeyCode::Char('c') => return !session.interrupt(),
                 KeyCode::Char('t') => {
                     self.thinking_expanded = !self.thinking_expanded;
+                    self.activity_focused = false;
                     return false;
                 }
                 KeyCode::Char('o') => {
                     self.tools_expanded = !self.tools_expanded;
+                    self.activity_focused = false;
                     return false;
                 }
                 KeyCode::Char('b') => {
@@ -365,8 +368,14 @@ impl Workspace {
                         .notice("Compaction is available when the session is connected and idle.");
                 }
             }
-            "thinking" => self.thinking_expanded = !self.thinking_expanded,
-            "tools" => self.tools_expanded = !self.tools_expanded,
+            "thinking" => {
+                self.thinking_expanded = !self.thinking_expanded;
+                self.activity_focused = false;
+            }
+            "tools" => {
+                self.tools_expanded = !self.tools_expanded;
+                self.activity_focused = false;
+            }
             "agents" => self.action = Some(Action::Agents),
             "settings" => self.action = Some(Action::Settings),
             "collect" => self.action = Some(Action::Collect),
@@ -385,7 +394,8 @@ impl Workspace {
             }
             "activity" => {
                 self.inspector = Inspector::Activity;
-                self.activity_focused = true;
+                self.tools_expanded = true;
+                self.activity_focused = false;
             }
             "help" => {
                 self.inspector = Inspector::Help;
@@ -434,7 +444,7 @@ impl Workspace {
         }
 
         let [header, content, footer] = Layout::vertical([
-            Constraint::Length(3),
+            Constraint::Length(2),
             Constraint::Min(3),
             Constraint::Length(1),
         ])
@@ -443,98 +453,34 @@ impl Workspace {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or(&session.cwd);
-        let model = session.model.as_deref().unwrap_or("Discovering models");
-        let settings = if session.busy() && session.active_model.is_some() {
-            let active = session.active_model.as_deref().unwrap_or("Codex");
-            let effort = session.active_effort.as_deref().unwrap_or("unreported");
-            let next = if session.active_model != session.model
-                || session.active_effort != session.effort
-            {
-                format!(
-                    " → next {} · {}",
-                    model.trim_start_matches("gpt-"),
-                    session.effort.as_deref().unwrap_or("default")
-                )
-            } else {
-                String::new()
-            };
-            format!(
-                "  active {} · {effort}{next}",
-                active.trim_start_matches("gpt-")
-            )
-        } else {
-            format!(
-                "  {}  ·  {}",
-                printable(model),
-                session.effort.as_deref().unwrap_or("default")
-            )
-        };
         let [identity, state] = Layout::horizontal([
             Constraint::Min(12),
             Constraint::Length(30.min(area.width / 2)),
         ])
         .areas(header);
         frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(vec![
-                    Span::styled(
-                        format!(
-                            "  melly / {}  ",
-                            if matches!(self.agent_label.as_str(), "" | "lead") {
-                                "conductor"
-                            } else {
-                                &self.agent_label
-                            }
-                        ),
-                        self.accent(),
-                    ),
-                    Span::styled(printable(cwd), dim()),
-                ]),
-                Line::styled(settings, dim()),
-            ])
-            .block(
-                Block::default()
-                    .borders(Borders::BOTTOM)
-                    .border_style(border()),
-            ),
+            Paragraph::new(Line::from(vec![
+                Span::styled("  melly", self.accent()),
+                Span::styled(format!("  /  {}", printable(cwd)), dim()),
+            ])),
             identity,
         );
-        let seconds = session
-            .elapsed()
-            .map_or(String::new(), |d| format!("  {:.1}s", d.as_secs_f32()));
         let symbol = if session.busy() || session.connecting() {
             "◌"
         } else {
             "●"
         };
         frame.render_widget(
-            Paragraph::new(vec![
-                Line::styled(
-                    format!("{symbol} {}{seconds}  ", session.status),
-                    Style::default().fg(MINT),
-                ),
-                Line::styled(
-                    if session.busy() {
-                        "Ctrl+C interrupt  "
-                    } else {
-                        "/ commands  "
-                    },
-                    dim(),
-                ),
-            ])
-            .alignment(ratatui::layout::Alignment::Right)
-            .block(
-                Block::default()
-                    .borders(Borders::BOTTOM)
-                    .border_style(border()),
-            ),
+            Paragraph::new(format!("{symbol} {}  ", session.status))
+                .style(dim())
+                .alignment(ratatui::layout::Alignment::Right),
             state,
         );
 
         let wide = area.width >= 105;
         if wide {
             let [chat, activity] =
-                Layout::horizontal([Constraint::Min(60), Constraint::Length(40)]).areas(content);
+                Layout::horizontal([Constraint::Min(60), Constraint::Length(34)]).areas(content);
             self.chat(frame, chat, session);
             self.activity(frame, activity, session);
         } else if self.activity_focused {
@@ -543,9 +489,15 @@ impl Workspace {
             self.chat(frame, content, session);
         }
         frame.render_widget(
-            Paragraph::new(
-                "  / commands   Alt+1…9 agents   Ctrl+T thinking   Ctrl+O tool output   Ctrl+Q quit",
-            )
+            Paragraph::new(if self.managed && self.agent_label != "lead" {
+                "  Ctrl+N/P agents   Ctrl+O activity   Ctrl+T thinking"
+            } else if self.activity_focused {
+                "  Tab chat   ↑↓ scroll   / commands"
+            } else if session.busy() {
+                "  Ctrl+C interrupt   Ctrl+O activity   /agents switch"
+            } else {
+                "  / commands   /agents switch   Ctrl+O activity"
+            })
             .style(dim()),
             footer,
         );
@@ -566,7 +518,7 @@ impl Workspace {
             let block = Block::bordered()
                 .title(format!(
                     " Approval required · {} ",
-                    if self.agent_label.is_empty() {
+                    if matches!(self.agent_label.as_str(), "" | "lead") {
                         "lead"
                     } else {
                         &self.agent_label
@@ -674,7 +626,10 @@ impl Workspace {
                 ),
                 self.accent(),
             ),
-            Span::styled(session.model.as_deref().unwrap_or("Loading models"), dim()),
+            Span::styled(
+                model_name(session.model.as_deref().unwrap_or("Loading models")),
+                dim(),
+            ),
             Span::styled(
                 format!("  {}", session.effort.as_deref().unwrap_or("")),
                 dim(),
@@ -778,7 +733,7 @@ impl Workspace {
                 history,
                 session,
                 EntryStyle {
-                    tools: false,
+                    tools: self.tools_expanded,
                     collapsed: !self.thinking_expanded,
                     accent: self.color(),
                     agent: &self.agent_label,
@@ -812,9 +767,10 @@ impl Workspace {
         }
         if observer {
             frame.render_widget(
-                Paragraph::new(
-                    "  Observing Luna   Esc conductor   Tab activity   Ctrl+O tool output",
-                )
+                Paragraph::new(format!(
+                    "  Observing Luna · {}   Esc conductor   Tab context",
+                    printable(&self.agent_label)
+                ))
                 .style(dim().bg(PANEL)),
                 composer,
             );
@@ -826,17 +782,8 @@ impl Workspace {
             .map(|s| format!("${}", s.name))
             .collect::<Vec<_>>()
             .join("  ");
-        let title = if self.menu_dismissed && self.draft.starts_with('/') {
-            " Literal message · Enter send "
-        } else if session.busy() {
-            " Steer this turn "
-        } else {
-            " Message "
-        };
         let block = Block::default()
-            .title(title)
-            .title_style(self.accent())
-            .borders(Borders::TOP)
+            .borders(Borders::LEFT)
             .border_style(if self.activity_focused {
                 border()
             } else {
@@ -845,6 +792,28 @@ impl Workspace {
             .style(Style::default().bg(PANEL));
         let mut inner = block.inner(composer);
         frame.render_widget(block, composer);
+        let label = if self.menu_dismissed && self.draft.starts_with('/') {
+            "Literal message"
+        } else if session.busy() {
+            "Steer conductor"
+        } else {
+            "Conductor"
+        };
+        let meta = Line::from(vec![
+            Span::styled(format!("  {label}"), Style::default().fg(self.color())),
+            Span::styled(format!(" · {}", model_settings(session)), dim()),
+        ]);
+        if inner.height > 1 {
+            frame.render_widget(
+                Paragraph::new(meta),
+                Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
+            );
+            inner.height -= 1;
+        }
+        if inner.height > 1 {
+            inner.y += 1;
+            inner.height -= 1;
+        }
         if !skill_names.is_empty() && inner.height > 1 {
             frame.render_widget(
                 Paragraph::new(format!("  {skill_names}  · Ctrl+U clear"))
@@ -856,11 +825,11 @@ impl Workspace {
         }
         let (before, after) = self.draft.split_at(self.cursor);
         let visible = if self.draft.is_empty() {
-            "  › ▌ Ask, build, fix… or / for commands".into()
+            "  ▌ Ask anything…".into()
         } else {
-            format!("  › {before}▌{after}")
+            format!("  {before}▌{after}")
         };
-        let through = Paragraph::new(format!("  › {before}▌")).wrap(Wrap { trim: false });
+        let through = Paragraph::new(format!("  {before}▌")).wrap(Wrap { trim: false });
         let scroll = through
             .line_count(inner.width)
             .saturating_sub(inner.height as usize);
@@ -961,28 +930,13 @@ impl Workspace {
     }
 
     fn activity(&mut self, frame: &mut Frame, area: Rect, session: &Session) {
-        let title = match self.inspector {
-            Inspector::Activity => " Activity ",
-            Inspector::Usage => " Usage ",
-            Inspector::Context => " Context ",
-            Inspector::Status => " Session ",
-            Inspector::Help => " Shortcuts ",
-        };
-        let panel = Block::default()
-            .title(title)
-            .title_style(if self.activity_focused {
-                self.accent()
-            } else {
-                dim()
-            })
-            .borders(Borders::LEFT)
-            .border_style(border());
+        let panel = Block::default().style(Style::default().bg(Color::Rgb(17, 17, 17)));
         let inner = panel.inner(area);
         frame.render_widget(panel, area);
-        let roster_height = (self.roster.len() as u16).min(inner.height.saturating_sub(10));
-        let [roster, meta, events] = Layout::vertical([
+        let roster_height = (self.roster.len() as u16).min(inner.height.saturating_sub(7));
+        let [meta, roster, events] = Layout::vertical([
+            Constraint::Length(5),
             Constraint::Length(roster_height),
-            Constraint::Length(6),
             Constraint::Min(1),
         ])
         .areas(inner);
@@ -1001,13 +955,6 @@ impl Workspace {
                 Style::default().fg(INK).add_modifier(Modifier::BOLD),
             ),
             Line::styled(format!("  {used} / {capacity}{percent}"), dim()),
-            Line::styled(
-                format!(
-                    "  {} session tokens",
-                    session.tokens.map_or("—".into(), display_tokens)
-                ),
-                dim(),
-            ),
         ];
         if let Some(q) = session
             .quota
@@ -1041,35 +988,19 @@ impl Workspace {
         frame.render_widget(Paragraph::new(lines), meta);
         let events = Rect::new(events.x, events.y, events.width, events.height);
         if self.inspector == Inspector::Activity {
-            if session.entries.iter().all(|e| e.speaker != Speaker::Tool) {
-                frame.render_widget(
-                    Paragraph::new(vec![
-                        Line::styled("  LIVE ACTIVITY", dim()),
-                        Line::default(),
-                        Line::styled("  Commands and file changes appear here.", dim()),
-                        Line::default(),
-                        Line::styled("  /usage    quota and token details", dim()),
-                        Line::styled("  /context  inspect the context window", dim()),
-                        Line::styled("  /status   connection and timing", dim()),
-                    ])
-                    .wrap(Wrap { trim: false }),
-                    events,
-                );
-            } else {
-                render_entries(
-                    frame,
-                    events,
-                    session,
-                    EntryStyle {
-                        tools: true,
-                        collapsed: !self.tools_expanded,
-                        accent: self.color(),
-                        agent: &self.agent_label,
-                    },
-                    &mut self.activity_scroll,
-                    &mut self.render_cache,
-                );
+            let mut lines = vec![Line::styled("  /agents  browse all", dim())];
+            if self.agent_label != "lead" && !self.agent_label.is_empty() {
+                lines.push(Line::default());
+                lines.push(Line::styled(
+                    format!(
+                        "  {} tokens used",
+                        session.tokens.map_or("—".into(), display_tokens)
+                    ),
+                    dim(),
+                ));
+                lines.push(Line::styled("  Ctrl+O  activity details", dim()));
             }
+            frame.render_widget(Paragraph::new(lines), events);
         } else {
             let lines = inspector_lines(self.inspector, session);
             draw_scrollback(frame, events, lines, &mut self.activity_scroll);
@@ -1170,17 +1101,36 @@ fn render_entries(
     if cache.len() > 450 {
         cache.retain(|key, _| session.entries.iter().any(|e| e.key == *key));
     }
-    let entries: Vec<_> = session
-        .entries
-        .iter()
-        .filter(|e| (e.speaker == Speaker::Tool) == style.tools)
-        .collect();
+    // Consecutive reasoning, progress and tools form a single disclosure. Keep
+    // references, not copies of tool output, so drawing a long history stays cheap.
+    let mut groups: Vec<Vec<&Entry>> = Vec::new();
+    for entry in &session.entries {
+        if is_activity(entry) && groups.last().is_some_and(|g| is_activity(g[0])) {
+            groups.last_mut().unwrap().push(entry);
+        } else {
+            groups.push(vec![entry]);
+        }
+    }
     let mut total = 0;
-    for entry in &entries {
+    for group in &groups {
+        let entry = group[0];
+        let revision = group.iter().fold(0u64, |hash, e| {
+            hash.wrapping_mul(31)
+                .wrapping_add(e.key)
+                .wrapping_mul(31)
+                .wrapping_add(e.revision)
+        });
         if !cache.get(&entry.key).is_some_and(|v| {
-            v.revision == entry.revision && v.width == area.width && v.collapsed == style.collapsed
+            v.revision == revision
+                && v.width == area.width
+                && v.collapsed == style.collapsed
+                && v.expanded_tools == style.tools
         }) {
-            let lines = entry_lines(entry, &style);
+            let lines = if is_activity(entry) {
+                activity_lines(group, &style, area.width)
+            } else {
+                entry_lines(entry, &style)
+            };
             let card = entry.speaker == Speaker::You;
             let height = Paragraph::new(lines.clone())
                 .wrap(Wrap { trim: false })
@@ -1189,9 +1139,10 @@ fn render_entries(
             cache.insert(
                 entry.key,
                 EntryView {
-                    revision: entry.revision,
+                    revision,
                     width: area.width,
                     collapsed: style.collapsed,
+                    expanded_tools: style.tools,
                     lines,
                     height,
                 },
@@ -1203,7 +1154,8 @@ fn render_entries(
     *offset = (*offset).min(bottom);
     let top = bottom.saturating_sub(*offset);
     let mut position = 0usize;
-    for entry in entries {
+    for group in groups {
+        let entry = group[0];
         let view = &cache[&entry.key];
         let end = position + view.height;
         if end > top && position < top + area.height as usize {
@@ -1240,6 +1192,127 @@ fn render_entries(
     }
 }
 
+fn is_activity(entry: &Entry) -> bool {
+    matches!(entry.speaker, Speaker::Thinking | Speaker::Tool)
+        || (entry.speaker == Speaker::Codex && entry.outcome.as_deref() == Some("commentary"))
+}
+
+fn activity_lines(entries: &[&Entry], style: &EntryStyle<'_>, width: u16) -> Vec<Line<'static>> {
+    let thinking = entries.iter().any(|e| e.speaker == Speaker::Thinking);
+    let tools = entries
+        .iter()
+        .filter(|e| e.speaker == Speaker::Tool)
+        .count();
+    let running = entries.iter().any(|e| !e.complete);
+    let failed = entries.iter().any(|e| {
+        matches!(
+            e.outcome.as_deref(),
+            Some("failed" | "declined" | "interrupted")
+        )
+    });
+    let expanded = !style.collapsed || style.tools;
+    let name = if thinking {
+        if running { "Thinking" } else { "Thought" }
+    } else {
+        "Activity"
+    };
+    let count = if tools > 0 {
+        format!(" · {tools} tool{}", if tools == 1 { "" } else { "s" })
+    } else {
+        String::new()
+    };
+    let mut lines = vec![Line::styled(
+        format!(
+            "  {} {name}{count}{}",
+            if expanded { "−" } else { "+" },
+            if failed { " · failed" } else { "" }
+        ),
+        Style::default().fg(if thinking || failed { AMBER } else { MUTED }),
+    )];
+    if expanded {
+        lines.push(Line::default());
+        for entry in entries {
+            match entry.speaker {
+                Speaker::Thinking if !style.collapsed => {
+                    lines.extend(
+                        printable(&entry.text)
+                            .lines()
+                            .map(|l| markdown_line(l, style.accent).style(dim())),
+                    );
+                    lines.push(Line::default());
+                }
+                Speaker::Tool if style.tools => {
+                    let details = EntryStyle {
+                        tools: true,
+                        collapsed: false,
+                        accent: style.accent,
+                        agent: style.agent,
+                    };
+                    lines.extend(entry_lines(entry, &details));
+                }
+                Speaker::Codex => {
+                    lines.extend(
+                        printable(&entry.text)
+                            .lines()
+                            .map(|l| markdown_line(l, style.accent).style(dim())),
+                    );
+                    lines.push(Line::default());
+                }
+                _ => {}
+            }
+        }
+    } else if let Some(entry) = entries.iter().rev().find(|e| {
+        !e.complete
+            || matches!(
+                e.outcome.as_deref(),
+                Some("failed" | "declined" | "interrupted")
+            )
+    }) {
+        let label = tool_label(entry);
+        lines.push(Line::styled(
+            format!("    {}", ellipsis(&label, width.saturating_sub(5) as usize)),
+            dim(),
+        ));
+    }
+    lines.push(Line::default());
+    lines
+}
+
+pub(crate) fn ellipsis(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_owned();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    text.chars()
+        .take(width - 1)
+        .chain(std::iter::once('…'))
+        .collect()
+}
+
+fn tool_label(entry: &Entry) -> String {
+    if entry.speaker == Speaker::Thinking {
+        return "Reasoning…".into();
+    }
+    if entry.speaker == Speaker::Codex {
+        return "Working…".into();
+    }
+    let text = printable(&entry.text);
+    let first = text.lines().next().unwrap_or("Working");
+    if first.contains("SKILL.md") {
+        "Reading skill".into()
+    } else if first.contains("melly_agents") {
+        "Coordinating Luna".into()
+    } else if first.contains("test") {
+        "Running checks".into()
+    } else if first.starts_with('$') {
+        "Running command".into()
+    } else {
+        first.to_owned()
+    }
+}
+
 fn entry_lines(entry: &Entry, style: &EntryStyle<'_>) -> Vec<Line<'static>> {
     let collapsed = style.collapsed;
     let text = printable(&entry.text);
@@ -1263,7 +1336,7 @@ fn entry_lines(entry: &Entry, style: &EntryStyle<'_>) -> Vec<Line<'static>> {
             lines.push(Line::default());
             lines.extend(
                 text.lines()
-                    .map(|l| Line::styled(format!("    {l}"), dim().bg(PANEL))),
+                    .map(|l| markdown_line(l, style.accent).style(dim())),
             );
         }
         lines.push(Line::default());
@@ -1306,7 +1379,10 @@ fn entry_lines(entry: &Entry, style: &EntryStyle<'_>) -> Vec<Line<'static>> {
     }
     if entry.speaker == Speaker::You {
         let mut lines = vec![Line::default()];
-        lines.extend(text.lines().map(|line| Line::raw(format!("  {line}"))));
+        lines.extend(
+            text.lines()
+                .map(|line| Line::styled(format!("  {line}"), dim().bg(PANEL))),
+        );
         lines.push(Line::default());
         return lines;
     }
@@ -1367,7 +1443,7 @@ fn entry_lines(entry: &Entry, style: &EntryStyle<'_>) -> Vec<Line<'static>> {
                 lines.push(if commentary { line.style(dim()) } else { line });
             }
         }
-        if entry.complete && !text.is_empty() {
+        if entry.complete && !text.is_empty() && !commentary {
             let agent = if style.agent.is_empty() || style.agent == "lead" {
                 "Conductor".into()
             } else {
@@ -1381,7 +1457,7 @@ fn entry_lines(entry: &Entry, style: &EntryStyle<'_>) -> Vec<Line<'static>> {
                 footer.push(Span::styled(" · progress", dim()));
             }
             if let Some(model) = entry.model.as_deref() {
-                footer.push(Span::styled(format!(" · {}", printable(model)), dim()));
+                footer.push(Span::styled(format!(" · {}", model_name(model)), dim()));
             }
             lines.push(Line::default());
             lines.push(Line::from(footer));
@@ -1389,6 +1465,44 @@ fn entry_lines(entry: &Entry, style: &EntryStyle<'_>) -> Vec<Line<'static>> {
     }
     lines.push(Line::default());
     lines
+}
+
+fn model_name(id: &str) -> String {
+    match id {
+        "gpt-6-astra" => "Astra".into(),
+        "gpt-6-luna" => "Luna".into(),
+        "gpt-6.1-sol" | "gpt-6-sol" => "Sol".into(),
+        "gpt-6.1-terra" => "Terra".into(),
+        _ => printable(id),
+    }
+}
+
+fn model_settings(session: &Session) -> String {
+    let active = session.busy() && session.active_model.is_some();
+    let model = if active {
+        &session.active_model
+    } else {
+        &session.model
+    };
+    let effort = if active {
+        &session.active_effort
+    } else {
+        &session.effort
+    };
+    let mut text = format!(
+        "{} · {}",
+        model_name(model.as_deref().unwrap_or("Codex")),
+        effort.as_deref().unwrap_or("default")
+    );
+    if active && (session.active_model != session.model || session.active_effort != session.effort)
+    {
+        text.push_str(&format!(
+            " → next {} · {}",
+            model_name(session.model.as_deref().unwrap_or("Codex")),
+            session.effort.as_deref().unwrap_or("default")
+        ));
+    }
+    text
 }
 
 fn markdown_line(text: &str, accent_color: Color) -> Line<'static> {
@@ -1498,6 +1612,71 @@ pub(crate) mod tests {
         assert!(!text.contains("LIVE ACTIVITY"));
         assert!(!text.contains("Latest model-call snapshot"));
         capture(&t, "home");
+    }
+
+    #[test]
+    fn active_turn_metadata_and_narrow_activity_controls_stay_truthful() {
+        let mut s = fixture();
+        s.submit("Check the parser");
+        s.drain_requests();
+        s.receive(json!({"method":"turn/started","params":{"threadId":"preview-thread","turn":{"id":"t"}}}));
+        s.active_model = Some("gpt-6-astra".into());
+        s.active_effort = Some("medium".into());
+        s.model = Some("gpt-6.1-sol".into());
+        s.effort = Some("low".into());
+        s.receive(json!({"method":"item/completed","params":{"threadId":"preview-thread","item":{
+            "id":"tool","type":"commandExecution","command":"cargo test parser","aggregatedOutput":"PARSER_CHECK_PASSED","exitCode":0,"status":"completed"}}}));
+        let mut w = Workspace::default();
+        let mut t = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        let text = screen(&t);
+        assert!(text.contains("Steer conductor · Astra · medium → next Sol · low"));
+        press(&mut w, &mut s, KeyCode::Tab);
+        w.key(
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
+            &mut s,
+        );
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        assert!(screen(&t).contains("PARSER_CHECK_PASSED"));
+    }
+
+    #[test]
+    fn conversation_groups_activity_and_renders_thinking_markdown() {
+        let mut s = fixture();
+        s.submit("Fix the return transition.");
+        s.drain_requests();
+        for item in [
+            json!({"type":"agentMessage","id":"progress","phase":"commentary","text":"Checking the navigation path."}),
+            json!({"type":"reasoning","id":"reason","summary":["**Checking the viewport**"]}),
+            json!({"type":"commandExecution","id":"command","command":"cat assets/home/styles.css","aggregatedOutput":"RAW_SHELL_OUTPUT","status":"completed","exitCode":0}),
+            json!({"type":"agentMessage","id":"final","phase":"final_answer","text":"Fixed the transition. The checks pass."}),
+        ] {
+            s.receive(json!({"method":"item/completed","params":{"threadId":"preview-thread","item":item}}));
+        }
+        let mut w = Workspace::default();
+        let mut t = Terminal::new(TestBackend::new(130, 34)).unwrap();
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        let text = screen(&t);
+        assert!(!text.contains("Checking the navigation path."));
+        assert!(!text.contains("cat assets/home/styles.css"));
+        assert!(!text.contains("RAW_SHELL_OUTPUT"));
+        assert_eq!(text.matches("+ Thought").count(), 1);
+        assert!(text.contains("Fixed the transition"));
+        assert!(!text.contains("· progress"));
+        w.key(
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+            &mut s,
+        );
+        w.key(
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
+            &mut s,
+        );
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        let text = screen(&t);
+        assert!(text.contains("Checking the viewport"));
+        assert!(!text.contains("**Checking the viewport**"));
+        assert!(text.contains("RAW_SHELL_OUTPUT"));
+        capture(&t, "expanded");
     }
 
     #[test]
@@ -1668,6 +1847,12 @@ pub(crate) mod tests {
         s.receive(json!({"method":"item/completed","params":{"threadId":"preview-thread","item":{
             "id":"cmd","type":"commandExecution","command":"echo `date` **/*.rs","exitCode":1,"status":"failed"}}}));
         let mut t = Terminal::new(TestBackend::new(130, 32)).unwrap();
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        assert!(screen(&t).contains("failed"));
+        w.key(
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
+            &mut s,
+        );
         t.draw(|f| w.draw(f, &s)).unwrap();
         let text = screen(&t);
         assert!(text.contains("FAILED"));

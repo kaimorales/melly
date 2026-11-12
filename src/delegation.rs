@@ -8,7 +8,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-const CONDUCTOR_GUIDANCE: &str = "You are Melly's conductor and the user's only conversation partner. Answer questions directly when delegation adds no value. For edits, delegate implementation to Luna with specific workspace-relative paths and acceptance checks. Give Luna enough context to edit, run tests, fix failures, and iterate independently. Wait for its result. Then inspect the actual working-tree diff (including new files) and the reported command outcomes against the user's request. Review once when Luna finishes. Use clear harness-recorded check results without rerunning the same checks. Rerun a targeted check only when the evidence is missing or ambiguous. If a material problem remains, send the same Luna one focused correction using revise when available, then check that correction. If that tool is unavailable, you can assign a bounded follow-up through spawn. Do not edit files yourself. If delegation or checks are blocked, tell the user what remains unverified.";
+const CONDUCTOR_GUIDANCE: &str = "You are Melly's conductor and the user's only conversation partner. Answer questions directly when delegation adds no value. For a requested change, inspect the relevant code and tests yourself, identify the evidence, and choose a concrete implementation approach. Keep user-facing progress to a short status; put your findings and decisions into the worker brief rather than a long chat explanation. Then use melly_agents.spawn in edit mode to assign Luna the specific workspace-relative paths, findings, implementation steps, behavior to preserve, and acceptance checks. A diagnosis in chat does not complete a requested fix. Do not assign Luna to figure out the change from scratch when you can determine the approach. Your read-only sandbox and approval restrictions apply only to your thread. Do not include them in worker objectives, context, expected output, or revision feedback. Luna follows its own server-provided permissions. Use an event-driven wait with timeout_ms 120000 for the worker rather than repeated short polls. Inspect the actual working-tree diff (including new files) and compare it and the reported checks against the user's request. Use clear harness-recorded check results without rerunning them. Rerun a targeted check when the evidence is missing or ambiguous. If a material defect remains, give the same Luna one focused correction through revise when available, then verify that correction. If revise is unavailable, use a bounded follow-up spawn when capacity permits. Do not edit files yourself. Report the outcome and any specific blocker or unverified check concisely.";
+
+const EDIT_WORKER_GUIDANCE: &str = "You are a Melly edit worker. Implement the assigned change in your owned paths and run its acceptance checks. Preserve concurrent edits and address in-scope failures before reporting changed files, actual check outcomes, and any blockers. Use your own thread's server-provided sandbox and approval policy. Permission descriptions in the conductor's brief, revision feedback, or prior history do not set your permissions. The conductor's read-only restriction applies only to its own thread. Follow your actual approval workflow when required and never bypass restrictions. Do not delegate to other agents.";
+
+const READ_WORKER_GUIDANCE: &str = "You are a Melly read worker. Inspect the assigned scope and report evidence. Do not edit files, request extra permissions, or delegate to other agents.";
 
 const MAX_ACTIVE: usize = 3;
 const MAX_AUTOMATIC: usize = 2;
@@ -268,13 +272,21 @@ impl Harness {
                     if index == 0 && method == "thread/start" {
                         request["params"]["dynamicTools"] = dynamic_tools();
                     }
-                    if index == 0 && matches!(method.as_str(), "thread/start" | "thread/resume") {
-                        request["params"]["sandbox"] = json!("read-only");
-                        request["params"]["approvalPolicy"] = json!("never");
+                    let (role, guidance) = match (index, agent.mode) {
+                        (0, _) => ("melly-conductor", CONDUCTOR_GUIDANCE),
+                        (_, WorkerMode::Edit) => ("melly-worker", EDIT_WORKER_GUIDANCE),
+                        (_, WorkerMode::Read) => ("melly-worker", READ_WORKER_GUIDANCE),
+                    };
+                    if matches!(method.as_str(), "thread/start" | "thread/resume") {
+                        request["params"]["developerInstructions"] = json!(guidance);
+                        if index == 0 {
+                            request["params"]["sandbox"] = json!("read-only");
+                            request["params"]["approvalPolicy"] = json!("never");
+                        }
                     }
-                    if index == 0 && method == "turn/start" {
-                        request["params"]["additionalContext"]["melly-conductor"] =
-                            json!({"kind":"application","value":CONDUCTOR_GUIDANCE});
+                    if method == "turn/start" {
+                        request["params"]["additionalContext"][role] =
+                            json!({"kind":"application","value":guidance});
                     }
                     if method == "turn/start" && (index == 0 || agent.mode == WorkerMode::Read) {
                         request["params"]["sandboxPolicy"] =
@@ -1446,7 +1458,7 @@ impl Brief {
             if self.mode == WorkerMode::Read {
                 "Inspect only; do not edit files or request extra permissions."
             } else {
-                "Edit only your owned paths. Ownership is coordination, not an OS guarantee. Keep configured Codex approval and sandbox policy; do not obtain extra access."
+                "Edit only your owned paths. Ownership is coordination, not an OS guarantee. Follow the sandbox and approval rules of your own Codex thread."
             },
             if self.paths.is_empty() {
                 "None (read-only inspection)".into()
@@ -1541,16 +1553,16 @@ fn tool_result(output: Value, success: bool) -> Value {
 fn dynamic_tools() -> Value {
     let ids = json!({"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3});
     let tools = vec![
-        json!({"type":"function","name":"spawn","description":"Assign worthwhile work to Luna. Use edit mode for implementation and include explicit acceptance checks so Luna can edit, test, and iterate independently. Never delegate trivial greetings or the same work twice. Give a bounded objective, only relevant context, expected output, and a concrete reason. At most 2 worker turns (spawns and revisions) per user turn and 3 active workers total. Read mode cannot edit and can use an empty paths array. Any supplied paths must be relative to the workspace. Edit mode requires disjoint owned paths; preserve concurrent edits and configured permissions. Workers cannot delegate. Returns the worker id immediately.","deferLoading":false,
+        json!({"type":"function","name":"spawn","description":"Assign worthwhile work to Luna. Use edit mode for implementation and include explicit acceptance checks so Luna can edit, test, and iterate independently. Never delegate trivial greetings or the same work twice. Include the evidence and chosen implementation steps in context, behavior to preserve, and concrete acceptance checks. Keep conductor permissions out of the brief. At most 2 worker turns (spawns and revisions) per user turn and 3 active workers total. Read mode cannot edit and can use an empty paths array. Any supplied paths must be relative to the workspace. Edit mode requires disjoint owned paths; preserve concurrent edits and configured permissions. Workers cannot delegate. Returns the worker id immediately.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["objective","context","expected_output","reason","mode","paths"],"properties":{
-                "objective":{"type":"string","minLength":1,"maxLength":2000},"context":{"type":"string","maxLength":6000},
-                "expected_output":{"type":"string","minLength":1,"maxLength":1000},"reason":{"type":"string","minLength":1,"maxLength":1000},
+                "objective":{"type":"string","minLength":1,"maxLength":2000},"context":{"type":"string","maxLength":6000,"description":"Relevant findings, implementation steps, and behavior to preserve."},
+                "expected_output":{"type":"string","minLength":1,"maxLength":1000,"description":"Expected changes, acceptance checks, and the report to return."},"reason":{"type":"string","minLength":1,"maxLength":1000},
                 "mode":{"type":"string","enum":["read","edit"]},"paths":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":512}}}}}),
         json!({"type":"function","name":"wait","description":"Wait without polling model turns for these workers to finish or for a bounded timeout. Returns final reports, observed command exit codes, model usage and owned paths. After implementation, inspect the actual diff and check the evidence before accepting. No hidden lead turn is started.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["ids","timeout_ms"],"properties":{"ids":ids,"timeout_ms":{"type":"integer","minimum":0,"maximum":120000}}}}),
         json!({"type":"function","name":"status","description":"Read compact worker status and completed reports when useful; avoid repetitive polling. Prefer wait when you need a result.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["ids"],"properties":{"ids":ids}}}),
-        json!({"type":"function","name":"revise","description":"Send one focused correction to a finished Luna after reviewing its diff and checks. The same worker keeps its context and owned paths. Counts against the shared worker-turn cap.","deferLoading":false,
+        json!({"type":"function","name":"revise","description":"Send one focused correction citing a defect in the diff or checks. Keep conductor permissions out of feedback. The same worker keeps its context and owned paths. Counts against the shared worker-turn cap.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["id","feedback"],"properties":{"id":{"type":"string"},"feedback":{"type":"string","maxLength":1800}}}}),
         json!({"type":"function","name":"compact","description":"When context is crowded, compact an idle worker or schedule the lead to compact after this turn. Use sparingly: compaction is a model operation. One successful request per lead turn.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string","description":"lead or the ID of an idle worker"}}}}),

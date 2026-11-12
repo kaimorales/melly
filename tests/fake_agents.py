@@ -82,9 +82,10 @@ for line in sys.stdin:
             send({"id": m["id"], "error": {"code": -32600, "message": "no rollout found for thread id missing-lead"}})
             continue
         assert "dynamicTools" not in m["params"]
-        if thread != "lead":
-            assert m["params"]["sandbox"] == "read-only"
-            assert m["params"]["approvalPolicy"] == "never"
+        assert m["params"]["sandbox"] == "read-only"
+        assert m["params"]["approvalPolicy"] == "never"
+        role = "Melly's conductor" if thread == "lead" else "Melly read worker"
+        assert role in m["params"]["developerInstructions"]
         threads.append(thread)
         resumed = True
         result = {"thread": {"id": thread}, "model": "gpt-6.1-sol" if thread == "lead" else "gpt-6-luna"}
@@ -105,15 +106,24 @@ for line in sys.stdin:
             assert m["params"]["dynamicTools"][0]["name"] == "melly_agents"
         else:
             assert "dynamicTools" not in m["params"]
+        role = "Melly's conductor" if thread == "lead" else "Melly read worker"
+        assert role in m["params"]["developerInstructions"]
+        assert m["params"]["sandbox"] == "read-only"
+        assert m["params"]["approvalPolicy"] == "never"
         threads.append(thread)
         result = {"thread": {"id": thread}, "model": m["params"]["model"]}
     elif method == "turn/start":
         thread = m["params"]["threadId"]
         turn = turns[thread] = f"{thread}-turn-{m['id']}"
         send({"id": m["id"], "result": {"turn": {"id": turn}}})
+        assert m["params"]["sandboxPolicy"] == {"type":"readOnly","networkAccess":False}
+        assert m["params"]["approvalPolicy"] == "never"
+        role_key = "melly-conductor" if thread == "lead" else "melly-worker"
+        role = m["params"]["additionalContext"][role_key]
+        assert role["kind"] == "application"
+        expected_role = "Melly's conductor" if thread == "lead" else "Melly read worker"
+        assert expected_role in role["value"]
         if thread == "lead":
-            assert m["params"]["sandboxPolicy"] == {"type":"readOnly","networkAccess":False}
-            assert "melly-conductor" in m["params"]["additionalContext"]
             call("auto-a", "spawn", spawn_args("a.txt"))
             if not resumed:
                 call("auto-b", "spawn", spawn_args("b.txt"))

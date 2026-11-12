@@ -39,7 +39,7 @@ Type `/` to open the palette. Type to filter, use Up/Down to select, Tab to comp
 | `/stop` | Interrupt the active turn |
 | `/quit` | Close Melly |
 
-Model and effort changes apply to the next turn. New chats start at the selected model's advertised default effort; resumed chats preserve their settings. The header distinguishes active settings from queued settings while a turn runs. Sending a message during a turn steers it with its current settings. Skill selection attaches a typed skill input; opening a menu or inspecting usage does not make a model call.
+Model and effort changes apply to the next turn. New chats start at the selected model's advertised default effort; resumed chats preserve their settings. The composer distinguishes active settings from queued settings while a turn runs. Sending a message during a turn steers it with its current settings. Skill selection attaches a typed skill input; opening a menu or inspecting usage does not make a model call.
 
 ## Keyboard
 
@@ -60,13 +60,13 @@ Model and effort changes apply to the next turn. New chats start at the selected
 | Ctrl+C | Interrupt a running turn, or quit when idle |
 | Ctrl+Q | Quit |
 
-The inspector sits beside the chat in wide terminals, with an agent roster, selected-agent context and tokens, and live activity. Narrow terminals switch between panes. The conductor keeps your draft. Luna views preserve their scroll position. Esc returns from a Luna view to the conductor. Typing brings the composer back into view.
+The inspector sits beside the chat in wide terminals, with active agent tasks, selected-agent context and account quota. Completed agents collapse to a count; `/agents` keeps every agent accessible. Worker token totals remain visible when observing them. Narrow terminals switch between panes. The conductor keeps your draft. Luna views preserve their scroll position. Esc returns from a Luna view to the conductor. Typing brings the composer back into view.
 
 When a supported command or patch needs approval, inspect the action, press `y` to select allow, then Enter to confirm. Press `n` to decline. Melly preserves the sandbox and approval policy configured in Codex.
 
 ## Delegation
 
-The conductor is the only conversation you type into. It answers simple questions directly and delegates coding changes to Luna with scoped paths and acceptance checks. Luna owns implementation and the test loop. When Luna finishes, the conductor reviews the working-tree diff and the command exit codes captured by Melly. It can ask the same worker for a focused correction, then review that correction. The conductor runs in Codex's read-only sandbox. Editing workers retain the configured sandbox and approval policy, and ownership is a coordination rule.
+The conductor is the only conversation you type into. It answers simple questions directly. For coding changes, it inspects relevant code and tests, identifies the evidence, and chooses an approach before giving Luna the findings, concrete implementation steps, scoped paths, behavior to preserve, and acceptance checks. User-facing progress stays brief. Luna owns implementation and the test loop. When Luna finishes, the conductor reviews the working-tree diff and the command exit codes captured by Melly. It can ask the same worker for a focused correction, then review that correction. The conductor runs in Codex's read-only sandbox. Editing workers retain their own configured sandbox and approval policy, and ownership is a coordination rule. The conductor’s read-only role does not make the workspace read-only for Luna. Explicit worker role instructions apply to new and resumed threads and override misleading permission descriptions in a conductor brief; actual server restrictions remain authoritative.
 
 The conductor can spawn, wait for, inspect, cancel, and compact workers. New 0.5 chats also register the `revise` tool. Older Melly chats retain their original tools, so the conductor can use a fresh bounded follow-up if needed. Worker views are for observation and any configured approval prompts. Ctrl+C stops the conductor and its active delegated workers.
 
@@ -79,13 +79,13 @@ The conductor receives results and up to 12 observed command exit codes through 
 
 ## Thinking, context and usage
 
-User messages have an accent edge and a tinted background. Assistant replies put agent and model details below the text, with progress messages labeled separately. A spinner shows the selected agent’s live state. Thinking appears as an amber disclosure row. Melly prefers the reasoning summaries Codex supplies and falls back to readable reasoning-text events when available. Some turns or models expose neither; Melly then shows the live state and elapsed time. It cannot force the server to reveal hidden reasoning. Ctrl+T expands the supplied text.
+User messages have an accent edge and a tinted background. Final assistant replies put one quiet agent and model footer below the text. Consecutive progress, thinking and tools share a collapsed activity row instead of repeating role labels. A spinner shows the selected agent’s live state. Thinking appears as an amber disclosure row. Melly prefers the reasoning summaries Codex supplies and falls back to readable reasoning-text events when available. Some turns or models expose neither; Melly then shows the live state; turn timing is available in `/status`. It cannot force the server to reveal hidden reasoning. Ctrl+T expands the supplied text.
 
-Commands and skill-file reads are compact by default. A skill read may contain instructions because Codex chose to read that file; it is ordinary tool output. Ctrl+O reveals the full output.
+Commands and skill-file reads stay inside the chat’s collapsed activity by default. The sidebar never becomes a shell transcript. A skill read may contain instructions because Codex chose to read that file; it is ordinary tool output. Ctrl+O or `/activity` reveals the full output inline. Ctrl+T expands reasoning summaries with inline Markdown formatting.
 
 Context is a compact **estimate from the last model-call token snapshot**, divided by the reported capacity. It is not a live tokenizer. It clears after compaction until a new snapshot arrives. Each agent's totals accumulate across calls; input, cached input, output and reasoning details are separate in `/usage`. Account percentages are shared across agents and come directly from Codex, with each available quota bucket retained. Melly does not infer plan consumption or prices from tokens.
 
-The terminal draws on changes, ignores unrelated notifications, caches formatting and wrapping measurements per history entry, and renders only visible entries. The local UI cannot shorten server inference time. `/status` separates startup time, first-event latency and turn elapsed time.
+The terminal draws on changes, ignores unrelated notifications, caches formatting and wrapping measurements per message or activity group, and renders only visible entries. The local UI cannot shorten server inference time. `/status` separates startup time, first-event latency and turn elapsed time.
 
 ## Development
 

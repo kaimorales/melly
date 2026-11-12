@@ -91,7 +91,7 @@ def run(directory):
             os.write(master, b"/mod\t")
             expect(master, b"Choose model", 5)
             os.write(master, b"astra\t\r")
-            expect(master, b"astra", 5)
+            expect(master, b"Astra", 5)
             os.write(master, b"/effort \x1b[B\x1b[B\r")
             expect(master, b"high", 5)
             os.write(master, b"/skills\r")

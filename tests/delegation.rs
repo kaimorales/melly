@@ -40,6 +40,11 @@ fn ready(quota: Option<u64>, resume: bool) -> Harness {
             .find(|r| r["method"] == "thread/start")
             .unwrap()
     };
+    assert_eq!(open["params"]["sandbox"], "read-only");
+    assert_eq!(open["params"]["approvalPolicy"], "never");
+    let role = open["params"]["developerInstructions"].as_str().unwrap();
+    assert!(role.contains("Melly's conductor"));
+    assert!(role.contains("acceptance checks"));
     if resume {
         assert!(open["params"].get("dynamicTools").is_none());
     } else {
@@ -70,6 +75,16 @@ fn start_lead(h: &mut Harness) {
         .into_iter()
         .find(|r| r["method"] == "turn/start")
         .unwrap();
+    let role = &request["params"]["additionalContext"]["melly-conductor"];
+    assert_eq!(role["kind"], "application");
+    assert!(
+        role["value"]
+            .as_str()
+            .unwrap()
+            .contains("Melly's conductor")
+    );
+    assert_eq!(request["params"]["sandboxPolicy"]["type"], "readOnly");
+    assert_eq!(request["params"]["approvalPolicy"], "never");
     h.receive(json!({"id":request["id"],"result":{"turn":{"id":"lead-turn"}}}));
 }
 
@@ -1155,4 +1170,79 @@ fn conductor_can_revise_the_same_finished_worker_once_within_budget() {
     assert_eq!(h.auto_launches(), 2);
     assert_eq!(h.agents.len(), 2);
     assert!(h.agents[1].source == melly::delegation::AgentSource::Automatic);
+}
+
+#[test]
+fn edit_worker_uses_its_own_permissions_across_spawn_revision_and_restore() {
+    let mut h = ready(Some(10), false);
+    start_lead(&mut h);
+    let conductor_environment = "Conductor environment is read-only, approval never.";
+    let mut brief = spawn_args(json!(["parser.rs"]));
+    brief["mode"] = json!("edit");
+    brief["context"] = json!(conductor_environment);
+    let requests = tool(&mut h, "assign", "spawn", brief);
+    let start = requests
+        .iter()
+        .find(|r| r["method"] == "thread/start")
+        .unwrap();
+    let check_thread = |request: &Value| {
+        let params = &request["params"];
+        let instructions = params["developerInstructions"].as_str().unwrap();
+        assert!(instructions.contains("Melly edit worker"));
+        assert!(instructions.contains("server-provided"));
+        assert!(!instructions.contains(conductor_environment));
+        assert!(params.get("sandbox").is_none());
+        assert!(params.get("approvalPolicy").is_none());
+    };
+    let check_turn = |request: &Value, expected_input: &str| {
+        let params = &request["params"];
+        let role = &params["additionalContext"]["melly-worker"];
+        assert_eq!(role["kind"], "application");
+        assert!(role["value"].as_str().unwrap().contains("server-provided"));
+        assert!(params.get("sandboxPolicy").is_none());
+        assert!(params.get("approvalPolicy").is_none());
+        assert!(
+            params["input"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains(expected_input)
+        );
+    };
+    check_thread(start);
+    let turn = connect_worker(&mut h, start, "worker");
+    check_turn(&turn, conductor_environment);
+    finish(&mut h, "worker", "completed");
+
+    let revision = tool(
+        &mut h,
+        "fix",
+        "revise",
+        json!({"id":"luna-1","feedback":"Check empty input. Conductor environment is read-only, approval never."}),
+    );
+    check_turn(
+        revision
+            .iter()
+            .find(|r| r["method"] == "turn/start")
+            .unwrap(),
+        conductor_environment,
+    );
+
+    let mut restored = ready(Some(10), true);
+    restored.restore_team(h.snapshot().unwrap());
+    let resume = restored
+        .drain_requests()
+        .into_iter()
+        .find(|r| r["method"] == "thread/resume")
+        .unwrap();
+    check_thread(&resume);
+    restored.receive(
+        json!({"id":resume["id"],"result":{"thread":{"id":"worker"},"model":"gpt-6-luna"}}),
+    );
+    assert!(restored.submit(1, "Check the parser output"));
+    let turn = restored
+        .drain_requests()
+        .into_iter()
+        .find(|r| r["method"] == "turn/start")
+        .unwrap();
+    check_turn(&turn, "Check the parser output");
 }

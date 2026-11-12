@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use melly::{delegation::Harness, session::Speaker};
+use melly::delegation::Harness;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -15,10 +15,10 @@ use crate::{
     ui::{Action, Workspace},
 };
 
-const BG: Color = Color::Rgb(20, 23, 30);
-const PANEL: Color = Color::Rgb(27, 30, 39);
+const BG: Color = Color::Rgb(11, 11, 11);
+const PANEL: Color = Color::Rgb(24, 24, 24);
 const INK: Color = Color::Rgb(235, 232, 228);
-const MUTED: Color = Color::Rgb(162, 166, 177);
+const MUTED: Color = Color::Rgb(144, 144, 144);
 const ACCENTS: &[(&str, Color)] = &[
     ("Lavender", Color::Rgb(210, 183, 240)),
     ("Sky", Color::Rgb(132, 193, 245)),
@@ -250,41 +250,59 @@ impl AgentWorkspace {
         self.ensure_views(harness.agents.len());
         let mut roster = vec![
             Line::styled(
-                format!("  Agents   {}/3 active", harness.active_workers()),
+                "  Agents",
                 Style::default().fg(INK).add_modifier(Modifier::BOLD),
             ),
             Line::default(),
         ];
-        let first = self.selected.saturating_sub(3);
-        for (index, agent) in harness.agents.iter().enumerate().skip(first).take(5) {
+        let completed = harness.agents.iter().skip(1).filter(|a| a.finished).count();
+        let available_rows = frame.area().height.saturating_sub(15) as usize / 3;
+        let mut visible: Vec<usize> = (0..harness.agents.len())
+            .filter(|&i| i == 0 || i == self.selected || !harness.agents[i].finished)
+            .collect();
+        // Keep the observed worker visible even on short terminals.
+        visible.sort_by_key(|&i| (i != self.selected, i != 0, i));
+        visible.truncate(available_rows.max(1));
+        visible.sort_unstable();
+        for index in visible {
+            let agent = &harness.agents[index];
             let focus = index == self.selected;
             let status = if !agent.session.approvals.is_empty() {
-                "Approval"
+                "Approval needed"
             } else {
                 &agent.session.status
             };
-            let tokens = agent.session.tokens.map_or("—".into(), tokens);
+            let name = if index == 0 { "Conductor" } else { &agent.id };
             roster.push(Line::styled(
                 format!(
-                    "  {} {}  {} · {}",
+                    "  {} {name}{}",
                     if focus { "›" } else { " " },
-                    index + 1,
-                    agent.id,
-                    agent.source.label()
+                    if index == 0 {
+                        String::new()
+                    } else {
+                        format!(" · {}", crate::ui::ellipsis(status, 17))
+                    }
                 ),
                 Style::default().fg(if focus { self.accent() } else { INK }),
             ));
+            let detail = if index == 0 {
+                status.to_owned()
+            } else {
+                safe(&agent.title)
+            };
             roster.push(Line::styled(
-                format!("      {status} · {tokens} tokens"),
+                format!("    {}", crate::ui::ellipsis(&detail, 28)),
                 Style::default().fg(MUTED),
             ));
+            roster.push(Line::default());
         }
-        roster.push(Line::default());
-        roster.push(Line::styled(
-            format!("  Worker turns {}/2 · /agents", harness.auto_launches()),
-            Style::default().fg(MUTED),
-        ));
-        roster.push(Line::default());
+        if completed > 0 {
+            roster.push(Line::styled(
+                format!("  {completed} completed · /agents"),
+                Style::default().fg(MUTED),
+            ));
+            roster.push(Line::default());
+        }
         self.views[self.selected].agent_label = harness.agents[self.selected].id.clone();
         self.views[self.selected].roster = roster;
         self.views[self.selected].draw(frame, &harness.agents[self.selected].session);
@@ -456,14 +474,6 @@ impl AgentWorkspace {
                 inner.width,
                 3.min(inner.height.saturating_sub(row as u16 * 3)),
             );
-            let tool = agent
-                .session
-                .entries
-                .iter()
-                .rev()
-                .find(|e| e.speaker == Speaker::Tool)
-                .and_then(|e| e.text.lines().next())
-                .unwrap_or(&agent.title);
             let lines = vec![
                 Line::from(vec![Span::styled(
                     format!(
@@ -485,7 +495,10 @@ impl AgentWorkspace {
                     ),
                     Style::default().fg(MUTED),
                 ),
-                Line::styled(format!("   {}", safe(tool)), Style::default().fg(MUTED)),
+                Line::styled(
+                    format!("   {}", safe(&agent.title)),
+                    Style::default().fg(MUTED),
+                ),
             ];
             frame.render_widget(
                 Paragraph::new(lines).style(Style::default().bg(if active { PANEL } else { BG })),
@@ -592,7 +605,7 @@ mod tests {
         assert!(text.contains("luna-1"));
         assert!(text.contains("luna-2"));
         assert!(text.contains("14.2k"));
-        assert!(text.contains("cargo test catalog"));
+        assert!(text.contains("Running checks"));
         assert!(text.contains("+ Thought"));
         capture(&t, "team");
         for (width, height) in [(80, 24), (40, 16), (24, 8), (20, 5)] {
