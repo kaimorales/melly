@@ -4,7 +4,7 @@ A fast Rust terminal workspace for Codex. Start from a centered composer, delega
 
 ## Run it
 
-Install Rust and the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli), then sign in with `codex login`.
+Install a current Rust toolchain and the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli), then sign in with `codex login`.
 
 ```sh
 cargo install --path . --locked
@@ -12,7 +12,9 @@ cd /path/to/your/project
 melly
 ```
 
-Melly discovers available models from Codex and prefers GPT-6.1 Sol when offered. Start with a specific model using `melly --model gpt-6-astra`, or change it with `/model`. Reopen a saved chat using `melly --resume THREAD_ID`; Codex preserves its original working directory. Find the ID under `/status`.
+Melly discovers available models from Codex and prefers GPT-6.1 Sol when offered. Start with a specific model using `melly --model gpt-6-astra`, or change it with `/model`. Run `melly --continue` from the same directory to reopen the most recently saved workspace, or `melly --resume THREAD_ID` with the lead ID from `/status`. Melly restores the lead, its saved agents and drafts, and the selected agent. Codex supplies their chat history. A turn interrupted by closing Melly does not restart automatically. If you only used workers and Codex never saved the empty lead, Melly opens a new lead chat and keeps the same workers.
+
+Local workspace files and preferences live in `~/.local/state/melly` by default. Melly also honors `XDG_STATE_HOME` and `MELLY_DATA_DIR`. Workspaces created before 0.4 have no saved agent roster. Their lead chat can still be resumed by ID.
 
 ## Commands
 
@@ -26,7 +28,8 @@ Type `/` to open the palette. Type to filter, use Up/Down to select, Tab to comp
 | `/model` | Pick from the models available to your account |
 | `/effort` or `/strength` | Pick a reasoning effort supported by the selected model |
 | `/skills` | Browse enabled Codex skills and attach one to the next message |
-| `/compact` | Ask Codex to compact the lead conversation while idle |
+| `/compact` | Ask Codex to compact the selected agent while idle |
+| `/settings` | Save preferences for accent, animation, thinking and tool detail, and automatic delegation |
 | `/context` | Inspect the latest context estimate and model capacity |
 | `/usage` | Inspect session tokens and refresh account usage limits |
 | `/status` | Inspect model settings, connection timing, directory and resume ID |
@@ -65,11 +68,11 @@ When a supported command or patch needs approval, inspect the action, press `y` 
 
 ## Delegation
 
-The lead can call Melly's spawn, wait, status and cancel tools. It is instructed to delegate substantial independent work only when the saved lead effort or parallel progress justifies another model's context cost; trivial greetings and tiny edits should stay with the lead. This judgment is model-driven. The harness enforces the limits:
+The lead can call Melly's spawn, wait, status and cancel tools, including after resuming a Melly chat. Chats created in 0.4 also give the lead a compact tool. It can compact an idle worker or schedule its own compaction after the turn, once per lead turn. Workers use an active slot while compacting and retain their last report. It is instructed to delegate substantial independent work only when the saved lead effort or parallel progress justifies another model's context cost; trivial greetings and tiny edits should stay with the lead. This judgment is model-driven. The harness enforces the limits:
 
 - **Two automatic launches per user-started lead turn**, even if an earlier worker finishes. Steering does not reset the count.
 - **Three active workers total**, including manual workers, workers starting, and workers still stopping.
-- **A 15% remaining quota reserve** for automatic launches. Unknown or stale quota blocks automatic launches; manual spawning remains available within the active-worker cap.
+- **A 15% remaining quota reserve** for automatic launches. Automatic launches wait briefly for a quota refresh and stay blocked if quota is still unavailable. Manual spawning remains available within the active-worker cap.
 - Luna must be offered by the signed-in account. Workers receive bounded task briefs, not a copy of the lead conversation. Codex's own base instructions and tools still contribute context.
 - Read-only workers cannot approve writes or network access. Editing workers declare non-overlapping owned paths; ownership coordinates agents, while Codex's configured sandbox remains the actual permission boundary.
 
@@ -79,7 +82,7 @@ These defaults cap launches and concurrency, not exact plan consumption. A runni
 
 ## Thinking, context and usage
 
-Thinking appears as an amber disclosure row, distinct from assistant messages. Melly prefers the reasoning summaries Codex supplies and falls back to readable reasoning-text events when available. Some turns or models expose neither; Melly then shows the live state and elapsed time. It cannot force the server to reveal hidden reasoning. Ctrl+T expands the supplied text.
+User messages have an accent edge and a tinted background. Assistant replies put agent and model details below the text, with progress messages labeled separately. A spinner shows the selected agent’s live state. Thinking appears as an amber disclosure row. Melly prefers the reasoning summaries Codex supplies and falls back to readable reasoning-text events when available. Some turns or models expose neither; Melly then shows the live state and elapsed time. It cannot force the server to reveal hidden reasoning. Ctrl+T expands the supplied text.
 
 Commands and skill-file reads are compact by default. A skill read may contain instructions because Codex chose to read that file; it is ordinary tool output. Ctrl+O reveals the full output.
 
@@ -98,7 +101,7 @@ python3 tests/terminal_smoke.py target/release/melly --features
 python3 tests/team_terminal_smoke.py target/release/melly
 ```
 
-The smoke tests use deterministic local App Server fixtures. They exercise model and effort selection, skills, thinking, compaction, interleaved agent activity, launch caps, draft preservation and message routing without spending model usage. Opt-in live tests spend Codex usage in disposable repositories:
+The smoke tests use deterministic local App Server fixtures. They exercise model and effort selection, skills, thinking, compaction, interleaved agent activity, launch caps, reopening a workspace with settings and drafts, and resumed delegation and compaction without spending model usage. Opt-in live tests spend Codex usage in disposable repositories:
 
 ```sh
 python3 tests/terminal_smoke.py target/release/melly --live
@@ -109,6 +112,6 @@ cargo run --release --example agent_smoke -- /path/to/disposable/fixture
 
 Set `MELLY_CODEX_BIN` to use a different Codex executable. To measure warmed renderer cost on a 400-entry transcript, run `cargo test --release cached_scrollback_render_timing -- --ignored --nocapture`. This measures local test-backend rendering, not model latency or terminal-emulator performance.
 
-Tested on macOS with Codex CLI 0.167.0. Saved Codex chats can be resumed individually, but the agent workspace is not yet persisted. Automatic delegation requires a new Melly chat; resumed chats support manual workers. Complete stock command parity and interactive server question forms remain future work. Unsupported server requests produce a visible notice and a protocol error rather than silently accepting them.
+Tested on macOS with Codex CLI 0.167.0. Codex threads created outside Melly only expose the tools originally registered for that thread. Complete stock command parity and interactive server question forms remain future work. Unsupported server requests produce a visible notice and a protocol error rather than silently accepting them.
 
-The native Rust interface takes inspiration from [OpenCode](https://github.com/anomalyco/opencode)'s centered start screen, compact thinking and context presentation. See [the design notes](docs/subagents-workspace.md).
+The native Rust interface takes inspiration from [OpenCode](https://github.com/anomalyco/opencode)'s centered start screen, highlighted prompts, assistant footers, and compact thinking and context presentation. See [the design notes](docs/subagents-workspace.md).

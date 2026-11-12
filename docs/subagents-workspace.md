@@ -29,4 +29,4 @@ Version 0.3.0 passes 76 Rust tests (one manual rendering benchmark is ignored), 
 
 A signed-in Codex integration run completed with one Sol lead, two automatic Luna workers and one manual Luna, checking three disposable files. The lead collected both automatic workers' actual results and each agent exposed its own token usage. This verifies integration; it is not an efficiency benchmark. Model base context can outweigh the benefit of delegating tiny tasks.
 
-Worker compaction and persisted agent-workspace restoration are deferred. Lead compaction remains available, and individual Codex chats can be resumed; automatic delegation currently requires a fresh chat.
+Melly 0.4 stores a local manifest keyed by the lead thread ID. The manifest tracks worker thread IDs, lifecycle and report state, drafts, and the current selection. Codex reloads each transcript and restores the tools registered on the lead. New lead chats register a compaction tool in addition to the existing delegation tools. A model-requested lead compaction starts once the active turn finishes successfully. Idle worker compaction uses a worker slot and preserves the previous result.

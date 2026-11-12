@@ -378,12 +378,13 @@ dependencies = [
 
 [[package]]
 name = "melly"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "crossterm",
  "futures-util",
  "ratatui",
+ "serde",
  "serde_json",
  "tokio",
 ]

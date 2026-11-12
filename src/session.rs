@@ -198,6 +198,45 @@ impl Session {
         session
     }
 
+    pub(crate) fn restore_worker(
+        cwd: String,
+        thread_id: String,
+        model: Option<String>,
+        read_only: bool,
+    ) -> Self {
+        let mut session = Self::new(cwd, None, Some(thread_id));
+        session.model = model;
+        session.pending.clear();
+        session.outbox.clear();
+        session.models_loaded = true;
+        session.open_thread(false);
+        if read_only && let Some(request) = session.outbox.last_mut() {
+            request["params"]["sandbox"] = json!("read-only");
+            request["params"]["approvalPolicy"] = json!("never");
+        }
+        session
+    }
+
+    pub(crate) fn replace_empty_thread(&mut self, request_id: Option<u64>) {
+        if let Some(id) = request_id {
+            self.pending.remove(&id);
+        }
+        self.resume_id = None;
+        if self.requested_model.is_none() {
+            self.requested_model.clone_from(&self.model);
+        }
+        self.open_thread(false);
+        self.notice("Opened a new lead chat because Codex had no transcript for the empty lead. Restoring the saved workers.");
+    }
+
+    pub(crate) fn saved_thread_id(&self) -> Option<&str> {
+        self.thread_id.as_deref().or(self.resume_id.as_deref())
+    }
+
+    pub(crate) fn compacting(&self) -> bool {
+        self.compacting
+    }
+
     pub fn active_turn_id(&self) -> Option<&str> {
         self.turn_id.as_deref()
     }
@@ -292,8 +331,19 @@ impl Session {
         );
     }
 
+    pub(crate) fn quota_pending(&self) -> bool {
+        self.pending
+            .values()
+            .any(|pending| *pending == Pending::Quota)
+    }
+
     pub fn refresh_quota(&mut self) {
-        if self.stopped || self.connecting() || self.pending.values().any(|p| *p == Pending::Quota)
+        if self.stopped
+            || self
+                .pending
+                .values()
+                .any(|pending| *pending == Pending::Initialize)
+            || self.quota_pending()
         {
             return;
         }
@@ -544,7 +594,9 @@ impl Session {
                     return;
                 }
                 if !self.settings_selected {
-                    self.model = owned_string(&result["model"]);
+                    if let Some(model) = owned_string(&result["model"]) {
+                        self.model = Some(model);
+                    }
                     self.effort = owned_string(&result["reasoningEffort"]);
                 }
                 if let Some(cwd) = owned_string(&result["cwd"]) {
@@ -765,7 +817,9 @@ impl Session {
                 let Some(id) = turn["id"].as_str() else {
                     return false;
                 };
-                if self.turn_id.as_deref().is_some_and(|current| current != id) {
+                if self.last_finished_turn.as_deref() == Some(id)
+                    || self.turn_id.as_deref().is_some_and(|current| current != id)
+                {
                     return false;
                 }
                 self.last_finished_turn = Some(id.to_owned());
@@ -1183,7 +1237,13 @@ fn item_entry(item: &Value) -> Option<Entry> {
         outcome: if item["exitCode"].as_i64().is_some_and(|code| code != 0) {
             Some("failed".into())
         } else {
-            owned_string(&item["status"])
+            owned_string(
+                &item[if speaker == Speaker::Codex {
+                    "phase"
+                } else {
+                    "status"
+                }],
+            )
         },
     })
 }

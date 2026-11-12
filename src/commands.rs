@@ -9,7 +9,11 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("model", "Choose a model for the next turn"),
     ("effort", "Set reasoning strength"),
     ("skills", "Attach a Codex skill to your next message"),
-    ("compact", "Compact the lead conversation's context"),
+    ("compact", "Compact the selected agent's context"),
+    (
+        "settings",
+        "Accent, animation, transcript detail and delegation",
+    ),
     ("context", "Inspect context and capacity"),
     ("usage", "Account limits and session tokens"),
     ("status", "Session details and response timing"),

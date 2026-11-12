@@ -31,6 +31,7 @@ pub enum Action {
     Collect,
     Stop,
     Compact,
+    Settings,
 }
 
 #[derive(Default)]
@@ -53,6 +54,8 @@ pub struct Workspace {
     pub roster: Vec<Line<'static>>,
     inspector: Inspector,
     render_cache: HashMap<u64, EntryView>,
+    accent_override: Option<Color>,
+    reduced_motion: bool,
 }
 
 struct EntryView {
@@ -74,6 +77,35 @@ enum Inspector {
 }
 
 impl Workspace {
+    pub fn configure(&mut self, color: Color, motion: bool) {
+        if self.accent_override != Some(color) {
+            self.accent_override = Some(color);
+            self.render_cache.clear();
+        }
+        self.reduced_motion = !motion;
+    }
+
+    pub fn set_details(&mut self, thinking: Option<bool>, tools: Option<bool>) {
+        if let Some(expanded) = thinking {
+            self.thinking_expanded = expanded;
+        }
+        if let Some(expanded) = tools {
+            self.tools_expanded = expanded;
+        }
+    }
+
+    pub fn draft(&self) -> &str {
+        &self.draft
+    }
+
+    fn color(&self) -> Color {
+        self.accent_override.unwrap_or(ACCENT)
+    }
+
+    fn accent(&self) -> Style {
+        accent(self.color())
+    }
+
     pub fn managed() -> Self {
         Self {
             managed: true,
@@ -347,6 +379,7 @@ impl Workspace {
             "thinking" => self.thinking_expanded = !self.thinking_expanded,
             "tools" => self.tools_expanded = !self.tools_expanded,
             "agents" => self.action = Some(Action::Agents),
+            "settings" => self.action = Some(Action::Settings),
             "collect" => self.action = Some(Action::Collect),
             "usage" => {
                 self.inspector = Inspector::Usage;
@@ -403,6 +436,7 @@ impl Workspace {
             return;
         }
         if !self.activity_focused
+            && matches!(self.agent_label.as_str(), "" | "lead")
             && session.approvals.is_empty()
             && !session.entries.iter().any(|e| e.speaker != Speaker::Notice)
         {
@@ -463,7 +497,7 @@ impl Workspace {
                                 &self.agent_label
                             }
                         ),
-                        accent(),
+                        self.accent(),
                     ),
                     Span::styled(printable(cwd), dim()),
                 ]),
@@ -479,14 +513,8 @@ impl Workspace {
         let seconds = session
             .elapsed()
             .map_or(String::new(), |d| format!("  {:.1}s", d.as_secs_f32()));
-        let busy = session.busy() || session.connecting();
-        let symbol = if busy {
-            ["◐", "◓", "◑", "◒"][(SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis()
-                / 200
-                % 4) as usize]
+        let symbol = if session.busy() || session.connecting() {
+            "◌"
         } else {
             "●"
         };
@@ -562,7 +590,7 @@ impl Workspace {
                 } else {
                     " n Decline "
                 })
-                .border_style(accent())
+                .border_style(self.accent())
                 .style(Style::default().bg(PANEL).fg(INK));
             let inner = block.inner(popup);
             frame.render_widget(block, popup);
@@ -655,7 +683,7 @@ impl Workspace {
                         &self.agent_label
                     }
                 ),
-                accent(),
+                self.accent(),
             ),
             Span::styled(session.model.as_deref().unwrap_or("Loading models"), dim()),
             Span::styled(
@@ -723,32 +751,26 @@ impl Workspace {
             Layout::vertical([Constraint::Min(1), Constraint::Length(composer_height)]).areas(area);
         let [history, waiting] = Layout::vertical([
             Constraint::Min(1),
-            Constraint::Length(
-                if session.busy() && session.first_event_duration.is_none() {
-                    3
-                } else {
-                    0
-                },
-            ),
+            Constraint::Length(u16::from(session.busy())),
         ])
         .areas(history);
         if session.entries.is_empty() {
             let greeting = vec![
                 Line::default(),
-                Line::styled("  What are we building?", accent()),
+                Line::styled("  What are we building?", self.accent()),
                 Line::default(),
                 Line::styled("  Your project. Your models. One workspace.", dim()),
                 Line::default(),
                 Line::from(vec![
-                    Span::styled("  /model", accent()),
+                    Span::styled("  /model", self.accent()),
                     Span::styled("     choose Sol, Terra, Astra or Luna", dim()),
                 ]),
                 Line::from(vec![
-                    Span::styled("  /effort", accent()),
+                    Span::styled("  /effort", self.accent()),
                     Span::styled("    adjust reasoning strength", dim()),
                 ]),
                 Line::from(vec![
-                    Span::styled("  /skills", accent()),
+                    Span::styled("  /skills", self.accent()),
                     Span::styled("    bring in your Codex skills", dim()),
                 ]),
                 Line::default(),
@@ -763,28 +785,36 @@ impl Workspace {
                 frame,
                 history,
                 session,
-                false,
+                EntryStyle {
+                    tools: false,
+                    collapsed: !self.thinking_expanded,
+                    accent: self.color(),
+                    agent: &self.agent_label,
+                },
                 &mut self.chat_scroll,
-                !self.thinking_expanded,
                 &mut self.render_cache,
             );
         }
         if waiting.height > 0 {
+            const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let indicator = if self.reduced_motion {
+                "◌"
+            } else {
+                FRAMES[(SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+                    / 100
+                    % FRAMES.len() as u128) as usize]
+            };
+            let color = if session.status == "Thinking" {
+                AMBER
+            } else {
+                self.color()
+            };
             frame.render_widget(
-                Paragraph::new(vec![
-                    Line::styled(
-                        format!(
-                            "  ◌ Thinking · {}",
-                            session
-                                .active_model
-                                .as_deref()
-                                .or(session.model.as_deref())
-                                .unwrap_or("Codex")
-                        ),
-                        accent(),
-                    ),
-                    Line::styled("  Waiting for Codex's next event…", dim()),
-                ]),
+                Paragraph::new(format!("  {indicator} {}", session.status))
+                    .style(Style::default().fg(color)),
                 waiting,
             );
         }
@@ -803,12 +833,12 @@ impl Workspace {
         };
         let block = Block::default()
             .title(title)
-            .title_style(accent())
+            .title_style(self.accent())
             .borders(Borders::TOP)
             .border_style(if self.activity_focused {
                 border()
             } else {
-                accent()
+                self.accent()
             })
             .style(Style::default().bg(PANEL));
         let mut inner = block.inner(composer);
@@ -864,7 +894,7 @@ impl Workspace {
         let block = Block::bordered()
             .title(title)
             .title_bottom(" ↑↓ select  Tab complete  Enter apply  Esc close ")
-            .border_style(accent())
+            .border_style(self.accent())
             .style(Style::default().bg(PANEL).fg(INK));
         let inner = block.inner(popup);
         frame.render_widget(block, popup);
@@ -888,7 +918,7 @@ impl Workspace {
             let current = if row.selected { "  ✓" } else { "" };
             let label = format!(" {marker} {}{current}", printable(&row.label));
             let style = if active {
-                accent().bg(SELECTED)
+                self.accent().bg(SELECTED)
             } else {
                 Style::default().fg(INK)
             };
@@ -939,7 +969,7 @@ impl Workspace {
         let panel = Block::default()
             .title(title)
             .title_style(if self.activity_focused {
-                accent()
+                self.accent()
             } else {
                 dim()
             })
@@ -1028,9 +1058,13 @@ impl Workspace {
                     frame,
                     events,
                     session,
-                    true,
+                    EntryStyle {
+                        tools: true,
+                        collapsed: !self.tools_expanded,
+                        accent: self.color(),
+                        agent: &self.agent_label,
+                    },
                     &mut self.activity_scroll,
-                    !self.tools_expanded,
                     &mut self.render_cache,
                 );
             }
@@ -1057,7 +1091,7 @@ fn inspector_lines(view: Inspector, s: &Session) -> Vec<Line<'static>> {
             format!("Last model call  {} tokens",token(s.context_used)),format!("Capacity         {} tokens",token(s.context_window)),String::new(),
             "The meter estimates occupancy from Codex's latest model-call token snapshot. It updates when Codex reports usage.".into(),String::new(),
             "Total session tokens accumulate across calls and are not context occupancy.".into(),String::new(),
-            "/compact  compact the active conversation when idle. No extra summary chat is sent.".into()],
+            "/compact  compact the selected conversation when idle. No extra summary chat is sent.".into()],
         Inspector::Usage=>vec!["SESSION TOKENS".into(),String::new(),format!("Total      {}",token(s.tokens)),
             format!("Input      {}",token(s.input_tokens)),format!("Cached     {} (part of input)",token(s.cached_tokens)),
             format!("Output     {}",token(s.output_tokens)),format!("Reasoning  {} (part of output)",token(s.reasoning_tokens)),String::new(),
@@ -1113,13 +1147,19 @@ fn inspector_lines(view: Inspector, s: &Session) -> Vec<Line<'static>> {
         .collect()
 }
 
+struct EntryStyle<'a> {
+    tools: bool,
+    collapsed: bool,
+    accent: Color,
+    agent: &'a str,
+}
+
 fn render_entries(
     frame: &mut Frame,
     area: Rect,
     session: &Session,
-    tools: bool,
+    style: EntryStyle<'_>,
     offset: &mut usize,
-    collapsed: bool,
     cache: &mut HashMap<u64, EntryView>,
 ) {
     if area.width == 0 || area.height == 0 {
@@ -1131,23 +1171,25 @@ fn render_entries(
     let entries: Vec<_> = session
         .entries
         .iter()
-        .filter(|e| (e.speaker == Speaker::Tool) == tools)
+        .filter(|e| (e.speaker == Speaker::Tool) == style.tools)
         .collect();
     let mut total = 0;
     for entry in &entries {
         if !cache.get(&entry.key).is_some_and(|v| {
-            v.revision == entry.revision && v.width == area.width && v.collapsed == collapsed
+            v.revision == entry.revision && v.width == area.width && v.collapsed == style.collapsed
         }) {
-            let lines = entry_lines(entry, collapsed);
+            let lines = entry_lines(entry, &style);
+            let card = entry.speaker == Speaker::You;
             let height = Paragraph::new(lines.clone())
                 .wrap(Wrap { trim: false })
-                .line_count(area.width);
+                .line_count(area.width.saturating_sub(u16::from(card)))
+                + usize::from(card);
             cache.insert(
                 entry.key,
                 EntryView {
                     revision: entry.revision,
                     width: area.width,
-                    collapsed,
+                    collapsed: style.collapsed,
                     lines,
                     height,
                 },
@@ -1167,13 +1209,27 @@ fn render_entries(
             let y = position.saturating_sub(top);
             let height = (view.height - skip).min(area.height as usize - y);
             let rect = Rect::new(area.x, area.y + y as u16, area.width, height as u16);
-            frame.render_widget(
-                Paragraph::new(view.lines.clone())
+            let card = entry.speaker == Speaker::You;
+            let body_height = (view.height.saturating_sub(usize::from(card) + skip)).min(height);
+            if body_height > 0 {
+                let rect = Rect {
+                    height: body_height as u16,
+                    ..rect
+                };
+                let mut paragraph = Paragraph::new(view.lines.clone())
                     .style(Style::default().fg(INK))
                     .wrap(Wrap { trim: false })
-                    .scroll((skip.min(u16::MAX as usize) as u16, 0)),
-                rect,
-            );
+                    .scroll((skip.min(u16::MAX as usize) as u16, 0));
+                if card {
+                    paragraph = paragraph.block(
+                        Block::new()
+                            .borders(Borders::LEFT)
+                            .border_style(Style::default().fg(style.accent))
+                            .style(Style::default().bg(PANEL)),
+                    );
+                }
+                frame.render_widget(paragraph, rect);
+            }
         }
         position = end;
         if position >= top + area.height as usize {
@@ -1182,23 +1238,16 @@ fn render_entries(
     }
 }
 
-fn entry_lines(entry: &Entry, collapsed: bool) -> Vec<Line<'static>> {
+fn entry_lines(entry: &Entry, style: &EntryStyle<'_>) -> Vec<Line<'static>> {
+    let collapsed = style.collapsed;
     let text = printable(&entry.text);
     if entry.speaker == Speaker::Thinking {
         if text.is_empty() && entry.complete {
             return Vec::new();
         }
-        let summary = text
-            .lines()
-            .find(|l| !l.trim().is_empty())
-            .unwrap_or("Waiting for Codex…")
-            .trim_matches('*')
-            .trim_start_matches('#')
-            .trim();
-        let summary: String = summary.chars().take(88).collect();
         let mut lines = vec![Line::styled(
             format!(
-                "  {} {}: {summary}",
+                "  {} {}",
                 if collapsed { "+" } else { "−" },
                 if entry.complete {
                     "Thought"
@@ -1253,76 +1302,44 @@ fn entry_lines(entry: &Entry, collapsed: bool) -> Vec<Line<'static>> {
             Line::default(),
         ];
     }
-    let name = entry.model.as_deref().unwrap_or("Codex");
-    let title = match entry.speaker {
-        Speaker::You => "YOU".into(),
-        Speaker::Codex => printable(name),
-        Speaker::Notice => "MELLY".into(),
-        Speaker::Thinking => format!(
-            "{} {} · {}",
-            if collapsed && entry.complete {
-                "▸"
-            } else {
-                "▾"
-            },
-            if entry.complete {
-                "Thought"
-            } else {
-                "Thinking"
-            },
-            printable(name)
-        ),
-        Speaker::Tool => match (entry.complete, entry.outcome.as_deref()) {
+    if entry.speaker == Speaker::You {
+        let mut lines = vec![Line::default()];
+        lines.extend(text.lines().map(|line| Line::raw(format!("  {line}"))));
+        lines.push(Line::default());
+        return lines;
+    }
+    let mut lines = Vec::new();
+    if entry.speaker == Speaker::Tool {
+        let title = match (entry.complete, entry.outcome.as_deref()) {
             (false, _) => "● RUNNING",
             (true, Some("failed")) => "✕ FAILED",
             (true, Some("declined")) => "⊘ DECLINED",
             (true, Some("interrupted")) => "■ INTERRUPTED",
             _ => "✓ COMPLETED",
-        }
-        .into(),
-    };
-    let color = match entry.speaker {
-        Speaker::Codex => ACCENT,
-        Speaker::You => INK,
-        Speaker::Tool
-            if matches!(
-                entry.outcome.as_deref(),
-                Some("failed" | "declined" | "interrupted")
-            ) =>
-        {
-            Color::Rgb(244, 174, 163)
-        }
-        Speaker::Tool => MINT,
-        _ => MUTED,
-    };
-    let mut lines = vec![
-        Line::default(),
-        Line::styled(
-            format!("  {title}"),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ),
-    ];
-    let text = printable(&entry.text);
-    if text.is_empty() && entry.speaker == Speaker::Thinking && !entry.complete {
-        lines.push(Line::styled("  Waiting for a thinking summary…", dim()));
-    }
-    if collapsed && entry.complete && entry.speaker == Speaker::Thinking {
+        };
+        let color = if matches!(
+            entry.outcome.as_deref(),
+            Some("failed" | "declined" | "interrupted")
+        ) {
+            AMBER
+        } else {
+            MINT
+        };
         lines.push(Line::styled(
-            format!(
-                "  {}",
-                text.lines()
-                    .find(|l| !l.is_empty())
-                    .unwrap_or("No summary provided")
-            ),
-            dim(),
+            format!("  {title}"),
+            Style::default().fg(color),
         ));
-        lines.push(Line::styled("  Ctrl+T to expand", dim()));
+        lines.extend(text.lines().map(|line| Line::raw(format!("  {line}"))));
+    } else if entry.speaker == Speaker::Notice {
+        lines.extend(
+            text.lines()
+                .map(|line| Line::styled(format!("  {line}"), dim())),
+        );
     } else {
         let mut code = false;
+        let commentary = entry.outcome.as_deref() == Some("commentary");
         for line in text.lines() {
-            if matches!(entry.speaker, Speaker::Tool | Speaker::You) {
-                lines.push(Line::raw(format!("  {line}")));
-            } else if line.starts_with("```") {
+            if line.starts_with("```") {
                 code = !code;
                 lines.push(Line::styled(
                     if code {
@@ -1332,8 +1349,6 @@ fn entry_lines(entry: &Entry, collapsed: bool) -> Vec<Line<'static>> {
                     },
                     dim(),
                 ));
-            } else if entry.speaker == Speaker::Thinking || entry.speaker == Speaker::Notice {
-                lines.push(Line::styled(format!("  {line}"), dim()));
             } else if code {
                 lines.push(Line::styled(
                     format!("  {line}"),
@@ -1343,18 +1358,38 @@ fn entry_lines(entry: &Entry, collapsed: bool) -> Vec<Line<'static>> {
             {
                 lines.push(Line::styled(
                     format!("  {}", line.trim_start_matches('#').trim_start()),
-                    accent(),
+                    accent(style.accent),
                 ));
             } else {
-                lines.push(markdown_line(line));
+                let line = markdown_line(line, style.accent);
+                lines.push(if commentary { line.style(dim()) } else { line });
             }
+        }
+        if entry.complete && !text.is_empty() {
+            let agent = if style.agent.is_empty() || style.agent == "lead" {
+                "Lead".into()
+            } else {
+                printable(style.agent)
+            };
+            let mut footer = vec![
+                Span::raw("  "),
+                Span::styled(agent, Style::default().fg(style.accent)),
+            ];
+            if commentary {
+                footer.push(Span::styled(" · progress", dim()));
+            }
+            if let Some(model) = entry.model.as_deref() {
+                footer.push(Span::styled(format!(" · {}", printable(model)), dim()));
+            }
+            lines.push(Line::default());
+            lines.push(Line::from(footer));
         }
     }
     lines.push(Line::default());
     lines
 }
 
-fn markdown_line(text: &str) -> Line<'static> {
+fn markdown_line(text: &str, accent_color: Color) -> Line<'static> {
     let mut spans = vec![Span::raw("  ")];
     let mut rest = text;
     while let Some(start) = rest.find(['`', '*']) {
@@ -1371,7 +1406,7 @@ fn markdown_line(text: &str) -> Line<'static> {
         if let Some(end) = after.find(delimiter) {
             spans.push(Span::raw(rest[..start].to_owned()));
             let style = if delimiter == "`" {
-                Style::default().fg(ACCENT).bg(PANEL)
+                Style::default().fg(accent_color).bg(PANEL)
             } else {
                 Style::default().add_modifier(Modifier::BOLD)
             };
@@ -1411,8 +1446,8 @@ fn display_tokens(tokens: u64) -> String {
     }
 }
 
-fn accent() -> Style {
-    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+fn accent(color: Color) -> Style {
+    Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
 fn dim() -> Style {
@@ -1474,7 +1509,7 @@ pub(crate) mod tests {
         let mut t = Terminal::new(TestBackend::new(130, 34)).unwrap();
         t.draw(|f| w.draw(f, &s)).unwrap();
         let text = screen(&t);
-        assert!(text.contains("+ Thought:"));
+        assert!(text.contains("+ Thought"));
         assert!(!text.contains("Second paragraph"));
         assert!(!text.contains("INSTRUCTION FILE BODY"));
         w.key(

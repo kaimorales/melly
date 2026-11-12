@@ -8,6 +8,8 @@ threads = []
 workers = {}
 spawned = []
 completed = False
+resumed = False
+turns = {}
 
 
 def send(value):
@@ -15,18 +17,18 @@ def send(value):
 
 
 def event(method, thread, **fields):
-    send({"method": method, "params": {"threadId": thread, "turnId": thread + "-turn", **fields}})
+    send({"method": method, "params": {"threadId": thread, "turnId": turns.get(thread, thread + "-turn"), **fields}})
 
 
 def finish(thread, text):
     event("item/completed", thread, item={"type": "agentMessage", "id": thread + "-answer", "text": text})
     event("thread/tokenUsage/updated", thread, tokenUsage={"total": {"totalTokens": 1000 * (threads.index(thread) + 1)},
         "last": {"totalTokens": 500}, "modelContextWindow": 100000})
-    event("turn/completed", thread, turn={"id": thread + "-turn", "status": "completed"})
+    event("turn/completed", thread, turn={"id": turns.get(thread, thread + "-turn"), "status": "completed"})
 
 
 def call(id, tool, arguments):
-    send({"id": id, "method": "item/tool/call", "params": {"threadId": "lead", "turnId": "lead-turn",
+    send({"id": id, "method": "item/tool/call", "params": {"threadId": "lead", "turnId": turns["lead"],
         "callId": id, "namespace": "melly_agents", "tool": tool, "arguments": arguments}})
 
 
@@ -47,11 +49,19 @@ for line in sys.stdin:
         if m.get("id") in ("auto-a", "auto-b"):
             body = json.loads(m["result"]["contentItems"][0]["text"])
             spawned.append(body["id"])
-            if len(spawned) == 2:
+            if resumed:
+                call("wait", "wait", {"ids": spawned, "timeout_ms": 120000})
+            elif len(spawned) == 2:
                 call("auto-denied", "spawn", spawn_args("extra.txt"))
                 call("wait", "wait", {"ids": spawned, "timeout_ms": 120000})
         elif m.get("id") == "wait":
-            finish("lead", "TEAM_COMPLETE")
+            if resumed:
+                call("lead-compact", "compact", {"id": "lead"})
+            else:
+                finish("lead", "TEAM_COMPLETE")
+        elif m.get("id") == "lead-compact":
+            assert m["result"]["success"]
+            finish("lead", "RESUMED_TEAM_COMPLETE")
         continue
     if method == "initialize":
         assert m["params"]["capabilities"]["experimentalApi"]
@@ -63,6 +73,29 @@ for line in sys.stdin:
     elif method == "model/list":
         result = {"data": [{"model": name, "defaultReasoningEffort": "low", "supportedReasoningEfforts": [{"reasoningEffort": "low"}]}
             for name in ["gpt-6.1-sol", "gpt-6-luna"]]}
+    elif method == "thread/resume":
+        thread = m["params"]["threadId"]
+        if thread == "missing-lead":
+            send({"id": m["id"], "error": {"code": -32600, "message": "no rollout found for thread id missing-lead"}})
+            continue
+        assert "dynamicTools" not in m["params"]
+        if thread != "lead":
+            assert m["params"]["sandbox"] == "read-only"
+            assert m["params"]["approvalPolicy"] == "never"
+        threads.append(thread)
+        resumed = True
+        result = {"thread": {"id": thread}, "model": "gpt-6.1-sol" if thread == "lead" else "gpt-6-luna"}
+    elif method == "thread/items/list":
+        thread = m["params"]["threadId"]
+        result = {"data": [{"item": {"type": "agentMessage", "id": "history-" + thread, "phase": "final_answer", "text": "Restored " + thread}}]}
+    elif method == "thread/compact/start":
+        thread = m["params"]["threadId"]
+        turn = turns[thread] = f"{thread}-compact"
+        send({"id": m["id"], "result": {}})
+        event("turn/started", thread, turn={"id": turn})
+        event("item/completed", thread, item={"type": "contextCompaction", "id": turn})
+        event("turn/completed", thread, turn={"id": turn, "status": "completed"})
+        continue
     elif method == "thread/start":
         thread = "lead" if not threads else "worker-" + str(len(threads))
         if thread == "lead":
@@ -73,10 +106,14 @@ for line in sys.stdin:
         result = {"thread": {"id": thread}, "model": m["params"]["model"]}
     elif method == "turn/start":
         thread = m["params"]["threadId"]
-        send({"id": m["id"], "result": {"turn": {"id": thread + "-turn"}}})
+        turn = turns[thread] = f"{thread}-turn-{m['id']}"
+        send({"id": m["id"], "result": {"turn": {"id": turn}}})
         if thread == "lead":
             call("auto-a", "spawn", spawn_args("a.txt"))
-            call("auto-b", "spawn", spawn_args("b.txt"))
+            if not resumed:
+                call("auto-b", "spawn", spawn_args("b.txt"))
+        elif resumed:
+            finish(thread, "RESUMED_LUNA_DONE")
         elif completed:
             finish(thread, "WORKER_FOLLOWUP")
         else:

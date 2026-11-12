@@ -75,6 +75,7 @@ def run(directory):
     if pid == 0:
         os.chdir(directory)
         fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 110, 0, 0))
+        os.environ["MELLY_DATA_DIR"] = str(Path(directory, "melly-state"))
         os.environ["TERM"] = "xterm-256color"
         os.environ["MELLY_CODEX_BIN"] = str(codex)
         if not args.live:
@@ -113,7 +114,10 @@ def run(directory):
             assert b"Exited" in output, "No shell exit status was visible in the terminal"
         else:
             output = expect(master, b"MELLY_SMOKE_OK", 10)
-            assert b"Checking" in output, output[-2000:]
+            assert b"+ Thought" in screens[master].text()
+            assert b"Checking" not in screens[master].text()
+            os.write(master, b"\x14")  # Ctrl+T reveals the supplied summary.
+            expect(master, b"Checking", 5)
             if args.features:
                 requests = [json.loads(line) for line in Path(directory,"rpc.jsonl").read_text().splitlines()]
                 turn = next(r for r in requests if r.get("method") == "turn/start")["params"]

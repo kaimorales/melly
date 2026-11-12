@@ -50,7 +50,7 @@ fn ready(quota: Option<u64>, resume: bool) -> Harness {
                 .as_array()
                 .unwrap()
                 .len(),
-            4
+            5
         );
     }
     h.receive(
@@ -222,11 +222,19 @@ fn duplicate_dynamic_calls_launch_once_even_with_a_new_rpc_id() {
 }
 
 #[test]
-fn quota_reserve_unknown_and_stale_data_block_only_automatic_launches() {
+fn quota_reserve_and_unavailable_data_block_only_automatic_launches() {
     for quota in [None, Some(85), Some(100)] {
         let mut h = ready(quota, false);
         start_lead(&mut h);
-        let responses = tool(&mut h, "spawn-1", "spawn", spawn_args(json!([])));
+        let mut responses = tool(&mut h, "spawn-1", "spawn", spawn_args(json!([])));
+        if quota.is_none() {
+            let refresh = responses
+                .iter()
+                .find(|r| r["method"] == "account/rateLimits/read")
+                .unwrap();
+            h.receive(json!({"id":refresh["id"],"result":{"rateLimits":null}}));
+            responses = h.drain_requests();
+        }
         assert!(reply_output(&responses, "spawn-1")["error"].is_string());
         assert_eq!(h.auto_launches(), 0);
         assert!(
@@ -238,18 +246,32 @@ fn quota_reserve_unknown_and_stale_data_block_only_automatic_launches() {
             .is_ok()
         );
     }
-    let mut h = ready(Some(5), false);
+}
+
+#[test]
+fn resumed_spawn_waits_for_fresh_quota_without_an_extra_model_turn() {
+    let mut h = ready(Some(5), true);
     for timestamp in h.agents[0].session.quota_updated_at.values_mut() {
         *timestamp = std::time::Instant::now() - std::time::Duration::from_secs(600);
     }
     start_lead(&mut h);
     let responses = tool(&mut h, "spawn-1", "spawn", spawn_args(json!([])));
-    assert!(
-        reply_output(&responses, "spawn-1")["error"]
-            .as_str()
-            .unwrap()
-            .contains("stale")
+    assert!(responses.iter().all(|r| r["id"] != "spawn-1"));
+    let refresh = responses
+        .iter()
+        .find(|r| r["method"] == "account/rateLimits/read")
+        .unwrap();
+    h.receive(json!({"id":refresh["id"],"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":10}}}}));
+    let requests = h.drain_requests();
+    assert_eq!(reply_output(&requests, "spawn-1")["id"], "luna-1");
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r["method"] == "thread/start")
+            .count(),
+        1
     );
+    assert!(!requests.iter().any(|r| r["method"] == "turn/start"));
 }
 
 #[test]
@@ -414,15 +436,12 @@ fn workers_and_stale_lead_turns_cannot_launch_children() {
 }
 
 #[test]
-fn old_resumed_threads_show_automatic_tools_notice() {
-    let h = ready(Some(10), true);
-    assert!(h.agents[0].session.transcript().contains("new chat"));
-    assert!(
-        h.automatic_block_reason
-            .as_deref()
-            .unwrap()
-            .contains("resum")
-    );
+fn resumed_lead_can_dispatch_its_persisted_delegation_tools() {
+    let mut h = ready(Some(10), true);
+    start_lead(&mut h);
+    let requests = tool(&mut h, "restored-spawn", "spawn", spawn_args(json!([])));
+    assert_eq!(reply_output(&requests, "restored-spawn")["id"], "luna-1");
+    assert_eq!(h.auto_launches(), 1);
 }
 
 #[test]
@@ -985,19 +1004,54 @@ fn rejected_worker_steering_does_not_hide_an_existing_final_answer() {
 }
 
 #[test]
-fn compaction_routes_through_harness_and_cannot_restart_a_finished_worker() {
+fn worker_compaction_uses_a_slot_and_preserves_its_completed_report() {
     let mut h = ready(Some(10), false);
     let worker = start_manual(&mut h, "one");
     finish(&mut h, "one", "completed");
-    assert!(!h.compact(worker));
-    assert!(h.agents[worker].session.transcript().contains("compaction"));
-    assert!(h.agents[worker].finished);
+    let report = h.agents[worker].result.clone();
+    assert!(h.compact(worker));
+    assert_eq!(h.active_workers(), 1);
+    let request = h
+        .drain_requests()
+        .into_iter()
+        .find(|r| r["method"] == "thread/compact/start")
+        .unwrap();
+    assert_eq!(request["params"]["threadId"], "one");
+    h.receive(json!({"id":request["id"],"result":{}}));
+    assert_eq!(h.agents[worker].session.status, "Compacting");
+    h.receive(
+        json!({"method":"turn/started","params":{"threadId":"one","turn":{"id":"compact-turn"}}}),
+    );
+    h.receive(json!({"method":"turn/completed","params":{"threadId":"one","turn":{"id":"compact-turn","status":"completed"}}}));
     assert_eq!(h.active_workers(), 0);
-    assert!(h.drain_requests().is_empty());
-    assert!(h.compact(0));
-    let requests = h.drain_requests();
+    assert_eq!(h.agents[worker].result, report);
+    assert!(h.agents[worker].finished);
+}
+
+#[test]
+fn lead_compaction_tool_waits_until_the_current_turn_has_ended() {
+    let mut h = ready(Some(10), false);
+    start_lead(&mut h);
+    let requests = tool(&mut h, "compact", "compact", json!({"id":"lead"}));
+    assert_eq!(
+        reply_output(&requests, "compact")["status"],
+        "scheduled after the lead turn"
+    );
     assert!(
-        requests
+        !requests
+            .iter()
+            .any(|r| r["method"] == "thread/compact/start")
+    );
+    assert!(
+        reply_output(
+            &tool(&mut h, "twice", "compact", json!({"id":"lead"})),
+            "twice"
+        )["error"]
+            .is_string()
+    );
+    h.receive(json!({"method":"turn/completed","params":{"threadId":"lead-thread","turn":{"id":"lead-turn","status":"completed"}}}));
+    assert!(
+        h.drain_requests()
             .iter()
             .any(|r| r["method"] == "thread/compact/start"
                 && r["params"]["threadId"] == "lead-thread")

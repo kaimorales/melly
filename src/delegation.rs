@@ -2,6 +2,7 @@
 //!
 //! Ownership coordinates edits; the Codex sandbox remains the security boundary.
 use crate::session::{Session, Speaker};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -9,10 +10,14 @@ use std::time::{Duration, Instant};
 
 const MAX_ACTIVE: usize = 3;
 const MAX_AUTOMATIC: usize = 2;
+const QUOTA_MISSING: &str =
+    "Automatic delegation needs a recent Codex quota snapshot; refresh account usage.";
+const QUOTA_STALE: &str =
+    "Codex quota snapshot is stale; refresh account usage before automatic delegation.";
 const QUOTA_MAX_AGE: Duration = Duration::from_secs(300);
 const MAX_RESULT: usize = 6000;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkerMode {
     Read,
     Edit,
@@ -25,7 +30,7 @@ impl WorkerMode {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentSource {
     Lead,
     Automatic,
@@ -57,6 +62,32 @@ pub struct Agent {
     turn_entry_key: u64,
 }
 
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedTeam {
+    pub lead_id: String,
+    pub cwd: String,
+    pub lead_started: bool,
+    pub lead_model: Option<String>,
+    pub workers: Vec<SavedWorker>,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedWorker {
+    pub id: String,
+    pub title: String,
+    pub source: AgentSource,
+    pub thread_id: String,
+    pub mode: WorkerMode,
+    pub paths: Vec<String>,
+    pub model: Option<String>,
+    pub result: Option<String>,
+    pub collected: bool,
+    pub status: Option<String>,
+    pub tokens: Option<u64>,
+    pub context_used: Option<u64>,
+    pub context_window: Option<u64>,
+}
+
 struct Route {
     agent: usize,
     local_id: Value,
@@ -66,8 +97,13 @@ struct Route {
 struct Wait {
     key: String,
     rpc_ids: Vec<Value>,
-    agents: Vec<usize>,
+    kind: WaitFor,
     deadline: Instant,
+}
+
+enum WaitFor {
+    Workers(Vec<usize>),
+    Quota(Brief),
 }
 
 pub struct Harness {
@@ -83,18 +119,19 @@ pub struct Harness {
     rpc_calls: HashMap<String, String>,
     waits: Vec<Wait>,
     automatic_count: usize,
-    resumed: bool,
+    pub automatic_enabled: bool,
+    lead_started: bool,
+    recovering_empty_lead: bool,
+    compact_requested: bool,
+    compact_lead_after_turn: bool,
     lead_cancelled: bool,
     disconnected: bool,
 }
 
 impl Harness {
     pub fn new(cwd: String, model: Option<String>, resume: Option<String>) -> Self {
-        let resumed = resume.is_some();
-        let mut session = Session::new(cwd, model, resume);
-        if resumed {
-            session.notice("Automatic worker tools cannot be registered on resumed chats. Start a new chat for automatic delegation; manual workers remain available.");
-        }
+        let lead_started = resume.is_some();
+        let session = Session::new(cwd, model, resume);
         let mut harness = Self {
             agents: vec![Agent {
                 id: "lead".into(),
@@ -122,12 +159,83 @@ impl Harness {
             rpc_calls: HashMap::new(),
             waits: vec![],
             automatic_count: 0,
-            resumed,
+            automatic_enabled: true,
+            lead_started,
+            recovering_empty_lead: false,
+            compact_requested: false,
+            compact_lead_after_turn: false,
             disconnected: false,
             lead_cancelled: false,
         };
         harness.update_block_reason();
         harness
+    }
+
+    pub fn snapshot(&self) -> Option<SavedTeam> {
+        let lead = &self.agents[0].session;
+        Some(SavedTeam {
+            lead_id: lead.thread_id.clone()?,
+            cwd: lead.cwd.clone(),
+            lead_started: self.lead_started,
+            lead_model: lead.model.clone(),
+            workers: self
+                .agents
+                .iter()
+                .skip(1)
+                .filter_map(|agent| {
+                    Some(SavedWorker {
+                        id: agent.id.clone(),
+                        title: agent.title.clone(),
+                        source: agent.source,
+                        thread_id: agent.session.saved_thread_id()?.into(),
+                        mode: agent.mode,
+                        paths: agent.owned_paths.clone(),
+                        model: agent.session.model.clone(),
+                        result: agent.result.clone(),
+                        collected: agent.collected,
+                        status: agent.terminal_status.clone(),
+                        tokens: agent.session.tokens,
+                        context_used: agent.session.context_used,
+                        context_window: agent.session.context_window,
+                    })
+                })
+                .collect(),
+        })
+    }
+
+    pub fn restore_team(&mut self, saved_team: SavedTeam) {
+        self.recovering_empty_lead = !saved_team.lead_started;
+        self.agents[0].session.cwd.clone_from(&saved_team.cwd);
+        if self.recovering_empty_lead {
+            self.agents[0].session.model = saved_team.lead_model;
+        }
+        for saved in saved_team.workers {
+            let mut session = Session::restore_worker(
+                saved_team.cwd.clone(),
+                saved.thread_id,
+                saved.model,
+                saved.mode == WorkerMode::Read,
+            );
+            session.tokens = saved.tokens;
+            session.context_used = saved.context_used;
+            session.context_window = saved.context_window;
+            let terminal_status = saved.status.unwrap_or_else(|| "interrupted by exit".into());
+            self.agents.push(Agent {
+                id: saved.id,
+                title: saved.title,
+                source: saved.source,
+                session,
+                owned_paths: saved.paths,
+                mode: saved.mode,
+                finished: true,
+                result: saved.result,
+                pending_prompt: None,
+                collected: saved.collected,
+                terminal_status: Some(terminal_status),
+                cancel_requested: false,
+                turn_entry_key: 0,
+            });
+        }
     }
 
     /// Remap only client requests. Server request replies retain their original IDs.
@@ -145,7 +253,11 @@ impl Harness {
                 }
             }
         }
+        let lead_connected = self.agents[0].session.thread_id.is_some();
         for (index, agent) in self.agents.iter_mut().enumerate() {
+            if index > 0 && !lead_connected {
+                continue;
+            }
             for mut request in agent.session.drain_requests() {
                 if let Some(method) = request["method"].as_str().map(str::to_owned) {
                     if method == "initialize" {
@@ -153,6 +265,11 @@ impl Harness {
                     }
                     if index == 0 && method == "thread/start" {
                         request["params"]["dynamicTools"] = dynamic_tools();
+                    }
+                    if index > 0 && method == "turn/start" && agent.mode == WorkerMode::Read {
+                        request["params"]["sandboxPolicy"] =
+                            json!({"type":"readOnly","networkAccess":false});
+                        request["params"]["approvalPolicy"] = json!("never");
                     }
                     if let Some(local_id) = request.get("id").cloned() {
                         let id = self.next_rpc_id;
@@ -195,10 +312,26 @@ impl Harness {
                 return false;
             };
             value["id"] = route.local_id;
+            if route.agent == 0 && route.method == "thread/resume" && self.recovering_empty_lead {
+                self.recovering_empty_lead = false;
+                if value["error"]["message"]
+                    .as_str()
+                    .is_some_and(|message| message.starts_with("no rollout found for thread id "))
+                {
+                    self.lead_started = false;
+                    self.agents[0]
+                        .session
+                        .replace_empty_thread(value["id"].as_u64());
+                    return true;
+                }
+            }
             let failed_start = route.agent > 0
-                && matches!(route.method.as_str(), "thread/start" | "turn/start")
+                && matches!(
+                    route.method.as_str(),
+                    "thread/start" | "thread/resume" | "turn/start"
+                )
                 && (value.get("error").is_some()
-                    || (route.method == "thread/start"
+                    || (route.method != "turn/start"
                         && !value["result"]["thread"]["id"].is_string())
                     || (route.method == "turn/start"
                         && !value["result"]["turn"]["id"].is_string()));
@@ -206,7 +339,18 @@ impl Harness {
                 && route.method == "turn/start"
                 && (value.get("error").is_some() || !value["result"]["turn"]["id"].is_string());
             let changed = self.agents[route.agent].session.receive(value.clone());
+            if route.agent == 0
+                && matches!(route.method.as_str(), "thread/start" | "thread/resume")
+                && self.agents[0].session.thread_id.is_none()
+            {
+                for agent in self.agents.iter_mut().skip(1) {
+                    agent
+                        .session
+                        .disconnected("The lead conversation could not open.");
+                }
+            }
             if route.agent == 0 && route.method == "turn/start" && !failed_lead_start {
+                self.lead_started = true;
                 // A local submission or drained request is not proof that Codex accepted it.
                 // Match the exact reports attached to this request, not later worker results.
                 for (index, turn_entry_key) in route.lead_reports {
@@ -235,7 +379,11 @@ impl Harness {
                         .clone_from(&source.quota_updated_at);
                 }
             }
-            if self.agents[route.agent].finished {
+            if self.agents[route.agent].finished
+                && !self.agents[route.agent].session.connecting()
+                && !self.agents[route.agent].session.busy()
+                && self.agents[route.agent].session.thread_id.is_some()
+            {
                 self.agents[route.agent].session.status = self.agents[route.agent]
                     .terminal_status
                     .clone()
@@ -243,6 +391,7 @@ impl Harness {
             }
             if failed_lead_start {
                 self.lead_cancelled = true;
+                self.compact_lead_after_turn = false;
                 self.cancel_automatic();
                 self.resolve_parent_waits();
             }
@@ -259,9 +408,7 @@ impl Harness {
         {
             // One account and catalog owner avoids duplicate refresh requests.
             let changed = self.agents[0].session.receive(value);
-            self.sync_globals();
-            self.update_block_reason();
-            return changed;
+            return self.tick() | changed;
         }
         if method == "serverRequest/resolved" {
             let request_id = &value["params"]["requestId"];
@@ -339,6 +486,9 @@ impl Harness {
                 .notice("Read-only worker approval declined.");
             return true;
         }
+        if index == 0 && method == "turn/started" {
+            self.lead_started = true;
+        }
         let completed = method == "turn/completed";
         let status = value["params"]["turn"]["status"]
             .as_str()
@@ -347,11 +497,24 @@ impl Harness {
         let changed = self.agents[index].session.receive(value);
         if completed && changed {
             if index > 0 {
-                self.finish_worker(index, &status);
+                if self.agents[index].finished {
+                    let agent = &mut self.agents[index];
+                    agent.cancel_requested = false;
+                    agent.session.status = agent
+                        .terminal_status
+                        .clone()
+                        .unwrap_or_else(|| "Ready".into());
+                } else {
+                    self.finish_worker(index, &status);
+                }
             } else {
                 self.resolve_parent_waits();
                 if matches!(status.as_str(), "failed" | "interrupted") {
                     self.cancel_automatic();
+                }
+                let compact = std::mem::take(&mut self.compact_lead_after_turn);
+                if compact && status == "completed" && !self.lead_cancelled {
+                    self.compact(0);
                 }
             }
         }
@@ -382,14 +545,32 @@ impl Harness {
         }
         let mut pending = Vec::new();
         for wait in std::mem::take(&mut self.waits) {
-            let done = wait.agents.iter().all(|&index| self.agents[index].finished);
             let timed_out = Instant::now() >= wait.deadline;
-            if done || timed_out {
-                let output = self.status_output(&wait.agents, !done && timed_out);
-                self.complete_call(wait.key, wait.rpc_ids, output, true);
-                changed = true;
-            } else {
-                pending.push(wait);
+            match wait.kind {
+                WaitFor::Workers(ref indices) => {
+                    let done = indices.iter().all(|&index| self.agents[index].finished);
+                    if done || timed_out {
+                        let output = self.status_output(indices, !done && timed_out);
+                        self.complete_call(wait.key, wait.rpc_ids, output, true);
+                        changed = true;
+                    } else {
+                        pending.push(wait);
+                    }
+                }
+                WaitFor::Quota(_)
+                    if self.agents[0].session.quota_pending()
+                        && self.block_reason().is_some_and(|reason| {
+                            matches!(reason.as_str(), QUOTA_MISSING | QUOTA_STALE)
+                        })
+                        && !timed_out =>
+                {
+                    pending.push(wait)
+                }
+                WaitFor::Quota(brief) => {
+                    let result = self.launch_result(brief);
+                    self.complete_result(wait.key, wait.rpc_ids, result);
+                    changed = true;
+                }
             }
         }
         self.waits = pending;
@@ -422,6 +603,11 @@ impl Harness {
     pub fn busy(&self) -> bool {
         self.agents[0].session.connecting()
             || self.agents[0].session.busy()
+            || self
+                .agents
+                .iter()
+                .skip(1)
+                .any(|agent| agent.session.connecting())
             || self.active_workers() > 0
             || !self.waits.is_empty()
     }
@@ -430,7 +616,7 @@ impl Harness {
         self.agents
             .iter()
             .skip(1)
-            .filter(|agent| !agent.finished)
+            .filter(|agent| !agent.finished || agent.session.compacting())
             .count()
     }
 
@@ -473,9 +659,6 @@ impl Harness {
         if source == AgentSource::Automatic {
             self.update_block_reason();
             if let Some(reason) = &self.automatic_block_reason {
-                if reason.contains("snapshot") || reason.contains("stale") {
-                    self.agents[0].session.refresh_quota();
-                }
                 return Err(reason.clone());
             }
         }
@@ -498,7 +681,18 @@ impl Harness {
         let index = self.agents.len();
         let prompt = brief.prompt();
         self.agents.push(Agent {
-            id: format!("luna-{index}"),
+            id: format!(
+                "luna-{}",
+                self.agents
+                    .iter()
+                    .filter_map(|agent| agent
+                        .id
+                        .strip_prefix("luna-")
+                        .and_then(|n| n.parse::<usize>().ok()))
+                    .max()
+                    .unwrap_or(0)
+                    + 1
+            ),
             title: clip(&brief.objective, 70),
             source,
             session,
@@ -542,6 +736,7 @@ impl Harness {
             }
             if new_turn {
                 self.automatic_count = 0;
+                self.compact_requested = false;
                 self.lead_cancelled = false;
                 self.pending_lead_reports = self
                     .agents
@@ -605,11 +800,19 @@ impl Harness {
         if self.disconnected || index >= self.agents.len() {
             return false;
         }
-        if index > 0 {
-            self.agents[index].session.notice("Worker compaction is unavailable in this version. Start a fresh worker with a bounded task when needed.");
+        if index > 0 && self.agents[index].finished && self.active_workers() >= MAX_ACTIVE {
+            self.agents[index].session.notice(format!(
+                "Wait for a free worker slot (maximum {MAX_ACTIVE}) before compacting."
+            ));
             return false;
         }
-        self.agents[0].session.compact()
+        let session = &mut self.agents[index].session;
+        if session.compact() {
+            true
+        } else {
+            session.notice("Compaction is available when this agent is connected and idle.");
+            false
+        }
     }
 
     pub fn cancel(&mut self, index: usize) -> bool {
@@ -618,12 +821,13 @@ impl Harness {
         }
         if index == 0 {
             self.lead_cancelled = true;
+            self.compact_lead_after_turn = false;
             self.cancel_automatic();
             self.resolve_parent_waits();
             return self.agents[0].session.interrupt();
         }
         if self.agents[index].finished {
-            return false;
+            return self.agents[index].session.interrupt();
         }
         self.agents[index].pending_prompt = None;
         self.agents[index].cancel_requested = true;
@@ -726,6 +930,7 @@ impl Harness {
             .rev()
             .find(|entry| {
                 entry.speaker == Speaker::Codex
+                    && entry.outcome.as_deref() != Some("commentary")
                     && entry.complete
                     && entry.key > agent.turn_entry_key
             })
@@ -779,6 +984,16 @@ impl Harness {
     fn sync_globals(&mut self) {
         let (lead, workers) = self.agents.split_at_mut(1);
         for agent in workers {
+            if agent.session.models.is_empty() {
+                agent.session.models.extend(
+                    lead[0]
+                        .session
+                        .models
+                        .iter()
+                        .filter(|model| model.id == "gpt-6-luna")
+                        .cloned(),
+                );
+            }
             agent.session.account.clone_from(&lead[0].session.account);
             agent.session.quota.clone_from(&lead[0].session.quota);
             agent.session.quota_loaded = lead[0].session.quota_loaded;
@@ -804,10 +1019,8 @@ impl Harness {
         if self.lead_cancelled {
             return Some("Lead cancellation requested; wait for a new user turn before automatic delegation.".into());
         }
-        if self.resumed {
-            return Some(
-                "Automatic tools are unavailable on resumed chats; start a new chat.".into(),
-            );
+        if !self.automatic_enabled {
+            return Some("Automatic delegation is off in /settings.".into());
         }
         if self.automatic_count >= MAX_AUTOMATIC {
             return Some(format!(
@@ -841,10 +1054,7 @@ impl Harness {
             })
             .collect();
         if relevant.is_empty() {
-            return Some(
-                "Automatic delegation needs a recent Codex quota snapshot; refresh account usage."
-                    .into(),
-            );
+            return Some(QUOTA_MISSING.into());
         }
         for quota in relevant {
             if lead
@@ -852,7 +1062,7 @@ impl Harness {
                 .get(&quota.bucket_id)
                 .is_none_or(|time| time.elapsed() > QUOTA_MAX_AGE)
             {
-                return Some("Codex quota snapshot is stale; refresh account usage before automatic delegation.".into());
+                return Some(QUOTA_STALE.into());
             }
             if quota.used_percent >= 85 {
                 return Some(format!(
@@ -867,9 +1077,10 @@ impl Harness {
     fn status_output(&self, indices: &[usize], timed_out: bool) -> Value {
         json!({"agents":indices.iter().map(|&index| {
             let agent = &self.agents[index];
-            json!({"id":agent.id,"title":agent.title,"status":agent.terminal_status.as_deref().unwrap_or(&agent.session.status),
+            json!({"id":agent.id,"title":agent.title,"status":agent.session.status,
                 "finished":agent.finished,"model":agent.session.active_model.as_ref().or(agent.session.model.as_ref()),
-                "tokens":agent.session.tokens,"paths":agent.owned_paths,
+                "tokens":agent.session.tokens,"context_used":agent.session.context_used,
+                "context_window":agent.session.context_window,"paths":agent.owned_paths,
                 "result":if agent.finished { agent.result.as_deref() } else { None }})
         }).collect::<Vec<_>>(),"timed_out":timed_out})
     }
@@ -937,9 +1148,13 @@ impl Harness {
             || lead.active_turn_id().is_none()
             || params["turnId"].as_str() != lead.active_turn_id()
             || params["callId"].as_str().is_none_or(str::is_empty)
-            || self.resumed
         {
-            self.complete_call(key, vec![rpc_id], json!({"error":"Only the active lead turn may call melly_agents tools. Start a new chat if this chat was resumed."}), false);
+            self.complete_call(
+                key,
+                vec![rpc_id],
+                json!({"error":"Only the active lead turn may call melly_agents tools."}),
+                false,
+            );
             return;
         }
         let arguments = if let Some(text) = params["arguments"].as_str() {
@@ -959,20 +1174,48 @@ impl Harness {
             params["arguments"].clone()
         };
         let result: Result<Value, String> = match params["tool"].as_str().unwrap_or("") {
-            "spawn" => Brief::parse(&arguments).and_then(|brief| self.spawn(brief, AgentSource::Automatic)).map(|index| json!({"id":self.agents[index].id,"status":"starting","model":"gpt-6-luna"})),
-            "status" => self.parse_ids(&arguments).map(|indices| self.status_output(&indices, false)),
-            "cancel" => arguments["id"].as_str().ok_or_else(|| "cancel requires an agent id.".to_owned())
+            "spawn" => match Brief::parse(&arguments) {
+                Ok(brief) if self.defer_for_quota(&brief) => {
+                    self.waits.push(Wait {
+                        key,
+                        rpc_ids: vec![rpc_id],
+                        kind: WaitFor::Quota(brief),
+                        deadline: Instant::now() + Duration::from_secs(8),
+                    });
+                    return;
+                }
+                Ok(brief) => self.launch_result(brief),
+                Err(error) => Err(error),
+            },
+            "status" => self
+                .parse_ids(&arguments)
+                .map(|indices| self.status_output(&indices, false)),
+            "compact" => self.request_compaction(&arguments),
+            "cancel" => arguments["id"]
+                .as_str()
+                .ok_or_else(|| "cancel requires an agent id.".to_owned())
                 .and_then(|id| self.worker_index(id))
-                .map(|index| { self.cancel(index); self.status_output(&[index], false) }),
+                .map(|index| {
+                    self.cancel(index);
+                    self.status_output(&[index], false)
+                }),
             "wait" => {
                 let indices = self.parse_ids(&arguments);
-                let timeout = arguments["timeout_ms"].as_u64().filter(|timeout| *timeout <= 120_000);
+                let timeout = arguments["timeout_ms"]
+                    .as_u64()
+                    .filter(|timeout| *timeout <= 120_000);
                 match (indices, timeout) {
                     (Ok(indices), Some(timeout)) => {
                         let done = indices.iter().all(|&index| self.agents[index].finished);
-                        if done || timeout == 0 { Ok(self.status_output(&indices, !done)) }
-                        else {
-                            self.waits.push(Wait { key, rpc_ids: vec![rpc_id], agents: indices, deadline: Instant::now() + Duration::from_millis(timeout) });
+                        if done || timeout == 0 {
+                            Ok(self.status_output(&indices, !done))
+                        } else {
+                            self.waits.push(Wait {
+                                key,
+                                rpc_ids: vec![rpc_id],
+                                kind: WaitFor::Workers(indices),
+                                deadline: Instant::now() + Duration::from_millis(timeout),
+                            });
                             return;
                         }
                     }
@@ -982,10 +1225,60 @@ impl Harness {
             }
             _ => Err("Unknown melly_agents tool.".into()),
         };
-        match result {
-            Ok(output) => self.complete_call(key, vec![rpc_id], output, true),
-            Err(error) => self.complete_call(key, vec![rpc_id], json!({"error":error}), false),
+        self.complete_result(key, vec![rpc_id], result);
+    }
+
+    fn defer_for_quota(&mut self, brief: &Brief) -> bool {
+        if brief.validate().is_err()
+            || !self
+                .block_reason()
+                .is_some_and(|reason| matches!(reason.as_str(), QUOTA_MISSING | QUOTA_STALE))
+            || self
+                .waits
+                .iter()
+                .filter(|wait| matches!(wait.kind, WaitFor::Quota(_)))
+                .count()
+                >= MAX_AUTOMATIC
+        {
+            return false;
         }
+        let lead = &mut self.agents[0].session;
+        lead.refresh_quota();
+        lead.quota_pending()
+    }
+
+    fn launch_result(&mut self, brief: Brief) -> Result<Value, String> {
+        self.spawn(brief, AgentSource::Automatic).map(
+            |index| json!({"id":self.agents[index].id,"status":"starting","model":"gpt-6-luna"}),
+        )
+    }
+
+    fn complete_result(&mut self, key: String, rpc_ids: Vec<Value>, result: Result<Value, String>) {
+        match result {
+            Ok(output) => self.complete_call(key, rpc_ids, output, true),
+            Err(error) => self.complete_call(key, rpc_ids, json!({"error":error}), false),
+        }
+    }
+
+    fn request_compaction(&mut self, arguments: &Value) -> Result<Value, String> {
+        if self.lead_cancelled || self.compact_requested {
+            return Err("Only one compaction request is allowed per active lead turn.".into());
+        }
+        let id = arguments["id"].as_str().ok_or("Provide an agent ID.")?;
+        let status = if id == "lead" {
+            self.compact_lead_after_turn = true;
+            "scheduled after the lead turn"
+        } else {
+            let index = self.worker_index(id)?;
+            if !self.compact(index) {
+                return Err(
+                    "The worker must be connected, idle, and have a free worker slot.".into(),
+                );
+            }
+            "compacting"
+        };
+        self.compact_requested = true;
+        Ok(json!({"id":id,"status":status}))
     }
 
     fn worker_index(&self, id: &str) -> Result<usize, String> {
@@ -1204,7 +1497,7 @@ fn tool_result(output: Value, success: bool) -> Value {
 fn dynamic_tools() -> Value {
     let ids = json!({"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3});
     let tools = vec![
-        json!({"type":"function","name":"spawn","description":"Start a gpt-6-luna worker only for worthwhile, independent work that benefits the current user task. Never delegate trivial greetings or the same work twice. Give a bounded objective, only relevant context, expected output, and a concrete reason. At most 2 automatic launches per user turn and 3 active workers total. Read mode cannot edit. Edit mode requires disjoint owned paths; preserve concurrent edits and configured permissions. Workers cannot delegate. Returns the worker id immediately.","deferLoading":false,
+        json!({"type":"function","name":"spawn","description":"Start a gpt-6-luna worker only for worthwhile, independent work that benefits the current user task. Never delegate trivial greetings or the same work twice. Give a bounded objective, only relevant context, expected output, and a concrete reason. At most 2 automatic launches per user turn and 3 active workers total. Read mode cannot edit and can use an empty paths array. Any supplied paths must be relative to the workspace. Edit mode requires disjoint owned paths; preserve concurrent edits and configured permissions. Workers cannot delegate. Returns the worker id immediately.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["objective","context","expected_output","reason","mode","paths"],"properties":{
                 "objective":{"type":"string","minLength":1,"maxLength":2000},"context":{"type":"string","maxLength":6000},
                 "expected_output":{"type":"string","minLength":1,"maxLength":1000},"reason":{"type":"string","minLength":1,"maxLength":1000},
@@ -1213,6 +1506,8 @@ fn dynamic_tools() -> Value {
             "inputSchema":{"type":"object","additionalProperties":false,"required":["ids","timeout_ms"],"properties":{"ids":ids,"timeout_ms":{"type":"integer","minimum":0,"maximum":120000}}}}),
         json!({"type":"function","name":"status","description":"Read compact worker status and completed reports when useful; avoid repetitive polling. Prefer wait when you need a result.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["ids"],"properties":{"ids":ids}}}),
+        json!({"type":"function","name":"compact","description":"When context is crowded, compact an idle worker or schedule the lead to compact after this turn. Use sparingly: compaction is a model operation. One successful request per lead turn.","deferLoading":false,
+            "inputSchema":{"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string","description":"lead or the ID of an idle worker"}}}}),
         json!({"type":"function","name":"cancel","description":"Cancel an unneeded worker to avoid spending further usage. Running workers retain their slot until cancellation completes.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}}}),
     ];
