@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+const CONDUCTOR_GUIDANCE: &str = "You are Melly's conductor and the user's only conversation partner. Answer questions directly when delegation adds no value. For edits, delegate implementation to Luna with specific workspace-relative paths and acceptance checks. Give Luna enough context to edit, run tests, fix failures, and iterate independently. Wait for its result. Then inspect the actual working-tree diff (including new files) and the reported command outcomes against the user's request. Review once when Luna finishes. Use clear harness-recorded check results without rerunning the same checks. Rerun a targeted check only when the evidence is missing or ambiguous. If a material problem remains, send the same Luna one focused correction using revise when available, then check that correction. If that tool is unavailable, you can assign a bounded follow-up through spawn. Do not edit files yourself. If delegation or checks are blocked, tell the user what remains unverified.";
+
 const MAX_ACTIVE: usize = 3;
 const MAX_AUTOMATIC: usize = 2;
 const QUOTA_MISSING: &str =
@@ -266,7 +268,15 @@ impl Harness {
                     if index == 0 && method == "thread/start" {
                         request["params"]["dynamicTools"] = dynamic_tools();
                     }
-                    if index > 0 && method == "turn/start" && agent.mode == WorkerMode::Read {
+                    if index == 0 && matches!(method.as_str(), "thread/start" | "thread/resume") {
+                        request["params"]["sandbox"] = json!("read-only");
+                        request["params"]["approvalPolicy"] = json!("never");
+                    }
+                    if index == 0 && method == "turn/start" {
+                        request["params"]["additionalContext"]["melly-conductor"] =
+                            json!({"kind":"application","value":CONDUCTOR_GUIDANCE});
+                    }
+                    if method == "turn/start" && (index == 0 || agent.mode == WorkerMode::Read) {
                         request["params"]["sandboxPolicy"] =
                             json!({"type":"readOnly","networkAccess":false});
                         request["params"]["approvalPolicy"] = json!("never");
@@ -1081,7 +1091,13 @@ impl Harness {
                 "finished":agent.finished,"model":agent.session.active_model.as_ref().or(agent.session.model.as_ref()),
                 "tokens":agent.session.tokens,"context_used":agent.session.context_used,
                 "context_window":agent.session.context_window,"paths":agent.owned_paths,
-                "result":if agent.finished { agent.result.as_deref() } else { None }})
+                "result":if agent.finished { agent.result.as_deref() } else { None },
+                "observed_commands":agent.session.entries.iter().rev()
+                    .filter(|entry| entry.complete && entry.key > agent.turn_entry_key)
+                    .filter_map(|entry| entry.command_result.as_ref())
+                    .take(12)
+                    .map(|(command, exit)| json!({"command":clip(command, 240),"exit_code":exit}))
+                    .collect::<Vec<_>>()})
         }).collect::<Vec<_>>(),"timed_out":timed_out})
     }
 
@@ -1187,6 +1203,7 @@ impl Harness {
                 Ok(brief) => self.launch_result(brief),
                 Err(error) => Err(error),
             },
+            "revise" => self.revise_worker(&arguments),
             "status" => self
                 .parse_ids(&arguments)
                 .map(|indices| self.status_output(&indices, false)),
@@ -1258,6 +1275,33 @@ impl Harness {
             Ok(output) => self.complete_call(key, rpc_ids, output, true),
             Err(error) => self.complete_call(key, rpc_ids, json!({"error":error}), false),
         }
+    }
+
+    fn revise_worker(&mut self, arguments: &Value) -> Result<Value, String> {
+        let id = arguments["id"].as_str().ok_or("Provide a worker ID.")?;
+        let index = self.worker_index(id)?;
+        let feedback = arguments["feedback"]
+            .as_str()
+            .map(str::trim)
+            .filter(|text| !text.is_empty() && text.chars().count() <= 1800)
+            .ok_or("Provide focused feedback of 1–1800 characters.")?;
+        if !self.agents[index].finished || self.agents[index].session.busy() {
+            return Err("Wait for this worker to finish before requesting a correction.".into());
+        }
+        if let Some(reason) = self.block_reason() {
+            return Err(reason);
+        }
+        let prompt = format!(
+            "Conductor review feedback: {feedback}\nCorrect this within your original scope, rerun the acceptance checks, and report the outcome."
+        );
+        if !self.submit(index, &prompt) {
+            return Err(
+                "The worker could not restart. Check its connection and owned paths.".into(),
+            );
+        }
+        self.agents[index].source = AgentSource::Automatic;
+        self.automatic_count += 1;
+        Ok(json!({"id":id,"status":"revising"}))
     }
 
     fn request_compaction(&mut self, arguments: &Value) -> Result<Value, String> {
@@ -1397,7 +1441,7 @@ impl Brief {
     }
     fn prompt(&self) -> String {
         format!(
-            "You are a Melly worker. Complete only this bounded task; do not spawn or delegate to other agents. You are not alone in the codebase: preserve others' edits and accommodate concurrent work.\nMode: {}. {}\nOwned paths: {}\nObjective: {}\nRelevant context: {}\nExpected output: {}\nWhy this is independent: {}\nReturn one concise final report (at most 6000 characters), including results, checks, and relevant file references. Do not send repetitive status reports.",
+            "You are a Melly worker. Complete only this bounded task; do not spawn or delegate to other agents. You are not alone in the codebase: preserve others' edits and accommodate concurrent work.\nMode: {}. {}\nOwned paths: {}\nObjective: {}\nRelevant context: {}\nExpected output: {}\nWhy this is independent: {}\nFor edits, run the acceptance checks yourself, fix failures within scope, and rerun the checks before reporting. Run final acceptance checks as separate commands that preserve their real exit status. Do not mask a failing check with a successful shell exit. Return a concise final report covering changed files, checks and any remaining failures. Flag any check you could not run.",
             self.mode.label(),
             if self.mode == WorkerMode::Read {
                 "Inspect only; do not edit files or request extra permissions."
@@ -1497,15 +1541,17 @@ fn tool_result(output: Value, success: bool) -> Value {
 fn dynamic_tools() -> Value {
     let ids = json!({"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3});
     let tools = vec![
-        json!({"type":"function","name":"spawn","description":"Start a gpt-6-luna worker only for worthwhile, independent work that benefits the current user task. Never delegate trivial greetings or the same work twice. Give a bounded objective, only relevant context, expected output, and a concrete reason. At most 2 automatic launches per user turn and 3 active workers total. Read mode cannot edit and can use an empty paths array. Any supplied paths must be relative to the workspace. Edit mode requires disjoint owned paths; preserve concurrent edits and configured permissions. Workers cannot delegate. Returns the worker id immediately.","deferLoading":false,
+        json!({"type":"function","name":"spawn","description":"Assign worthwhile work to Luna. Use edit mode for implementation and include explicit acceptance checks so Luna can edit, test, and iterate independently. Never delegate trivial greetings or the same work twice. Give a bounded objective, only relevant context, expected output, and a concrete reason. At most 2 worker turns (spawns and revisions) per user turn and 3 active workers total. Read mode cannot edit and can use an empty paths array. Any supplied paths must be relative to the workspace. Edit mode requires disjoint owned paths; preserve concurrent edits and configured permissions. Workers cannot delegate. Returns the worker id immediately.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["objective","context","expected_output","reason","mode","paths"],"properties":{
                 "objective":{"type":"string","minLength":1,"maxLength":2000},"context":{"type":"string","maxLength":6000},
                 "expected_output":{"type":"string","minLength":1,"maxLength":1000},"reason":{"type":"string","minLength":1,"maxLength":1000},
                 "mode":{"type":"string","enum":["read","edit"]},"paths":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":512}}}}}),
-        json!({"type":"function","name":"wait","description":"Wait without polling model turns for these workers to finish or for a bounded timeout. Returns compact final results, actual reported model/tokens, and owned file paths. Continue your own independent work before waiting. No hidden lead turn is started.","deferLoading":false,
+        json!({"type":"function","name":"wait","description":"Wait without polling model turns for these workers to finish or for a bounded timeout. Returns final reports, observed command exit codes, model usage and owned paths. After implementation, inspect the actual diff and check the evidence before accepting. No hidden lead turn is started.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["ids","timeout_ms"],"properties":{"ids":ids,"timeout_ms":{"type":"integer","minimum":0,"maximum":120000}}}}),
         json!({"type":"function","name":"status","description":"Read compact worker status and completed reports when useful; avoid repetitive polling. Prefer wait when you need a result.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["ids"],"properties":{"ids":ids}}}),
+        json!({"type":"function","name":"revise","description":"Send one focused correction to a finished Luna after reviewing its diff and checks. The same worker keeps its context and owned paths. Counts against the shared worker-turn cap.","deferLoading":false,
+            "inputSchema":{"type":"object","additionalProperties":false,"required":["id","feedback"],"properties":{"id":{"type":"string"},"feedback":{"type":"string","maxLength":1800}}}}),
         json!({"type":"function","name":"compact","description":"When context is crowded, compact an idle worker or schedule the lead to compact after this turn. Use sparingly: compaction is a model operation. One successful request per lead turn.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string","description":"lead or the ID of an idle worker"}}}}),
         json!({"type":"function","name":"cancel","description":"Cancel an unneeded worker to avoid spending further usage. Running workers retain their slot until cancellation completes.","deferLoading":false,

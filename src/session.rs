@@ -38,6 +38,7 @@ pub struct Entry {
     pub revision: u64,
     pub model: Option<String>,
     pub outcome: Option<String>,
+    pub command_result: Option<(String, i64)>,
 }
 
 pub struct Approval {
@@ -1020,6 +1021,7 @@ impl Session {
                         revision: 0,
                         model: self.active_model.clone(),
                         outcome: None,
+                        command_result: None,
                     });
                 }
             }
@@ -1158,6 +1160,7 @@ impl Entry {
             revision: 0,
             model: None,
             outcome: None,
+            command_result: None,
         }
     }
 }
@@ -1234,6 +1237,14 @@ fn item_entry(item: &Value) -> Option<Entry> {
         key: 0,
         revision: 0,
         model: None,
+        command_result: if item["type"] == "commandExecution" {
+            item["command"]
+                .as_str()
+                .zip(item["exitCode"].as_i64())
+                .map(|(command, code)| (command.into(), code))
+        } else {
+            None
+        },
         outcome: if item["exitCode"].as_i64().is_some_and(|code| code != 0) {
             Some("failed".into())
         } else {

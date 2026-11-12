@@ -1,15 +1,11 @@
 use melly::session::Session;
 
 pub const COMMANDS: &[(&str, &str)] = &[
-    ("agents", "Jump to the lead or a Luna worker"),
-    (
-        "spawn",
-        "Start Luna: /spawn task · /spawn --edit paths -- task",
-    ),
+    ("agents", "Observe the conductor or a Luna worker"),
     ("model", "Choose a model for the next turn"),
     ("effort", "Set reasoning strength"),
     ("skills", "Attach a Codex skill to your next message"),
-    ("compact", "Compact the selected agent's context"),
+    ("compact", "Compact the conductor's context"),
     (
         "settings",
         "Accent, animation, transcript detail and delegation",

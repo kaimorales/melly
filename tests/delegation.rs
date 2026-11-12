@@ -50,7 +50,7 @@ fn ready(quota: Option<u64>, resume: bool) -> Harness {
                 .as_array()
                 .unwrap()
                 .len(),
-            5
+            6
         );
     }
     h.receive(
@@ -1118,4 +1118,41 @@ fn lead_acceptance_collects_only_the_exact_worker_turn_reports_it_received() {
     let reports = h.collect_completed();
     assert!(reports.contains("A newer result after the lead submission."));
     assert!(reports.contains("luna-2 ·"));
+}
+
+#[test]
+fn conductor_can_revise_the_same_finished_worker_once_within_budget() {
+    let mut h = ready(Some(10), false);
+    start_lead(&mut h);
+    let requests = tool(&mut h, "assign", "spawn", spawn_args(json!([])));
+    connect_worker(
+        &mut h,
+        requests
+            .iter()
+            .find(|r| r["method"] == "thread/start")
+            .unwrap(),
+        "worker",
+    );
+    finish(&mut h, "worker", "completed");
+    let requests = tool(
+        &mut h,
+        "fix",
+        "revise",
+        json!({"id":"luna-1","feedback":"Check the empty input case."}),
+    );
+    assert_eq!(reply_output(&requests, "fix")["status"], "revising");
+    let turn = requests
+        .iter()
+        .find(|r| r["method"] == "turn/start")
+        .unwrap();
+    assert_eq!(turn["params"]["threadId"], "worker");
+    assert!(
+        turn["params"]["input"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("empty input")
+    );
+    assert_eq!(h.auto_launches(), 2);
+    assert_eq!(h.agents.len(), 2);
+    assert!(h.agents[1].source == melly::delegation::AgentSource::Automatic);
 }

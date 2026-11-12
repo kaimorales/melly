@@ -26,7 +26,6 @@ const AMBER: Color = Color::Rgb(218, 184, 125);
 
 pub enum Action {
     Submit(String),
-    Spawn(String),
     Agents,
     Collect,
     Stop,
@@ -226,16 +225,6 @@ impl Workspace {
                     if let Some(row) = menu.rows.get(self.menu_selection) {
                         if menu.kind == Kind::Commands {
                             let command = row.value.clone();
-                            if command == "spawn" && key.code == KeyCode::Enter {
-                                let task =
-                                    self.draft.strip_prefix("/spawn").unwrap_or_default().trim();
-                                if task.is_empty() {
-                                    self.set_draft("/spawn ".into());
-                                } else {
-                                    self.action = Some(Action::Spawn(task.to_owned()));
-                                }
-                                return false;
-                            }
                             if matches!(command.as_str(), "model" | "effort" | "skills")
                                 || key.code == KeyCode::Tab
                             {
@@ -491,8 +480,8 @@ impl Workspace {
                     Span::styled(
                         format!(
                             "  melly / {}  ",
-                            if self.agent_label.is_empty() {
-                                "lead"
+                            if matches!(self.agent_label.as_str(), "" | "lead") {
+                                "conductor"
                             } else {
                                 &self.agent_label
                             }
@@ -678,7 +667,7 @@ impl Workspace {
                 format!(
                     "  {}  ",
                     if self.agent_label.is_empty() {
-                        "Lead"
+                        "Conductor"
                     } else {
                         &self.agent_label
                     }
@@ -709,7 +698,7 @@ impl Workspace {
         }
         if composer.bottom() < area.bottom() {
             frame.render_widget(
-                Paragraph::new("/ commands     /spawn Luna     /agents workspace")
+                Paragraph::new("/ commands     /agents workspace")
                     .style(dim())
                     .alignment(ratatui::layout::Alignment::Right),
                 Rect::new(x, composer.bottom() + 1, width, 1),
@@ -742,7 +731,10 @@ impl Workspace {
     }
 
     fn chat(&mut self, frame: &mut Frame, area: Rect, session: &Session) {
-        let composer_height = if session.selected_skills.is_empty() {
+        let observer = self.managed && self.agent_label != "lead";
+        let composer_height = if observer {
+            1
+        } else if session.selected_skills.is_empty() {
             4
         } else {
             5
@@ -817,6 +809,16 @@ impl Workspace {
                     .style(Style::default().fg(color)),
                 waiting,
             );
+        }
+        if observer {
+            frame.render_widget(
+                Paragraph::new(
+                    "  Observing Luna   Esc conductor   Tab activity   Ctrl+O tool output",
+                )
+                .style(dim().bg(PANEL)),
+                composer,
+            );
+            return;
         }
         let skill_names = session
             .selected_skills
@@ -1367,7 +1369,7 @@ fn entry_lines(entry: &Entry, style: &EntryStyle<'_>) -> Vec<Line<'static>> {
         }
         if entry.complete && !text.is_empty() {
             let agent = if style.agent.is_empty() || style.agent == "lead" {
-                "Lead".into()
+                "Conductor".into()
             } else {
                 printable(style.agent)
             };

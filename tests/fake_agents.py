@@ -55,6 +55,9 @@ for line in sys.stdin:
                 call("auto-denied", "spawn", spawn_args("extra.txt"))
                 call("wait", "wait", {"ids": spawned, "timeout_ms": 120000})
         elif m.get("id") == "wait":
+            if not resumed:
+                reports = json.loads(m["result"]["contentItems"][0]["text"])["agents"]
+                assert all(a["observed_commands"] == [{"command":"cargo test","exit_code":0}] for a in reports)
             if resumed:
                 call("lead-compact", "compact", {"id": "lead"})
             else:
@@ -109,6 +112,8 @@ for line in sys.stdin:
         turn = turns[thread] = f"{thread}-turn-{m['id']}"
         send({"id": m["id"], "result": {"turn": {"id": turn}}})
         if thread == "lead":
+            assert m["params"]["sandboxPolicy"] == {"type":"readOnly","networkAccess":False}
+            assert "melly-conductor" in m["params"]["additionalContext"]
             call("auto-a", "spawn", spawn_args("a.txt"))
             if not resumed:
                 call("auto-b", "spawn", spawn_args("b.txt"))
@@ -120,8 +125,9 @@ for line in sys.stdin:
             workers[thread] = True
             event("item/started", thread, item={"type": "reasoning", "id": thread + "-thought", "summary": []})
             event("item/reasoning/summaryTextDelta", thread, itemId=thread + "-thought", summaryIndex=0, delta="Inspecting this worker's scope")
-            if len(workers) == 3:
+            if len(workers) == 2:
                 for worker in reversed(workers):
+                    event("item/completed", worker, item={"type":"commandExecution","id":worker+"-check","command":"cargo test","exitCode":0,"status":"completed"})
                     finish(worker, "Checked " + worker)
                 completed = True
         continue

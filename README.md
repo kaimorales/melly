@@ -1,6 +1,6 @@
 # Melly
 
-A fast Rust terminal workspace for Codex. Start from a centered composer, delegate bounded work to Luna, and jump between agents with separate conversations, activity and token counts. Melly uses the official Codex App Server and your existing Codex sign-in.
+A fast Rust terminal workspace for Codex. Talk to one conductor. It assigns edits and checks to Luna when useful, then reviews the result. Switch views to observe each agent’s activity and usage. Melly uses the official Codex App Server and your existing Codex sign-in.
 
 ## Run it
 
@@ -22,13 +22,11 @@ Type `/` to open the palette. Type to filter, use Up/Down to select, Tab to comp
 
 | Command | Action |
 | --- | --- |
-| `/agents` | Open the agent switcher; Up/Down selects, Enter opens, Ctrl+D stops |
-| `/spawn task` | Start a read-only Luna worker with a fresh brief |
-| `/spawn --edit src/a.rs,tests/a.rs -- task` | Start an editing Luna with explicit owned paths |
+| `/agents` | Open the agent switcher; Up/Down selects and Enter opens an observation view |
 | `/model` | Pick from the models available to your account |
 | `/effort` or `/strength` | Pick a reasoning effort supported by the selected model |
 | `/skills` | Browse enabled Codex skills and attach one to the next message |
-| `/compact` | Ask Codex to compact the selected agent while idle |
+| `/compact` | Ask Codex to compact the conductor while idle |
 | `/settings` | Save preferences for accent, animation, thinking and tool detail, and automatic delegation |
 | `/context` | Inspect the latest context estimate and model capacity |
 | `/usage` | Inspect session tokens and refresh account usage limits |
@@ -62,23 +60,22 @@ Model and effort changes apply to the next turn. New chats start at the selected
 | Ctrl+C | Interrupt a running turn, or quit when idle |
 | Ctrl+Q | Quit |
 
-The inspector sits beside the chat in wide terminals, with an agent roster, selected-agent context and tokens, and live activity. Narrow terminals switch between panes. Each agent keeps its own draft and scroll position. Typing brings the composer back into view.
+The inspector sits beside the chat in wide terminals, with an agent roster, selected-agent context and tokens, and live activity. Narrow terminals switch between panes. The conductor keeps your draft. Luna views preserve their scroll position. Esc returns from a Luna view to the conductor. Typing brings the composer back into view.
 
 When a supported command or patch needs approval, inspect the action, press `y` to select allow, then Enter to confirm. Press `n` to decline. Melly preserves the sandbox and approval policy configured in Codex.
 
 ## Delegation
 
-The lead can call Melly's spawn, wait, status and cancel tools, including after resuming a Melly chat. Chats created in 0.4 also give the lead a compact tool. It can compact an idle worker or schedule its own compaction after the turn, once per lead turn. Workers use an active slot while compacting and retain their last report. It is instructed to delegate substantial independent work only when the saved lead effort or parallel progress justifies another model's context cost; trivial greetings and tiny edits should stay with the lead. This judgment is model-driven. The harness enforces the limits:
+The conductor is the only conversation you type into. It answers simple questions directly and delegates coding changes to Luna with scoped paths and acceptance checks. Luna owns implementation and the test loop. When Luna finishes, the conductor reviews the working-tree diff and the command exit codes captured by Melly. It can ask the same worker for a focused correction, then review that correction. The conductor runs in Codex's read-only sandbox. Editing workers retain the configured sandbox and approval policy, and ownership is a coordination rule.
 
-- **Two automatic launches per user-started lead turn**, even if an earlier worker finishes. Steering does not reset the count.
-- **Three active workers total**, including manual workers, workers starting, and workers still stopping.
-- **A 15% remaining quota reserve** for automatic launches. Automatic launches wait briefly for a quota refresh and stay blocked if quota is still unavailable. Manual spawning remains available within the active-worker cap.
-- Luna must be offered by the signed-in account. Workers receive bounded task briefs, not a copy of the lead conversation. Codex's own base instructions and tools still contribute context.
-- Read-only workers cannot approve writes or network access. Editing workers declare non-overlapping owned paths; ownership coordinates agents, while Codex's configured sandbox remains the actual permission boundary.
+The conductor can spawn, wait for, inspect, cancel, and compact workers. New 0.5 chats also register the `revise` tool. Older Melly chats retain their original tools, so the conductor can use a fresh bounded follow-up if needed. Worker views are for observation and any configured approval prompts. Ctrl+C stops the conductor and its active delegated workers.
 
-Waiting is event-driven and does not require workers to send progress reports to the lead. The UI reads activity and usage directly from Codex events. Finished results arrive through a tool response, or accompany your next lead message if not yet collected; Melly does not start hidden lead turns. Stopping the lead also stops its automatic workers. Manual workers remain independently controllable.
+- **Two worker turns per user-started conductor turn.** Each spawn or revision spends one slot. Steering does not reset the budget.
+- **Three active workers total**, including workers starting, stopping or compacting.
+- **A 15% remaining quota reserve.** Delegation waits briefly for a quota refresh and stays blocked if quota is unavailable.
+- Luna must be offered by the signed-in account. It receives a bounded brief with relevant context and keeps its context for a revision.
 
-These defaults cap launches and concurrency, not exact plan consumption. A running model can still consume usage until it completes or is stopped. Native Codex delegation is disabled only for Melly's server process so it cannot bypass the harness cap.
+The conductor receives results and up to 12 observed command exit codes through the wait or status tool. These describe the commands that ran. The conductor judges whether those commands covered the requested behavior. Waiting is event-driven and starts no hidden conductor turns.
 
 ## Thinking, context and usage
 

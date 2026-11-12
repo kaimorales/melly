@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise manual/automatic workers and independent drafts through a real PTY."""
+"""Exercise conductor-only input and workspace restoration through a real PTY."""
 from contextlib import contextmanager
 import errno
 import fcntl
@@ -86,52 +86,51 @@ with tempfile.TemporaryDirectory(prefix="melly-team-pty-", dir="/tmp") as direct
     log = Path(directory, "rpc.jsonl")
     with terminal(directory, log, hangup=True) as fd:
         expect(fd, b"Ready")
-        os.write(fd, b"/spawn Inspect c.txt\r")
-        expect(fd, b"luna-1")
-        os.write(fd, b"keep this draft\x1b1Delegate two checks\r")
+        os.write(fd, b"Delegate two checks\r")
         expect(fd, b"TEAM_COMPLETE")
-        os.write(fd, b"\x1b2\r")
-        expect(fd, b"WORKER_FOLLOWUP")
-        os.write(fd, b"/agents\r")
-        expect(fd, b"Ctrl+D stop")
+        os.write(fd, b"\x1b2")
+        expect(fd, b"Observing Luna")
+        os.write(fd, b"never send this to Luna\r")
         dismiss(fd)
-        os.write(fd, b"\x1b1/settings\r")
+        os.write(fd, b"/agents\r")
+        expect(fd, b"Enter open")
+        dismiss(fd)
+        os.write(fd, b"/settings\r")
         expect(fd, b"Lavender")
         os.write(fd, b"\x1b[C\x1b[B\r")
         expect(fd, b"Sky")
         dismiss(fd)
-        os.write(fd, b"\x1b2draft across restart")
-        expect(fd, b"draft across restart")
+        os.write(fd, b"draft across restart\x1b2")
+        expect(fd, b"Observing Luna")
     messages = [json.loads(line) for line in log.read_text().splitlines()]
     starts = [m for m in messages if m.get("method") == "thread/start"]
-    assert len(starts) == 4, len(starts)
+    assert len(starts) == 3, len(starts)
     denied = next(m for m in messages if m.get("id") == "auto-denied")
     assert denied["result"]["success"] is False
     turns = [m["params"] for m in messages if m.get("method") == "turn/start"]
-    followup = next(t for t in turns if t["input"][0]["text"] == "keep this draft")
-    assert followup["threadId"] == "worker-1", followup
-    assert followup["sandboxPolicy"] == {"type": "readOnly", "networkAccess": False}
-    assert len(turns) == 5, len(turns)
+    assert len(turns) == 3, len(turns)
+    assert turns[1]["sandboxPolicy"] == {"type": "readOnly", "networkAccess": False}
+    assert "never send this to Luna" not in log.read_text()
 
     log.unlink()
     with terminal(directory, log, "--continue") as fd:
         expect(fd, b"Restored worker-1")
+        expect(fd, b"Observing Luna")
+        dismiss(fd)
         expect(fd, b"draft across restart")
-        os.write(fd, b"\x1b1/settings\r")
+        os.write(fd, b"\x15/settings\r")
         expect(fd, b"Sky")
         assert b"Off" in screens[fd].text()
         dismiss(fd)
-        os.write(fd, b"\x1b3/compact\r")
-        expect(fd, b"Context compacted")
-        os.write(fd, b"\x1b1Delegate one more check\r")
+        os.write(fd, b"Delegate one more check\r")
         expect(fd, b"RESUMED_TEAM_COMPLETE")
         expect(fd, b"Context compacted")
     messages = [json.loads(line) for line in log.read_text().splitlines()]
     assert [m["params"]["threadId"] for m in messages if m.get("method") == "thread/resume"] == [
-        "lead", "worker-1", "worker-2", "worker-3"
+        "lead", "worker-1", "worker-2"
     ]
     assert [m["params"]["threadId"] for m in messages if m.get("method") == "thread/compact/start"] == [
-        "worker-2", "lead"
+        "lead"
     ]
     assert sum(m.get("method") == "thread/start" for m in messages) == 1
 

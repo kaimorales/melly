@@ -1,10 +1,7 @@
 use std::collections::BTreeMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use melly::{
-    delegation::{Harness, WorkerMode},
-    session::Speaker,
-};
+use melly::{delegation::Harness, session::Speaker};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -67,7 +64,7 @@ impl AgentWorkspace {
             .agents
             .iter()
             .zip(&self.views)
-            .filter(|(_, view)| !view.draft().is_empty())
+            .filter(|(agent, view)| agent.id == "lead" && !view.draft().is_empty())
             .map(|(agent, view)| (agent.id.clone(), view.draft().into()))
             .collect();
         (harness.agents[self.selected].id.clone(), drafts)
@@ -86,7 +83,9 @@ impl AgentWorkspace {
             .position(|agent| agent.id == selected)
             .unwrap_or(0);
         for (agent, view) in harness.agents.iter().zip(&mut self.views) {
-            if let Some(draft) = drafts.remove(&agent.id) {
+            if agent.id == "lead"
+                && let Some(draft) = drafts.remove(&agent.id)
+            {
                 view.insert(&draft);
             }
         }
@@ -126,7 +125,8 @@ impl AgentWorkspace {
     }
 
     pub fn insert(&mut self, text: &str) {
-        if self.settings_row.is_none()
+        if self.selected == 0
+            && self.settings_row.is_none()
             && self.picker.is_none()
             && let Some(view) = self.views.get_mut(self.selected)
         {
@@ -177,7 +177,7 @@ impl AgentWorkspace {
                         return false;
                     }
                     KeyCode::Char('c') if harness.busy() => {
-                        harness.cancel(self.selected);
+                        harness.cancel(0);
                         return false;
                     }
                     _ => {}
@@ -198,11 +198,20 @@ impl AgentWorkspace {
                     self.selected = index;
                     self.picker = None;
                 }
-                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    harness.cancel(index);
-                }
                 KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => return true,
                 _ => {}
+            }
+            return false;
+        }
+        if self.selected != 0 && !approval {
+            if key.code == KeyCode::Esc {
+                self.selected = 0;
+            } else if matches!(key.code, KeyCode::Tab | KeyCode::PageUp | KeyCode::PageDown)
+                || (key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(key.code, KeyCode::Char('b' | 't' | 'o' | 'q')))
+            {
+                return self.views[self.selected]
+                    .key(key, &mut harness.agents[self.selected].session);
             }
             return false;
         }
@@ -212,21 +221,10 @@ impl AgentWorkspace {
         if let Some(action) = self.views[self.selected].take_action() {
             match action {
                 Action::Submit(prompt) => {
-                    if harness.submit(self.selected, &prompt) {
+                    if harness.submit(0, &prompt) {
                         self.views[self.selected].accept_submission();
                     }
                 }
-                Action::Spawn(input) => match spawn_args(&input) {
-                    Ok((task, mode, paths)) => match harness.spawn_manual(task, mode, paths) {
-                        Ok(index) => {
-                            self.views[self.selected].accept_submission();
-                            self.selected = index;
-                            self.synchronize(harness);
-                        }
-                        Err(error) => harness.agents[self.selected].session.notice(error),
-                    },
-                    Err(error) => harness.agents[self.selected].session.notice(error),
-                },
                 Action::Agents => self.picker = Some(self.selected),
                 Action::Settings => self.settings_row = Some(0),
                 Action::Collect => {
@@ -234,14 +232,14 @@ impl AgentWorkspace {
                     harness.agents[0].session.notice("Your next lead message will include any uncollected worker results. Use /agents to inspect them now.");
                 }
                 Action::Stop => {
-                    if !harness.cancel(self.selected) {
+                    if !harness.cancel(0) {
                         harness.agents[self.selected]
                             .session
                             .notice("This agent has no active turn to stop.");
                     }
                 }
                 Action::Compact => {
-                    harness.compact(self.selected);
+                    harness.compact(0);
                 }
             }
         }
@@ -283,7 +281,7 @@ impl AgentWorkspace {
         }
         roster.push(Line::default());
         roster.push(Line::styled(
-            format!("  Auto launches {}/2 · /spawn", harness.auto_launches()),
+            format!("  Worker turns {}/2 · /agents", harness.auto_launches()),
             Style::default().fg(MUTED),
         ));
         roster.push(Line::default());
@@ -307,7 +305,7 @@ impl AgentWorkspace {
                 if !harness.busy() {
                     return true;
                 }
-                harness.cancel(self.selected);
+                harness.cancel(0);
             }
             KeyCode::Esc => self.settings_row = None,
             KeyCode::Up | KeyCode::BackTab => self.settings_row = Some((row + ROWS - 1) % ROWS),
@@ -436,7 +434,7 @@ impl AgentWorkspace {
         frame.render_widget(Clear, popup);
         let block = Block::bordered()
             .title(" Agents ")
-            .title_bottom(" ↑↓ select  Enter open  Ctrl+D stop  Esc close ")
+            .title_bottom(" ↑↓ select  Enter open  Esc close ")
             .style(Style::default().bg(BG).fg(INK))
             .border_style(Style::default().fg(self.accent()));
         let inner = block.inner(popup);
@@ -498,7 +496,7 @@ impl AgentWorkspace {
             format!(" Auto: {reason}")
         } else {
             format!(
-                " Auto {}/2 this turn · {}/3 workers active",
+                " Worker turns {}/2 · {}/3 workers active",
                 harness.auto_launches(),
                 harness.active_workers()
             )
@@ -521,32 +519,11 @@ fn safe(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).take(140).collect()
 }
 
-fn spawn_args(input: &str) -> Result<(String, WorkerMode, Vec<String>), String> {
-    if let Some(rest) = input.strip_prefix("--edit ") {
-        let (paths, task) = rest
-            .split_once(" -- ")
-            .ok_or("Use /spawn --edit src/file.rs,tests/file.rs -- task")?;
-        let paths = paths
-            .split(',')
-            .map(str::trim)
-            .filter(|p| !p.is_empty())
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        if paths.is_empty() || task.trim().is_empty() {
-            return Err("Provide owned paths and a task.".into());
-        }
-        return Ok((task.trim().into(), WorkerMode::Edit, paths));
-    }
-    if input.trim().is_empty() {
-        return Err("Use /spawn followed by a task for Luna.".into());
-    }
-    Ok((input.trim().into(), WorkerMode::Read, Vec::new()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ui::tests::{capture, fixture, screen};
+    use melly::delegation::WorkerMode;
     use ratatui::{Terminal, backend::TestBackend};
     use serde_json::json;
 
@@ -564,28 +541,25 @@ mod tests {
     }
 
     #[test]
-    fn stop_cancels_a_connecting_worker_before_any_turn_starts() {
+    fn worker_view_accepts_no_user_input() {
         let mut h = harness();
+        h.spawn_manual("Inspect parser".into(), WorkerMode::Read, vec![])
+            .unwrap();
         let mut w = AgentWorkspace::default();
         w.synchronize(&mut h);
-        w.insert("/spawn Inspect the parser");
-        w.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut h);
-        let requests = h.drain_requests();
-        let open = requests
-            .iter()
-            .find(|r| r["method"] == "thread/start")
-            .unwrap();
-        assert_eq!(w.selected, 1);
-        w.insert("/stop");
-        w.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut h);
-        h.receive(json!({"id":open["id"],"result":{"thread":{"id":"worker"}}}));
-        h.tick();
-        assert!(h.agents[1].finished);
+        w.selected = 1;
+        w.insert("pasted worker prompt");
+        for key in [KeyCode::Char('x'), KeyCode::Enter] {
+            w.key(KeyEvent::new(key, KeyModifiers::NONE), &mut h);
+        }
+        assert!(w.views[1].draft().is_empty());
         assert!(
             !h.drain_requests()
                 .iter()
                 .any(|r| r["method"] == "turn/start")
         );
+        w.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &mut h);
+        assert_eq!(w.selected, 0);
     }
 
     #[test]
@@ -625,18 +599,5 @@ mod tests {
             let mut t = Terminal::new(TestBackend::new(width, height)).unwrap();
             t.draw(|f| w.draw(f, &h)).unwrap();
         }
-    }
-    #[test]
-    fn manual_edit_requires_explicit_paths_and_a_task() {
-        assert!(spawn_args("--edit src/file.rs").is_err());
-        let (task, mode, paths) =
-            spawn_args("--edit src/file.rs,tests/a.rs -- Fix the bug").unwrap();
-        assert_eq!(task, "Fix the bug");
-        assert_eq!(paths.len(), 2);
-        assert!(matches!(mode, WorkerMode::Edit));
-        assert!(matches!(
-            spawn_args("Inspect the parser").unwrap().1,
-            WorkerMode::Read
-        ));
     }
 }
