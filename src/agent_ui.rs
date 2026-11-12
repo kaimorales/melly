@@ -20,10 +20,7 @@ use crate::{
     ui::{Action, Workspace},
 };
 
-const BG: Color = Color::Rgb(11, 11, 11);
-const PANEL: Color = Color::Rgb(24, 24, 24);
-const INK: Color = Color::Rgb(235, 232, 228);
-const MUTED: Color = Color::Rgb(144, 144, 144);
+use crate::visual::{self, BG, BORDER, INK, MUTED, PANEL};
 const ACCENTS: &[(&str, Color)] = &[
     ("Lavender", Color::Rgb(210, 183, 240)),
     ("Sky", Color::Rgb(132, 193, 245)),
@@ -49,6 +46,14 @@ pub struct AgentWorkspace {
 }
 
 impl AgentWorkspace {
+    pub fn animating(&self, harness: &Harness) -> bool {
+        self.settings.motion
+            && self
+                .views
+                .iter()
+                .zip(&harness.agents)
+                .any(|(view, agent)| view.animating(&agent.session))
+    }
     pub fn take_session_action(&mut self) -> Option<SessionAction> {
         self.session_action.take()
     }
@@ -430,12 +435,8 @@ impl AgentWorkspace {
                 None
             }
             .unwrap_or_else(|| agent_activity(agent));
-            let indicator = if agent.session.busy() && self.settings.motion {
-                ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"][agent
-                    .session
-                    .elapsed()
-                    .map_or(0, |d| (d.as_millis() / 120) as usize)
-                    % 8]
+            let indicator = if agent.session.busy() {
+                visual::beat(visual::time_ms(), self.settings.motion)
             } else {
                 " "
             };
@@ -560,10 +561,13 @@ impl AgentWorkspace {
         let accent = self.accent();
         frame.render_widget(Clear, popup);
         let block = Block::bordered()
-            .title(" Settings ")
+            .title(Line::styled(
+                " Settings ",
+                Style::default().fg(INK).add_modifier(Modifier::BOLD),
+            ))
             .title_bottom(" ↑↓ move   ←→ / Enter change   Esc close ")
             .style(Style::default().bg(PANEL).fg(INK))
-            .border_style(Style::default().fg(accent));
+            .border_style(Style::default().fg(BORDER));
         let inner = block.inner(popup);
         frame.render_widget(block, popup);
         let switch = |value| if value { "On" } else { "Off" };
@@ -572,7 +576,7 @@ impl AgentWorkspace {
                 "Accent",
                 ACCENTS.get(self.settings.accent).unwrap_or(&ACCENTS[0]).0,
             ),
-            ("Thinking animation", switch(self.settings.motion)),
+            ("Animations", switch(self.settings.motion)),
             ("Expand thinking", switch(self.settings.expand_thinking)),
             ("Expand tool output", switch(self.settings.expand_tools)),
             ("Automatic delegation", switch(self.settings.auto_delegate)),
@@ -626,10 +630,13 @@ impl AgentWorkspace {
         );
         frame.render_widget(Clear, popup);
         let block = Block::bordered()
-            .title(" Agents ")
+            .title(Line::styled(
+                " Agents ",
+                Style::default().fg(INK).add_modifier(Modifier::BOLD),
+            ))
             .title_bottom(" ↑↓ select  Enter open  Esc close ")
             .style(Style::default().bg(BG).fg(INK))
-            .border_style(Style::default().fg(self.accent()));
+            .border_style(Style::default().fg(BORDER));
         let inner = block.inner(popup);
         frame.render_widget(block, popup);
         let capacity = inner.height.saturating_sub(2).div_euclid(4).max(1) as usize;

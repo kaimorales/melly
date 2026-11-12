@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use crossterm::event::KeyCode;
 use melly::delegation::{Agent, ObservedCommand, ReviewVerdict};
 use ratatui::{
@@ -10,11 +8,7 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph, Wrap},
 };
 
-const BG: Color = Color::Rgb(11, 11, 11);
-const INK: Color = Color::Rgb(235, 232, 228);
-const MUTED: Color = Color::Rgb(144, 144, 144);
-const MINT: Color = Color::Rgb(140, 219, 188);
-const AMBER: Color = Color::Rgb(234, 188, 110);
+use crate::visual::{self, AMBER, BG, INK, MINT, MUTED};
 
 #[derive(Default)]
 pub struct HandoffView {
@@ -80,14 +74,8 @@ impl HandoffView {
         ]);
         frame.render_widget(Paragraph::new(heading), Rect::new(x, top, width, 1));
 
-        let live = if motion && !agent.finished {
-            const FRAMES: [&str; 4] = ["◐", "◓", "◑", "◒"];
-            FRAMES[(SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis()
-                / 180
-                % 4) as usize]
+        let live = if !agent.finished {
+            visual::beat(visual::time_ms(), motion)
         } else {
             "○"
         };

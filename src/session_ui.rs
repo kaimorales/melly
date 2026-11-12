@@ -10,6 +10,7 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph},
 };
 
+use crate::visual::{BORDER, INK, MUTED, SELECTED, SIDEBAR};
 use crate::{state::SessionSummary, ui::ellipsis};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -131,16 +132,14 @@ impl SessionPicker {
             height,
         );
         frame.render_widget(Clear, popup);
-        let bg = Color::Rgb(17, 17, 17);
-        let ink = Color::Rgb(235, 232, 228);
-        let muted = Color::Rgb(144, 144, 144);
+        let (bg, ink, muted) = (SIDEBAR, INK, MUTED);
         let block = Block::bordered()
             .title(Line::styled(
                 " Sessions ",
                 Style::default().fg(ink).add_modifier(Modifier::BOLD),
             ))
             .style(Style::default().bg(bg).fg(ink))
-            .border_style(Style::default().fg(Color::Rgb(54, 54, 54)));
+            .border_style(Style::default().fg(BORDER));
         let inner = block.inner(popup);
         frame.render_widget(block, popup);
         let content = Rect::new(
@@ -247,7 +246,7 @@ impl SessionPicker {
             ];
             frame.render_widget(
                 Paragraph::new(lines).style(Style::default().bg(if selected {
-                    Color::Rgb(30, 30, 30)
+                    SELECTED
                 } else {
                     bg
                 })),

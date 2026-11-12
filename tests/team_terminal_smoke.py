@@ -225,4 +225,13 @@ with tempfile.TemporaryDirectory(prefix="melly-history-pty-", dir="/tmp") as dir
     assert len(fresh) == 1
     assert json.loads(fresh[0].read_text())["title"] == "Fresh session title"
 
-print("Team terminal smoke passed (delegation, restore, handoffs, searchable history, switching, drafts, busy protection and new sessions).")
+with tempfile.TemporaryDirectory(prefix="melly-idle-pty-", dir="/tmp") as directory:
+    with terminal(directory, Path(directory, "idle-rpc.log")) as fd:
+        expect(fd, b"Ready")
+        deadline = time.monotonic() + 1.0  # Let the bounded 600 ms home reveal settle.
+        while time.monotonic() < deadline:
+            if select.select([fd], [], [], max(0, deadline-time.monotonic()))[0]:
+                screens[fd].feed(os.read(fd, 65536))
+        assert not select.select([fd], [], [], 0.3)[0], "Idle Melly must stop painting animation frames"
+
+print("Team terminal smoke passed (delegation, restore, handoffs, history, switching, drafts, busy protection, new sessions and idle animation shutdown).")

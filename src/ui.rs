@@ -4,25 +4,18 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap},
 };
 
 use crate::commands::{Kind, Menu};
+use crate::visual::{
+    self, ACCENT, AMBER, BG, BORDER, FAINT, INK, MINT, MUTED, PANEL, SELECTED, SIDEBAR,
+};
 use melly::session::Entry;
 use melly::session::{Session, Speaker};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-const BG: Color = Color::Rgb(11, 11, 11);
-const PANEL: Color = Color::Rgb(24, 24, 24);
-const INK: Color = Color::Rgb(235, 232, 228);
-const MUTED: Color = Color::Rgb(144, 144, 144);
-const BORDER: Color = Color::Rgb(42, 42, 42);
-const ACCENT: Color = Color::Rgb(210, 183, 240);
-const MINT: Color = Color::Rgb(164, 233, 193);
-const SELECTED: Color = Color::Rgb(36, 36, 36);
-const AMBER: Color = Color::Rgb(218, 184, 125);
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub enum Action {
     Submit(String),
@@ -59,6 +52,8 @@ pub struct Workspace {
     render_cache: HashMap<u64, EntryView>,
     accent_override: Option<Color>,
     reduced_motion: bool,
+    intro_started: Option<Instant>,
+    showing_home: bool,
 }
 
 struct EntryView {
@@ -81,6 +76,16 @@ enum Inspector {
 }
 
 impl Workspace {
+    pub fn animating(&self, session: &Session) -> bool {
+        !self.reduced_motion
+            && (session.busy()
+                || session.connecting()
+                || (self.showing_home
+                    && self
+                        .intro_started
+                        .is_some_and(|t| t.elapsed().as_millis() < visual::INTRO_MS)))
+    }
+
     pub fn configure(&mut self, color: Color, motion: bool) {
         if self.accent_override != Some(color) {
             self.accent_override = Some(color);
@@ -432,6 +437,7 @@ impl Workspace {
 
     pub fn draw(&mut self, frame: &mut Frame, session: &Session) {
         self.shown_approval = None;
+        self.showing_home = false;
         let area = frame.area();
         frame.render_widget(
             Block::default().style(Style::default().bg(BG).fg(INK)),
@@ -481,9 +487,9 @@ impl Workspace {
             identity,
         );
         let symbol = if session.busy() || session.connecting() {
-            "◌"
+            visual::beat(visual::time_ms(), !self.reduced_motion)
         } else {
-            "●"
+            "·"
         };
         frame.render_widget(
             Paragraph::new(format!("{symbol} {}  ", session.status))
@@ -494,8 +500,12 @@ impl Workspace {
 
         let wide = area.width >= 105;
         if wide {
-            let [chat, activity] =
-                Layout::horizontal([Constraint::Min(60), Constraint::Length(34)]).areas(content);
+            let [chat, _, activity] = Layout::horizontal([
+                Constraint::Min(60),
+                Constraint::Length(1),
+                Constraint::Length(34),
+            ])
+            .areas(content);
             self.chat(frame, chat, session);
             self.activity(frame, activity, session);
         } else if self.activity_focused {
@@ -503,19 +513,28 @@ impl Workspace {
         } else {
             self.chat(frame, content, session);
         }
-        frame.render_widget(
-            Paragraph::new(if self.managed && self.agent_label != "lead" {
-                "  Ctrl+R brief / review   Ctrl+N/P agents   Ctrl+O activity"
-            } else if self.activity_focused {
-                "  Tab chat   ↑↓ scroll   / commands"
-            } else if session.busy() {
-                "  Ctrl+C interrupt   Ctrl+O activity   /agents switch"
-            } else {
-                "  / commands   Ctrl+S sessions   Ctrl+G agents"
-            })
-            .style(dim()),
-            footer,
-        );
+        let hints: &[(&str, &str)] = if self.managed && self.agent_label != "lead" {
+            &[
+                ("Ctrl+R", "brief / review"),
+                ("Ctrl+N/P", "agents"),
+                ("Ctrl+O", "activity"),
+            ]
+        } else if self.activity_focused {
+            &[("Tab", "chat"), ("↑↓", "scroll"), ("/", "commands")]
+        } else if session.busy() {
+            &[
+                ("Ctrl+C", "interrupt"),
+                ("Ctrl+O", "activity"),
+                ("Ctrl+G", "agents"),
+            ]
+        } else {
+            &[
+                ("/", "commands"),
+                ("Ctrl+S", "sessions"),
+                ("Ctrl+G", "agents"),
+            ]
+        };
+        frame.render_widget(Paragraph::new(visual::hints(hints)), footer);
 
         if let Some(approval) = session.approvals.front() {
             let confirm_visible =
@@ -568,31 +587,21 @@ impl Workspace {
     fn home(&mut self, frame: &mut Frame, area: Rect, session: &Session) {
         let width = area.width.saturating_sub(4).min(75);
         let x = area.x + (area.width - width) / 2;
-        let logo_height = if area.height >= 18 { 4 } else { 0 };
+        let logo_height = if area.height >= 18 { 5 } else { 0 };
+        self.showing_home = logo_height > 0;
+        let elapsed = self
+            .intro_started
+            .get_or_insert_with(Instant::now)
+            .elapsed()
+            .as_millis();
         let y = area.y + area.height.saturating_sub(logo_height + 10) / 2;
         if logo_height > 0 {
-            let logo = if width >= 43 {
-                vec![
-                    "███   ███ ███████ ██      ██      ██   ██",
-                    "████ ████ ██▄▄    ██      ██       ██ ██ ",
-                    "██ ███ ██ ██▀▀    ██      ██        ███  ",
-                    "██     ██ ███████ ███████ ███████    ██  ",
-                ]
-            } else {
-                vec![
-                    "█▀▄▀█ █▀▀ █   █   █ █",
-                    "█ ▀ █ █▀▀ █   █   ▀█▀",
-                    "▀   ▀ ▀▀▀ ▀▀▀ ▀▀▀  ▀ ",
-                ]
-            };
-            frame.render_widget(
-                Paragraph::new(
-                    logo.into_iter()
-                        .map(|l| Line::styled(l, Style::default().fg(INK)))
-                        .collect::<Vec<_>>(),
-                )
-                .alignment(ratatui::layout::Alignment::Center),
+            visual::wordmark(
+                frame,
                 Rect::new(x, y, width, logo_height),
+                self.color(),
+                elapsed,
+                !self.reduced_motion,
             );
         }
         let composer = Rect::new(
@@ -601,7 +610,13 @@ impl Workspace {
             width,
             5.min(area.bottom().saturating_sub(y + logo_height + 3)),
         );
-        frame.render_widget(Block::default().style(Style::default().bg(PANEL)), composer);
+        frame.render_widget(
+            Block::default()
+                .borders(Borders::LEFT)
+                .border_style(self.accent())
+                .style(Style::default().bg(PANEL)),
+            composer,
+        );
         let (before, after) = self.draft.split_at(self.cursor);
         let text = if self.draft.is_empty() {
             "Ask anything…".into()
@@ -668,8 +683,7 @@ impl Workspace {
         }
         if composer.bottom() < area.bottom() {
             frame.render_widget(
-                Paragraph::new("/ commands     Ctrl+S sessions")
-                    .style(dim())
+                Paragraph::new(visual::hints(&[("/", "commands"), ("Ctrl+S", "sessions")]))
                     .alignment(ratatui::layout::Alignment::Right),
                 Rect::new(x, composer.bottom() + 1, width, 1),
             );
@@ -702,20 +716,20 @@ impl Workspace {
 
     fn chat(&mut self, frame: &mut Frame, area: Rect, session: &Session) {
         let observer = self.managed && self.agent_label != "lead";
+        let draft_rows = Paragraph::new(format!("{}▌", self.draft))
+            .wrap(Wrap { trim: false })
+            .line_count(area.width.saturating_sub(4))
+            .clamp(1, 6) as u16;
         let composer_height = if observer {
             1
-        } else if session.selected_skills.is_empty() {
-            4
         } else {
-            5
+            (draft_rows + 3 + u16::from(!session.selected_skills.is_empty()))
+                .min((area.height / 2).max(4))
         };
         let [history, composer] =
             Layout::vertical([Constraint::Min(1), Constraint::Length(composer_height)]).areas(area);
-        let [history, waiting] = Layout::vertical([
-            Constraint::Min(1),
-            Constraint::Length(u16::from(session.busy())),
-        ])
-        .areas(history);
+        let [history, waiting] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(history);
         if session.entries.is_empty() {
             let greeting = vec![
                 Line::default(),
@@ -757,28 +771,29 @@ impl Workspace {
                 &mut self.render_cache,
             );
         }
-        if waiting.height > 0 {
-            const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-            let indicator = if self.reduced_motion {
-                "◌"
-            } else {
-                FRAMES[(SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis()
-                    / 100
-                    % FRAMES.len() as u128) as usize]
-            };
+        if waiting.height > 0 && session.busy() {
             let color = if session.status == "Thinking" {
                 AMBER
             } else {
                 self.color()
             };
-            frame.render_widget(
-                Paragraph::new(format!("  {indicator} {}", session.status))
-                    .style(Style::default().fg(color)),
-                waiting,
-            );
+            let mut spans = vec![Span::raw("  ")];
+            spans.extend(visual::signal(
+                visual::time_ms(),
+                !self.reduced_motion,
+                color,
+            ));
+            spans.push(Span::styled(
+                format!("  {}", session.status),
+                Style::default().fg(color),
+            ));
+            if let Some(elapsed) = session.elapsed() {
+                spans.push(Span::styled(
+                    format!("  {}s", elapsed.as_secs()),
+                    Style::default().fg(FAINT),
+                ));
+            }
+            frame.render_widget(Paragraph::new(Line::from(spans)), waiting);
         }
         if observer {
             frame.render_widget(
@@ -805,6 +820,7 @@ impl Workspace {
                 self.accent()
             })
             .style(Style::default().bg(PANEL));
+        let block = block.padding(Padding::new(1, 2, 0, 0));
         let mut inner = block.inner(composer);
         frame.render_widget(block, composer);
         let label = if self.menu_dismissed && self.draft.starts_with('/') {
@@ -815,7 +831,7 @@ impl Workspace {
             "Conductor"
         };
         let meta = Line::from(vec![
-            Span::styled(format!("  {label}"), Style::default().fg(self.color())),
+            Span::styled(label, Style::default().fg(self.color())),
             Span::styled(format!(" · {}", model_settings(session)), dim()),
         ]);
         if inner.height > 1 {
@@ -825,13 +841,17 @@ impl Workspace {
             );
             inner.height -= 1;
         }
+        // Leave a quiet row between editable text and model metadata.
+        if inner.height > 2 {
+            inner.height -= 1;
+        }
         if inner.height > 1 {
             inner.y += 1;
             inner.height -= 1;
         }
         if !skill_names.is_empty() && inner.height > 1 {
             frame.render_widget(
-                Paragraph::new(format!("  {skill_names}  · Ctrl+U clear"))
+                Paragraph::new(format!("{skill_names}  · Ctrl+U clear"))
                     .style(Style::default().fg(MINT)),
                 Rect::new(inner.x, inner.y, inner.width, 1),
             );
@@ -840,11 +860,11 @@ impl Workspace {
         }
         let (before, after) = self.draft.split_at(self.cursor);
         let visible = if self.draft.is_empty() {
-            "  ▌ Ask anything…".into()
+            "Ask anything…".into()
         } else {
-            format!("  {before}▌{after}")
+            format!("{before}▌{after}")
         };
-        let through = Paragraph::new(format!("  {before}▌")).wrap(Wrap { trim: false });
+        let through = Paragraph::new(format!("{before}▌")).wrap(Wrap { trim: false });
         let scroll = through
             .line_count(inner.width)
             .saturating_sub(inner.height as usize);
@@ -876,11 +896,17 @@ impl Workspace {
             height,
         );
         frame.render_widget(Clear, popup);
-        let title = format!(" {} ", menu.title());
+        let title = Line::styled(
+            format!(" {} ", menu.title()),
+            Style::default().fg(INK).add_modifier(Modifier::BOLD),
+        );
         let block = Block::bordered()
             .title(title)
-            .title_bottom(" ↑↓ select  Tab complete  Enter apply  Esc close ")
-            .border_style(self.accent())
+            .title_bottom(Line::styled(
+                " ↑↓ select  Tab complete  Enter apply  Esc close ",
+                dim(),
+            ))
+            .border_style(border())
             .style(Style::default().bg(PANEL).fg(INK));
         let inner = block.inner(popup);
         frame.render_widget(block, popup);
@@ -945,7 +971,9 @@ impl Workspace {
     }
 
     fn activity(&mut self, frame: &mut Frame, area: Rect, session: &Session) {
-        let panel = Block::default().style(Style::default().bg(Color::Rgb(17, 17, 17)));
+        let panel = Block::default()
+            .padding(Padding::new(0, 0, 1, 0))
+            .style(Style::default().bg(SIDEBAR));
         let inner = panel.inner(area);
         frame.render_widget(panel, area);
         let roster_height = (self.roster.len() as u16).min(inner.height.saturating_sub(7));
@@ -961,16 +989,34 @@ impl Workspace {
         let used = session.context_used.map_or("—".into(), display_tokens);
         let capacity = session.context_window.map_or("—".into(), display_tokens);
         let percent = match (session.context_used, session.context_window) {
-            (Some(u), Some(c)) if c > 0 => format!(" · ≈{:.0}%", 100.0 * u as f64 / c as f64),
+            (Some(u), Some(c)) if c > 0 => format!("≈{:.0}%", 100.0 * u as f64 / c as f64),
             _ => String::new(),
         };
         let mut lines = vec![
-            Line::styled(
-                "  Context",
-                Style::default().fg(INK).add_modifier(Modifier::BOLD),
-            ),
-            Line::styled(format!("  {used} / {capacity}{percent}"), dim()),
+            Line::from(vec![
+                Span::styled(
+                    "  Context",
+                    Style::default().fg(INK).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(
+                        "{:>width$}",
+                        percent,
+                        width = inner.width.saturating_sub(11) as usize
+                    ),
+                    dim(),
+                ),
+            ]),
+            Line::styled(format!("  {used} / {capacity}"), dim()),
         ];
+        let mut meter = visual::meter(
+            session.context_used,
+            session.context_window,
+            inner.width.saturating_sub(4).min(28) as usize,
+            self.color(),
+        );
+        meter.spans.insert(0, Span::raw("  "));
+        lines.push(meter);
         if let Some(q) = session
             .quota
             .iter()
@@ -1144,15 +1190,18 @@ fn render_entries(
                 && v.collapsed == style.collapsed
                 && v.expanded_tools == style.tools
         }) {
-            let lines = if is_activity(entry) {
+            let mut lines = if is_activity(entry) {
                 activity_lines(group, &style, area.width)
             } else {
                 entry_lines(entry, &style)
             };
+            for line in &mut lines {
+                strip_gutter(line);
+            }
             let card = entry.speaker == Speaker::You;
             let height = Paragraph::new(lines.clone())
                 .wrap(Wrap { trim: false })
-                .line_count(area.width.saturating_sub(u16::from(card)))
+                .line_count(area.width.saturating_sub(4))
                 + usize::from(card);
             cache.insert(
                 entry.key,
@@ -1191,11 +1240,13 @@ fn render_entries(
                 let mut paragraph = Paragraph::new(view.lines.clone())
                     .style(Style::default().fg(INK))
                     .wrap(Wrap { trim: false })
-                    .scroll((skip.min(u16::MAX as usize) as u16, 0));
+                    .scroll((skip.min(u16::MAX as usize) as u16, 0))
+                    .block(Block::new().padding(Padding::horizontal(2)));
                 if card {
                     paragraph = paragraph.block(
                         Block::new()
                             .borders(Borders::LEFT)
+                            .padding(Padding::new(1, 2, 0, 0))
                             .border_style(Style::default().fg(style.accent))
                             .style(Style::default().bg(PANEL)),
                     );
@@ -1205,6 +1256,26 @@ fn render_entries(
         }
         position = end;
         if position >= top + area.height as usize {
+            break;
+        }
+    }
+}
+
+/// Real padding keeps wrapped text aligned; preserve the formatter's relative indents.
+fn strip_gutter(line: &mut Line<'static>) {
+    let mut remaining = 2;
+    for span in &mut line.spans {
+        let count = span
+            .content
+            .chars()
+            .take(remaining)
+            .take_while(|c| *c == ' ')
+            .count();
+        if count > 0 {
+            span.content = span.content[count..].to_owned().into();
+            remaining -= count;
+        }
+        if remaining == 0 || !span.content.is_empty() {
             break;
         }
     }
@@ -1399,7 +1470,7 @@ fn entry_lines(entry: &Entry, style: &EntryStyle<'_>) -> Vec<Line<'static>> {
         let mut lines = vec![Line::default()];
         lines.extend(
             text.lines()
-                .map(|line| Line::styled(format!("  {line}"), dim().bg(PANEL))),
+                .map(|line| Line::styled(format!("  {line}"), Style::default().fg(INK).bg(PANEL))),
         );
         lines.push(Line::default());
         return lines;
@@ -1629,7 +1700,47 @@ pub(crate) mod tests {
         assert!((14..30).contains(&row));
         assert!(!text.contains("LIVE ACTIVITY"));
         assert!(!text.contains("Latest model-call snapshot"));
+        assert!(w.animating(&s));
+        if std::env::var_os("MELLY_UI_CAPTURE_DIR").is_some() {
+            for ms in (0..=600).step_by(50) {
+                w.intro_started = Some(Instant::now() - std::time::Duration::from_millis(ms));
+                t.draw(|f| w.draw(f, &s)).unwrap();
+                capture(&t, &format!("intro-{ms:03}"));
+            }
+        }
+        w.intro_started =
+            Some(Instant::now() - std::time::Duration::from_millis(visual::INTRO_MS as u64));
+        assert!(!w.animating(&s));
+        t.draw(|f| w.draw(f, &s)).unwrap();
         capture(&t, "home");
+        w.configure(ACCENT, false);
+        w.intro_started = Some(Instant::now());
+        assert!(!w.animating(&s));
+    }
+
+    #[test]
+    fn wrapped_messages_and_composer_share_the_same_text_gutter() {
+        let mut s = fixture();
+        s.submit(&"promptmark ".repeat(32));
+        s.receive(json!({"method":"item/completed","params":{"threadId":"preview-thread","item":{
+            "type":"agentMessage","id":"reply","phase":"final_answer","text":"replymark ".repeat(32)}}}));
+        let mut w = Workspace::default();
+        w.insert(&"draftmark ".repeat(16));
+        let mut t = Terminal::new(TestBackend::new(80, 34)).unwrap();
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        let text = screen(&t);
+        for marker in ["promptmark", "replymark", "draftmark"] {
+            let rows: Vec<_> = text.lines().filter(|line| line.contains(marker)).collect();
+            assert!(rows.len() >= 2, "expected wrapping for {marker}");
+            for row in rows {
+                assert_eq!(
+                    row.chars()
+                        .position(|c| c == marker.chars().next().unwrap()),
+                    Some(2),
+                    "misaligned {marker}: {row}"
+                );
+            }
+        }
     }
 
     #[test]

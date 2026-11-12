@@ -109,6 +109,8 @@ Handoffs and evidence survive reopening Melly. To keep local storage bounded, it
 
 ## Thinking, context and usage
 
+The native interface uses a shared graphite palette, aligned message/composer gutters and a composer that grows with multiline drafts. A custom lowercase pixel wordmark reveals once on the start screen. A small synchronized pulse shows live work; idle screens stop animating. `/settings` → Animations disables the reveal and uses static indicators. The effect is rendered with ordinary terminal cells, without images, additional dependencies, model calls or delayed input. See [the visual design notes](DESIGN.md).
+
 User messages have an accent edge and a tinted background. Final assistant replies put one quiet agent and model footer below the text. Consecutive progress, thinking and tools share a collapsed activity row instead of repeating role labels. A spinner shows the selected agent’s live state. Thinking appears as an amber disclosure row. Melly prefers the reasoning summaries Codex supplies and falls back to readable reasoning-text events when available. Some turns or models expose neither; Melly then shows the live state; turn timing is available in `/status`. It cannot force the server to reveal hidden reasoning. Ctrl+T expands the supplied text.
 
 Commands and skill-file reads stay inside the chat’s collapsed activity by default. The sidebar never becomes a shell transcript. A skill read may contain instructions because Codex chose to read that file; it is ordinary tool output. Ctrl+O or `/activity` reveals the full output inline. Ctrl+T expands reasoning summaries with inline Markdown formatting.
@@ -117,7 +119,7 @@ Context is a compact **estimate from the last model-call token snapshot**, divid
 
 Melly limits the automatic skill catalog to 3,000 context tokens for the conductor and 1,200 for each worker. Workers skip personal memory injection because their scoped brief supplies the task context. Skills remain available through `/skills`, and the conductor retains its normal memory setting. These limits apply to new and resumed Melly threads; they do not change your global Codex configuration. See [token-efficiency notes](docs/token-efficiency.md) for a measured example and its limits.
 
-The terminal draws on changes, ignores unrelated notifications, caches formatting and wrapping measurements per message or activity group, and renders only visible entries. The local UI cannot shorten server inference time. `/status` separates startup time, first-event latency and turn elapsed time.
+The terminal draws on changes, ignores unrelated notifications, caches formatting and wrapping measurements per message or activity group, and renders only visible entries. Active visual animation is capped at 20 frames per second and stops after the home reveal or when work becomes idle. The local UI cannot shorten server inference time. `/status` separates startup time, first-event latency and turn elapsed time.
 
 For a single assignment, the conductor can request the finished report directly from `spawn` with `wait_for_result: true`. Melly holds the tool reply while activity and approvals continue streaming, avoiding a separate conductor call just to wait. Parallel work can still launch immediately and wait later. The held call returns status after 120 seconds if work continues. Start a new Melly chat to expose this optional field; resumed older chats retain their original tools and use the existing launch/wait flow. See [speed measurements](docs/speed.md).
 

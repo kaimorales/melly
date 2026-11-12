@@ -5,6 +5,7 @@ mod rpc;
 mod session_ui;
 mod state;
 mod ui;
+mod visual;
 
 use std::{
     ffi::OsString,
@@ -122,6 +123,8 @@ async fn run(
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut heartbeat = time::interval(Duration::from_millis(100));
     heartbeat.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut animation = time::interval(Duration::from_millis(50));
+    animation.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut save_tick = time::interval(Duration::from_millis(500));
     save_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut needs_save = true;
@@ -209,6 +212,7 @@ async fn run(
                 }
             }
             _ = heartbeat.tick(), if session.busy() || session.agents.iter().any(|a|a.session.connecting()) => dirty = true,
+            _ = animation.tick(), if workspace.animating(session) => dirty = true,
             _ = tick.tick(), if dirty => {
                 terminal.draw(|frame| workspace.draw(frame, session))?;
                 dirty = false;

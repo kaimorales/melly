@@ -14,7 +14,7 @@ A fast Rust workspace around real Codex sessions. Make model selection, reasonin
 
 ## Brand Personality
 
-Quiet, precise, distinctive. The approved direction is a graphite terminal with warm text, lavender focus and mint live status.
+Quiet, precise, distinctive. Use OpenCode's restrained chat structure as the baseline, with Melly's own pixel lettering and activity rhythm. Near-black tinted graphite, warm text, the user's selected accent, and mint for positive status. The interface should feel crafted without competing with the work.
 
 ## Anti-references
 
@@ -30,4 +30,4 @@ The user dislikes the sparse, visually monotonous stock terminal and the first M
 
 ## Accessibility & Inclusion
 
-Every action works from the keyboard. Text labels accompany color. Adapt to small terminal sizes. Respect the terminal's chosen monospace font and avoid decorative animation.
+Every action works from the keyboard. Text labels accompany color. Adapt to small terminal sizes. Respect the terminal's chosen monospace font. A brief logo reveal is allowed; ongoing motion conveys live work. Animation never delays input, respects the motion setting, and stops when idle.
