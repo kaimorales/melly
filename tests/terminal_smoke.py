@@ -142,6 +142,12 @@ def run(directory):
             expect(master, b"SCROLL_LINE_000", 5)
             os.write(master, b"\x1b[1;5F")  # Ctrl+End returns to latest.
             expect(master, b"SCROLL_LINE_099", 5)
+            # Easing must finish; an idle chat must not keep repainting.
+            deadline = time.monotonic() + 0.3
+            while time.monotonic() < deadline:
+                if select.select([master], [], [], max(0, deadline - time.monotonic()))[0]:
+                    screens[master].feed(os.read(master, 65536))
+            assert not select.select([master], [], [], 0.2)[0], "Scroll animation kept redrawing after it stopped"
         os.write(master, b"\x11")  # Ctrl+Q
         cleanup = expect(master, b"\x1b[?1049l", 5)  # Drain the PTY while the terminal is restored.
         if args.scroll:

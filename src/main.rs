@@ -217,7 +217,7 @@ async fn run(
             }
             _ = heartbeat.tick(), if session.busy() || session.agents.iter().any(|a|a.session.connecting()) => dirty = true,
             _ = animation.tick(), if workspace.animating(session) => dirty = true,
-            _ = tick.tick(), if dirty => {
+            _ = tick.tick(), if dirty || workspace.scrolling() => {
                 terminal.draw(|frame| workspace.draw(frame, session))?;
                 dirty = false;
             }

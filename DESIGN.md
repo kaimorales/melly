@@ -2,7 +2,7 @@
 
 ## Scene and visual direction
 
-A developer codes late in a dim room, reads long conversations and occasionally checks delegated work. Keep OpenCode's familiar chat rhythm: shaded user messages, plain assistant text, quiet role/model footers, an anchored composer and a compact sidebar. Melly adds an original lowercase pixel wordmark and a small activity pulse. No decorative dashboard or permanent animated background.
+A developer codes late in a dim room, reads long conversations and occasionally checks delegated work. Keep OpenCode's familiar chat rhythm: shaded user messages, plain assistant text, an anchored composer and a compact sidebar. Replies have no repeated identity footer. The composer shows the full model name and reasoning effort; agent identity belongs in navigation. Melly adds an original lowercase pixel wordmark and a small activity pulse. No decorative dashboard or permanent animated background.
 
 ## Shared palette
 
@@ -14,6 +14,8 @@ A developer codes late in a dim room, reads long conversations and occasionally 
 - One blank row separates conversation groups. User blocks have a one-cell accent edge and one row of vertical padding. Bright text remains readable against the shaded surface.
 - Wide layouts have a one-column gap before the 34-column sidebar. Narrow layouts switch panes. Sidebar content starts one row below its top edge.
 - The composer grows with wrapped drafts up to six lines, bounded by available height. A quiet row separates text from model metadata. Its activity row is reserved even when idle, preventing a turn completion from moving the transcript.
+- A separate, muted shortcut row aligns to the chat's right edge, with one blank row above it except in very short terminals. Keys use secondary text, labels use faint text; omit whole hints that do not fit instead of clipping them. Terminal font size remains user-controlled.
+- A thin, neutral scrollbar occupies the existing right gutter only when loaded content overflows. Track and thumb never change text wrapping; no arrows or decorative indicators. Preserve the top visible message while streaming or prepending history.
 - Menus use neutral rules, a clear title, one selected row and readable key hints. Accent belongs to the selection rather than every border.
 - Context shows measured last-call occupancy, capacity and an approximate percentage, with a thin, quantized meter. An unknown value leaves the meter unfilled. Account quota stays separate.
 
@@ -23,7 +25,7 @@ The original lowercase wordmark uses two vertical pixels per terminal cell and a
 
 One monotonic clock drives small busy indicators across the header, agent list and review view. The composer uses a three-note pulse with gently changing color. This signals work, not percent complete. No per-token reveal or artificial streaming delay.
 
-The animation timer is capped at 20 frames per second and is enabled only for live work or the bounded home reveal. Ratatui still draws changed cells, and transcript formatting stays cached. Idle views stop scheduling animation frames. Turning off Animations in `/settings` immediately renders the complete logo and static indicators. No extra assets, font downloads, graphics protocol or model calls are required.
+Busy indicators and the bounded home reveal use a 20 fps timer. Wheel scrolling briefly uses the existing 16 ms render tick with a 100 ms cubic ease-out, quantized to whole terminal rows. Continuing gestures retarget the remaining motion; reversing cancels it. Keyboard jumps stay immediate. Only the selected view schedules scroll frames, and motion stops at transcript boundaries. Ratatui still draws changed cells, and transcript formatting stays cached. Idle views stop scheduling animation frames. Turning off Animations in `/settings` renders the complete logo, static indicators and immediate scrolling. No extra assets, font downloads, graphics protocol or model calls are required.
 
 ## Verification
 

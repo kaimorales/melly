@@ -209,7 +209,9 @@ with tempfile.TemporaryDirectory(prefix="melly-history-pty-", dir="/tmp") as dir
         os.write(fd, b"\x13")
         expect(fd, b"This project")
         os.write(fd, b"\x0e")  # Ctrl+N starts a fresh session without clearing the old draft.
-        expect(fd, b"Conductor  Sol  low")  # Unique fresh-home metadata, not a stale Ready label.
+        # Home and chat now share model metadata. Wait for the fresh home's ready
+        # status, rather than matching the previous session under the picker.
+        expect(fd, (Path(directory).name + "   ·   Ready").encode())
         os.write(fd, b"Fresh session title\r")
         expect(fd, b"HISTORY_TURN_COMPLETE")
         os.write(fd, b"\x13")

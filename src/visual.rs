@@ -4,7 +4,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 use std::{sync::OnceLock, time::Instant};
 
@@ -21,19 +21,48 @@ pub const MINT: Color = Color::Rgb(140, 219, 188);
 pub const AMBER: Color = Color::Rgb(234, 188, 110);
 pub const INTRO_MS: u128 = 600;
 
-pub fn hints(items: &[(&str, &str)]) -> Line<'static> {
+pub fn hints(items: &[(&str, &str)], width: u16) -> Line<'static> {
     let mut spans = vec![Span::raw("  ")];
+    let mut used = 4;
     for (index, (key, label)) in items.iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::raw("   "));
+        let size = key.chars().count() + label.chars().count() + 1 + usize::from(index > 0) * 2;
+        if used + size > width as usize {
+            break;
         }
-        spans.push(Span::styled((*key).to_owned(), Style::default().fg(INK)));
+        used += size;
+        if index > 0 {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled((*key).to_owned(), Style::default().fg(MUTED)));
         spans.push(Span::styled(
             format!(" {label}"),
-            Style::default().fg(MUTED),
+            Style::default().fg(FAINT),
         ));
     }
+    spans.push(Span::raw("  "));
     Line::from(spans)
+}
+
+/// Use the existing right gutter so the rail never changes text wrapping.
+pub fn scrollbar(frame: &mut Frame, area: Rect, total: usize, top: usize) {
+    let maximum = total.saturating_sub(area.height as usize);
+    if maximum == 0 || area.width == 0 || area.height == 0 {
+        return;
+    }
+    let mut state = ScrollbarState::new(maximum + 1)
+        .position(top)
+        .viewport_content_length(area.height as usize);
+    frame.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_symbol(Some("│"))
+            .track_style(Style::default().fg(BORDER).bg(BG))
+            .thumb_symbol("┃")
+            .thumb_style(Style::default().fg(FAINT).bg(BG)),
+        area,
+        &mut state,
+    );
 }
 
 /// Every busy indicator uses the same monotonic clock, including worker views.

@@ -46,6 +46,17 @@ pub struct AgentWorkspace {
 }
 
 impl AgentWorkspace {
+    pub fn scrolling(&self) -> bool {
+        self.sessions.is_none()
+            && self.settings_row.is_none()
+            && self.picker.is_none()
+            && self.handoff.is_none()
+            && self
+                .views
+                .get(self.selected)
+                .is_some_and(Workspace::scrolling)
+    }
+
     pub fn animating(&self, harness: &Harness) -> bool {
         self.settings.motion
             && self
@@ -857,7 +868,10 @@ mod tests {
             "threadId":"worker-scroll","item":{"type":"agentMessage","id":"worker-answer","phase":"final_answer",
             "text": (0..100).map(|i| format!("WORKER_ROW_{i:03}\n")).collect::<String>()}}}));
         h.drain_requests();
-        let mut w = AgentWorkspace::default();
+        let mut w = AgentWorkspace::with_settings(Settings {
+            motion: false,
+            ..Settings::default()
+        });
         w.synchronize(&mut h);
         w.insert("Conductor draft");
         w.key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::ALT), &mut h);

@@ -72,6 +72,10 @@ The inspector sits beside the chat in wide terminals, with each active agent's t
 
 Scrolling up anchors the visible message while new output streams or older history loads. Scrolling back to the bottom, Ctrl+End, or sending a message restores following the latest output. Each agent has its own position. The quiet “History · Ctrl+End latest” hint appears only while reading earlier messages. Wheel input does not change the draft, send prompts, or scroll behind an open picker.
 
+Wheel and trackpad gestures ease across terminal rows for at most 100 ms after the last event; reversing direction cancels unfinished movement. Keyboard navigation stays immediate, and disabling Animations in `/settings` also makes wheel scrolling immediate. A faint scrollbar appears in the chat's existing right gutter when the loaded transcript exceeds the viewport. It indicates your position within the loaded messages without changing wrapping.
+
+Replies are plain text. The full model name and reasoning effort appear once in the composer, with active and queued settings distinguished during a turn. The conductor label stays in the agent navigation instead of repeating below every reply. Muted keyboard hints sit outside the composer with a blank row of separation, and narrow terminals omit hints that cannot fit.
+
 ## Session history
 
 Press **Ctrl+S** or use `/sessions`. History starts in the current project; Tab includes all projects. Type to search titles, project paths or thread IDs, use arrows to select, and Enter to resume. Each row shows its project, last saved time and Luna count. Ctrl+N inside history starts a new session without discarding the previous draft; `/new` is also available from the conductor. Esc returns to the current view.

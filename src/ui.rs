@@ -65,11 +65,56 @@ struct ChatScroll {
     offset: usize,
     anchor: Option<(u64, usize)>,
     pending: isize,
+    motion: Option<ScrollMotion>,
+}
+
+struct ScrollMotion {
+    started: u128,
+    distance: isize,
+    applied: isize,
 }
 
 impl ChatScroll {
     fn move_by(&mut self, rows: isize) {
+        self.motion = None;
         self.pending = self.pending.saturating_add(rows);
+    }
+
+    fn wheel_by(&mut self, rows: isize, now: u128, animate: bool) {
+        if !animate {
+            self.move_by(rows);
+            return;
+        }
+        // Retarget a continuing gesture. Reversing cancels its unfinished travel.
+        let remaining = self
+            .motion
+            .as_ref()
+            .filter(|m| m.distance.signum() == rows.signum())
+            .map_or(0, |m| m.distance.saturating_sub(m.applied));
+        self.motion = Some(ScrollMotion {
+            started: now,
+            distance: remaining.saturating_add(rows),
+            applied: 0,
+        });
+    }
+
+    fn advance(&mut self, now: u128, animate: bool) {
+        let Some(motion) = &mut self.motion else {
+            return;
+        };
+        let progress = if animate {
+            (now.saturating_sub(motion.started) as f64 / 100.0).min(1.0)
+        } else {
+            1.0
+        };
+        let position = (motion.distance as f64 * (1.0 - (1.0 - progress).powi(3))).round() as isize;
+        self.pending = self
+            .pending
+            .saturating_add(position.saturating_sub(motion.applied));
+        motion.applied = position;
+        if position == motion.distance {
+            self.motion = None;
+        }
     }
 
     fn latest(&mut self) {
@@ -104,6 +149,10 @@ enum Inspector {
 }
 
 impl Workspace {
+    pub fn scrolling(&self) -> bool {
+        !self.reduced_motion && self.chat_area.height > 0 && self.chat_scroll.motion.is_some()
+    }
+
     pub fn animating(&self, session: &Session) -> bool {
         !self.reduced_motion
             && (session.busy()
@@ -182,7 +231,8 @@ impl Workspace {
         let point = (mouse.column, mouse.row).into();
         if self.chat_area.contains(point) {
             self.activity_focused = false;
-            self.chat_scroll.move_by(rows);
+            self.chat_scroll
+                .wheel_by(rows, visual::time_ms(), !self.reduced_motion);
             if rows < 0 {
                 session.load_older();
             }
@@ -544,7 +594,7 @@ impl Workspace {
         let [header, content, footer] = Layout::vertical([
             Constraint::Length(2),
             Constraint::Min(3),
-            Constraint::Length(1),
+            Constraint::Length(if area.height >= 12 { 2 } else { 1 }),
         ])
         .areas(area);
         let cwd = std::path::Path::new(&session.cwd)
@@ -619,7 +669,21 @@ impl Workspace {
                 ("Ctrl+G", "agents"),
             ]
         };
-        frame.render_widget(Paragraph::new(visual::hints(hints)), footer);
+        let footer = Rect::new(
+            footer.x,
+            footer.bottom() - 1,
+            if wide {
+                footer.width.saturating_sub(35)
+            } else {
+                footer.width
+            },
+            1,
+        );
+        frame.render_widget(
+            Paragraph::new(visual::hints(hints, footer.width))
+                .alignment(ratatui::layout::Alignment::Right),
+            footer,
+        );
 
         if let Some(approval) = session.approvals.front() {
             let confirm_visible =
@@ -729,27 +793,7 @@ impl Workspace {
                 .scroll((scroll.min(u16::MAX as usize) as u16, 0)),
             body,
         );
-        let metadata = Line::from(vec![
-            Span::styled(
-                format!(
-                    "  {}  ",
-                    if matches!(self.agent_label.as_str(), "" | "lead") {
-                        "Conductor"
-                    } else {
-                        &self.agent_label
-                    }
-                ),
-                self.accent(),
-            ),
-            Span::styled(
-                model_name(session.model.as_deref().unwrap_or("Loading models")),
-                dim(),
-            ),
-            Span::styled(
-                format!("  {}", session.effort.as_deref().unwrap_or("")),
-                dim(),
-            ),
-        ]);
+        let metadata = Line::styled(format!("  {}", model_settings(session)), dim());
         frame.render_widget(
             Paragraph::new(metadata),
             Rect::new(x, composer.bottom().saturating_sub(1), width, 1),
@@ -768,8 +812,11 @@ impl Workspace {
         }
         if composer.bottom() < area.bottom() {
             frame.render_widget(
-                Paragraph::new(visual::hints(&[("/", "commands"), ("Ctrl+S", "sessions")]))
-                    .alignment(ratatui::layout::Alignment::Right),
+                Paragraph::new(visual::hints(
+                    &[("/", "commands"), ("Ctrl+S", "sessions")],
+                    width,
+                ))
+                .alignment(ratatui::layout::Alignment::Right),
                 Rect::new(x, composer.bottom() + 1, width, 1),
             );
         }
@@ -843,6 +890,8 @@ impl Workspace {
             ];
             frame.render_widget(Paragraph::new(greeting).wrap(Wrap { trim: false }), history);
         } else {
+            self.chat_scroll
+                .advance(visual::time_ms(), !self.reduced_motion);
             render_entries(
                 frame,
                 history,
@@ -851,7 +900,6 @@ impl Workspace {
                     tools: self.tools_expanded,
                     collapsed: !self.thinking_expanded,
                     accent: self.color(),
-                    agent: &self.agent_label,
                 },
                 &mut self.chat_scroll,
                 &mut self.render_cache,
@@ -914,17 +962,14 @@ impl Workspace {
         let block = block.padding(Padding::new(1, 2, 0, 0));
         let mut inner = block.inner(composer);
         frame.render_widget(block, composer);
-        let label = if self.menu_dismissed && self.draft.starts_with('/') {
-            "Literal message"
+        let action = if self.menu_dismissed && self.draft.starts_with('/') {
+            " · literal message"
         } else if session.busy() {
-            "Steer conductor"
+            " · steer"
         } else {
-            "Conductor"
+            ""
         };
-        let meta = Line::from(vec![
-            Span::styled(label, Style::default().fg(self.color())),
-            Span::styled(format!(" · {}", model_settings(session)), dim()),
-        ]);
+        let meta = Line::styled(format!("{}{action}", model_settings(session)), dim());
         if inner.height > 1 {
             frame.render_widget(
                 Paragraph::new(meta),
@@ -1238,18 +1283,17 @@ fn inspector_lines(view: Inspector, s: &Session) -> Vec<Line<'static>> {
         .collect()
 }
 
-struct EntryStyle<'a> {
+struct EntryStyle {
     tools: bool,
     collapsed: bool,
     accent: Color,
-    agent: &'a str,
 }
 
 fn render_entries(
     frame: &mut Frame,
     area: Rect,
     session: &Session,
-    style: EntryStyle<'_>,
+    style: EntryStyle,
     scroll: &mut ChatScroll,
     cache: &mut HashMap<u64, EntryView>,
 ) {
@@ -1326,6 +1370,13 @@ fn render_entries(
         .saturating_add_signed(std::mem::take(&mut scroll.pending))
         .min(bottom);
     scroll.offset = bottom - top;
+    if scroll
+        .motion
+        .as_ref()
+        .is_some_and(|m| (top == 0 && m.distance < 0) || (top == bottom && m.distance > 0))
+    {
+        scroll.motion = None;
+    }
     scroll.anchor = None;
     let mut position = 0usize;
     for group in groups {
@@ -1369,6 +1420,7 @@ fn render_entries(
             break;
         }
     }
+    visual::scrollbar(frame, area, total, top);
 }
 
 /// Real padding keeps wrapped text aligned; preserve the formatter's relative indents.
@@ -1396,7 +1448,7 @@ fn is_activity(entry: &Entry) -> bool {
         || (entry.speaker == Speaker::Codex && entry.outcome.as_deref() == Some("commentary"))
 }
 
-fn activity_lines(entries: &[&Entry], style: &EntryStyle<'_>, width: u16) -> Vec<Line<'static>> {
+fn activity_lines(entries: &[&Entry], style: &EntryStyle, width: u16) -> Vec<Line<'static>> {
     let thinking = entries.iter().any(|e| e.speaker == Speaker::Thinking);
     let tools = entries
         .iter()
@@ -1445,7 +1497,6 @@ fn activity_lines(entries: &[&Entry], style: &EntryStyle<'_>, width: u16) -> Vec
                         tools: true,
                         collapsed: false,
                         accent: style.accent,
-                        agent: style.agent,
                     };
                     lines.extend(entry_lines(entry, &details));
                 }
@@ -1512,7 +1563,7 @@ fn tool_label(entry: &Entry) -> String {
     }
 }
 
-fn entry_lines(entry: &Entry, style: &EntryStyle<'_>) -> Vec<Line<'static>> {
+fn entry_lines(entry: &Entry, style: &EntryStyle) -> Vec<Line<'static>> {
     let collapsed = style.collapsed;
     let text = printable(&entry.text);
     if entry.speaker == Speaker::Thinking {
@@ -1642,25 +1693,6 @@ fn entry_lines(entry: &Entry, style: &EntryStyle<'_>) -> Vec<Line<'static>> {
                 lines.push(if commentary { line.style(dim()) } else { line });
             }
         }
-        if entry.complete && !text.is_empty() && !commentary {
-            let agent = if style.agent.is_empty() || style.agent == "lead" {
-                "Conductor".into()
-            } else {
-                printable(style.agent)
-            };
-            let mut footer = vec![
-                Span::raw("  "),
-                Span::styled(agent, Style::default().fg(style.accent)),
-            ];
-            if commentary {
-                footer.push(Span::styled(" · progress", dim()));
-            }
-            if let Some(model) = entry.model.as_deref() {
-                footer.push(Span::styled(format!(" · {}", model_name(model)), dim()));
-            }
-            lines.push(Line::default());
-            lines.push(Line::from(footer));
-        }
     }
     lines.push(Line::default());
     lines
@@ -1668,10 +1700,11 @@ fn entry_lines(entry: &Entry, style: &EntryStyle<'_>) -> Vec<Line<'static>> {
 
 pub(crate) fn model_name(id: &str) -> String {
     match id {
-        "gpt-6-astra" => "Astra".into(),
-        "gpt-6-luna" => "Luna".into(),
-        "gpt-6.1-sol" | "gpt-6-sol" => "Sol".into(),
-        "gpt-6.1-terra" => "Terra".into(),
+        "gpt-6-astra" => "GPT-6 Astra".into(),
+        "gpt-6-luna" => "GPT-6 Luna".into(),
+        "gpt-6.1-sol" => "GPT-6.1 Sol".into(),
+        "gpt-6-sol" => "GPT-6 Sol".into(),
+        "gpt-6.1-terra" => "GPT-6.1 Terra".into(),
         _ => printable(id),
     }
 }
@@ -1797,6 +1830,111 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn wheel_motion_eases_then_stops_and_reversal_has_no_stale_travel() {
+        let mut scroll = ChatScroll::default();
+        scroll.wheel_by(-3, 0, true);
+        scroll.advance(16, true);
+        assert_eq!(
+            scroll.pending, -1,
+            "First frame should move one row, not jump three"
+        );
+        scroll.advance(32, true);
+        assert_eq!(scroll.pending, -2);
+        scroll.advance(100, true);
+        assert_eq!(scroll.pending, -3);
+        assert!(scroll.motion.is_none());
+        scroll.advance(200, true);
+        assert_eq!(scroll.pending, -3, "Idle must not keep scrolling");
+
+        scroll.latest();
+        scroll.wheel_by(-30, 0, true);
+        scroll.advance(16, true);
+        scroll.pending = 0; // The drawn frame consumed these rows.
+        scroll.wheel_by(3, 17, true);
+        scroll.advance(117, true);
+        assert_eq!(
+            scroll.pending, 3,
+            "Reversal must cancel the unfinished upward motion"
+        );
+        assert!(scroll.motion.is_none());
+
+        scroll.latest();
+        scroll.wheel_by(-3, 0, false);
+        assert_eq!(scroll.pending, -3);
+        assert!(scroll.motion.is_none());
+        scroll.wheel_by(-3, 0, true);
+        scroll.latest();
+        scroll.advance(100, true);
+        assert_eq!(scroll.pending, 0, "Jump to latest must cancel motion");
+    }
+
+    #[test]
+    fn composer_has_full_model_name_plain_replies_and_separate_quiet_shortcuts() {
+        let mut s = fixture();
+        s.model = Some("gpt-6.1-sol".into());
+        s.effort = Some("xhigh".into());
+        s.receive(
+            json!({"method":"item/completed","params":{"threadId":"preview-thread","item":{
+            "type":"agentMessage","id":"reply","phase":"final_answer","text":"A plain reply."}}}),
+        );
+        let mut w = Workspace::default();
+        let mut t = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        let text = screen(&t);
+        assert!(text.contains("GPT-6.1 Sol · xhigh"));
+        assert!(!text.contains("Conductor"));
+        assert_eq!(text.matches("GPT-6.1 Sol").count(), 1);
+        let rows = text.lines().collect::<Vec<_>>();
+        assert!(
+            rows[22].trim().is_empty(),
+            "Shortcut row needs breathing room"
+        );
+        assert!(rows[23].contains("sessions"));
+        assert!(rows[23].contains("agents"));
+        assert!(
+            !t.backend()
+                .buffer()
+                .content
+                .iter()
+                .any(|cell| cell.symbol() == "C" && cell.fg == INK && cell.bg == BG)
+        );
+        capture(&t, "composer-polish");
+    }
+
+    #[test]
+    fn chat_scrollbar_tracks_position_and_disappears_when_content_fits() {
+        let mut s = fixture();
+        s.receive(
+            json!({"method":"item/completed","params":{"threadId":"preview-thread","item":{
+            "type":"agentMessage","id":"reply","phase":"final_answer","text":"Short reply"}}}),
+        );
+        let mut w = Workspace::default();
+        w.configure(ACCENT, false);
+        let mut t = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        assert!(!screen(&t).contains('┃'));
+        s.receive(json!({"method":"item/completed","params":{"threadId":"preview-thread","item":{
+            "type":"agentMessage","id":"reply","phase":"final_answer","text":"Transcript row\n".repeat(100)}}}));
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        let rail = w.chat_area;
+        assert_eq!(
+            t.backend().buffer()[(rail.right() - 1, rail.bottom() - 1)].symbol(),
+            "┃"
+        );
+        w.key(KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL), &mut s);
+        t.draw(|f| w.draw(f, &s)).unwrap();
+        assert_eq!(
+            t.backend().buffer()[(rail.right() - 1, rail.y)].symbol(),
+            "┃"
+        );
+        assert_eq!(
+            t.backend().buffer()[(rail.right() - 1, rail.bottom() - 1)].symbol(),
+            "│"
+        );
+        capture(&t, "scrollbar");
+    }
+
+    #[test]
     fn reading_history_stays_anchored_while_the_answer_grows() {
         let mut s = fixture();
         s.submit("Show a long answer");
@@ -1814,7 +1952,7 @@ pub(crate) mod tests {
             screen(t)
                 .lines()
                 .filter(|line| line.contains("READING_LINE_"))
-                .map(str::to_owned)
+                .map(|line| line.trim_end_matches(['│', '┃']).trim_end().to_owned())
                 .collect::<Vec<_>>()
         };
         let before = visible(&t);
@@ -1856,6 +1994,7 @@ pub(crate) mod tests {
         s.receive(json!({"method":"item/agentMessage/delta","params":{
             "threadId":"preview-thread","itemId":"answer","delta":"Long transcript row\n".repeat(100)}}));
         let mut w = Workspace::default();
+        w.configure(ACCENT, false);
         w.insert("Draft to keep");
         let mut t = Terminal::new(TestBackend::new(130, 34)).unwrap();
         t.draw(|f| w.draw(f, &s)).unwrap();
@@ -1980,7 +2119,7 @@ pub(crate) mod tests {
         let mut t = Terminal::new(TestBackend::new(100, 30)).unwrap();
         t.draw(|f| w.draw(f, &s)).unwrap();
         let text = screen(&t);
-        assert!(text.contains("Steer conductor · Astra · medium → next Sol · low"));
+        assert!(text.contains("GPT-6 Astra · medium → next GPT-6.1 Sol · low · steer"));
         press(&mut w, &mut s, KeyCode::Tab);
         w.key(
             KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
