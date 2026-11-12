@@ -227,6 +227,104 @@ fn manual_and_restarted_workers_obey_the_shared_concurrency_cap() {
 }
 
 #[test]
+fn spawn_can_return_the_finished_report_without_another_conductor_call() {
+    let mut h = ready(Some(10), false);
+    start_lead(&mut h);
+    let mut args = spawn_args(json!([]));
+    args["wait_for_result"] = json!(true);
+    let requests = tool(&mut h, "assign", "spawn", args.clone());
+    assert!(!requests.iter().any(|r| r["id"] == "assign"));
+    let start = requests
+        .iter()
+        .find(|r| r["method"] == "thread/start")
+        .unwrap();
+    h.receive(json!({"id":"retry","method":"item/tool/call","params":{
+        "threadId":"lead-thread","turnId":"lead-turn","callId":"assign",
+        "namespace":"melly_agents","tool":"spawn","arguments":args
+    }}));
+    assert!(h.drain_requests().is_empty());
+    assert_eq!(h.auto_launches(), 1);
+    connect_worker(&mut h, start, "worker");
+    assert!(!h.agents[1].handoff.report_delivered);
+    finish(&mut h, "worker", "completed");
+    let replies = h.drain_requests();
+    assert!(!replies.iter().any(|r| r["method"] == "turn/start"));
+    for id in ["assign", "retry"] {
+        let output = reply_output(&replies, id);
+        assert_eq!(output["agents"][0]["id"], "luna-1");
+        assert_eq!(output["agents"][0]["finished"], true);
+        assert_eq!(
+            output["agents"][0]["result"],
+            "Checked parser.rs:12; no issue."
+        );
+        assert_eq!(output["timed_out"], false);
+    }
+    assert!(h.agents[1].handoff.report_delivered);
+    assert!(h.agents[1].handoff.review.is_none());
+}
+
+#[test]
+fn spawn_with_result_stays_pending_across_quota_refresh() {
+    let mut h = ready(None, true);
+    start_lead(&mut h);
+    let mut args = spawn_args(json!([]));
+    args["wait_for_result"] = json!(true);
+    let requests = tool(&mut h, "assign", "spawn", args);
+    let refresh = requests
+        .iter()
+        .find(|r| r["method"] == "account/rateLimits/read")
+        .unwrap();
+    h.receive(json!({"id":refresh["id"],"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":10}}}}));
+    let requests = h.drain_requests();
+    assert!(!requests.iter().any(|r| r["id"] == "assign"));
+    let start = requests
+        .iter()
+        .find(|r| r["method"] == "thread/start")
+        .unwrap();
+    connect_worker(&mut h, start, "worker");
+    finish(&mut h, "worker", "completed");
+    assert_eq!(
+        reply_output(&h.drain_requests(), "assign")["agents"][0]["finished"],
+        true
+    );
+    assert_eq!(h.auto_launches(), 1);
+}
+
+#[test]
+fn invalid_spawn_wait_option_cannot_launch_a_worker() {
+    let mut h = ready(Some(10), false);
+    start_lead(&mut h);
+    let mut args = spawn_args(json!([]));
+    args["wait_for_result"] = json!("yes");
+    let requests = tool(&mut h, "assign", "spawn", args);
+    assert!(reply_output(&requests, "assign")["error"].is_string());
+    assert_eq!(h.auto_launches(), 0);
+    assert_eq!(h.agents.len(), 1);
+}
+
+#[test]
+fn cancelling_conductor_resolves_a_spawn_wait_and_cancels_its_worker() {
+    let mut h = ready(Some(10), false);
+    start_lead(&mut h);
+    let mut args = spawn_args(json!([]));
+    args["wait_for_result"] = json!(true);
+    let requests = tool(&mut h, "assign", "spawn", args);
+    let start = requests
+        .iter()
+        .find(|r| r["method"] == "thread/start")
+        .unwrap();
+    connect_worker(&mut h, start, "worker");
+    h.cancel(0);
+    let replies = h.drain_requests();
+    assert!(reply_output(&replies, "assign")["error"].is_string());
+    assert!(
+        replies
+            .iter()
+            .any(|r| r["method"] == "turn/interrupt" && r["params"]["threadId"] == "worker")
+    );
+}
+
+#[test]
 fn duplicate_dynamic_calls_launch_once_even_with_a_new_rpc_id() {
     let mut h = ready(Some(10), false);
     start_lead(&mut h);

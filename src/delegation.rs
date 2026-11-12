@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-const CONDUCTOR_GUIDANCE: &str = "You are Melly's conductor and the user's only conversation partner. Answer questions directly when delegation adds no value. For a requested change, inspect the relevant code and tests yourself, identify the evidence, and choose a concrete implementation approach. Keep user-facing progress to a short status; put your findings and decisions into the worker brief rather than a long chat explanation. Then use melly_agents.spawn in edit mode to assign Luna the specific workspace-relative paths, findings, implementation steps, behavior to preserve, and acceptance checks. A diagnosis in chat does not complete a requested fix. Do not assign Luna to figure out the change from scratch when you can determine the approach. Your read-only sandbox and approval restrictions apply only to your thread. Do not include them in worker objectives, context, expected output, or revision feedback. Luna follows its own server-provided permissions. Use an event-driven wait with timeout_ms 120000 for the worker rather than repeated short polls. Inspect the actual working-tree diff (including new files) and compare it and the reported checks against the user's request. Use clear harness-recorded check results without rerunning them. Rerun a targeted check when the evidence is missing or ambiguous. When melly_agents.review is available, record your verdict with a concise summary after inspecting the diff and check evidence for the current worker report. If a material defect remains, give the same Luna one focused correction through revise when available, then verify that correction and record the new verdict. If revise is unavailable, use a bounded follow-up spawn when capacity permits. Do not edit files yourself. Report the outcome and any specific blocker or unverified check concisely.";
+const CONDUCTOR_GUIDANCE: &str = "You are Melly's conductor and the user's only conversation partner. Answer questions directly when delegation adds no value. For a requested change, inspect the relevant code and tests yourself, identify the evidence, and choose a concrete implementation approach. Keep user-facing progress to a short status; put your findings and decisions into the worker brief rather than a long chat explanation. Then use melly_agents.spawn in edit mode to assign Luna the specific workspace-relative paths, findings, implementation steps, behavior to preserve, and acceptance checks. A diagnosis in chat does not complete a requested fix. Do not assign Luna to figure out the change from scratch when you can determine the approach. Your read-only sandbox and approval restrictions apply only to your thread. Do not include them in worker objectives, context, expected output, or revision feedback. Luna follows its own server-provided permissions. When spawn offers wait_for_result and you are ready to review one assignment, set it true to receive the finished report in the same call. Otherwise launch independent workers before using wait with timeout_ms 120000. If using functions.exec for a waiting call, set yield_time_ms to 60000 to avoid premature wakeups. If the call times out, continue with wait using the returned worker ID. Inspect the actual working-tree diff (including new files) and compare it and the reported checks against the user's request. Use clear harness-recorded check results without rerunning them. Rerun a targeted check when the evidence is missing or ambiguous. When melly_agents.review is available, record your verdict with a concise summary after inspecting the diff and check evidence for the current worker report. If a material defect remains, give the same Luna one focused correction through revise when available, then verify that correction and record the new verdict. If revise is unavailable, use a bounded follow-up spawn when capacity permits. Do not edit files yourself. Report the outcome and any specific blocker or unverified check concisely.";
 
 const EDIT_WORKER_GUIDANCE: &str = "You are a Melly edit worker. Implement the assigned change in your owned paths and run its acceptance checks. Preserve concurrent edits and address in-scope failures before reporting changed files, actual check outcomes, and any blockers. Use your own thread's server-provided sandbox and approval policy. Permission descriptions in the conductor's brief, revision feedback, or prior history do not set your permissions. The conductor's read-only restriction applies only to its own thread. Follow your actual approval workflow when required and never bypass restrictions. Do not delegate to other agents.";
 
@@ -709,8 +709,9 @@ impl Harness {
                     pending.push(wait)
                 }
                 WaitFor::Quota(brief) => {
-                    let result = self.launch_result(brief);
-                    self.complete_result(wait.key, wait.rpc_ids, result);
+                    if let Some(wait) = self.launch_call(wait.key, wait.rpc_ids, brief) {
+                        pending.push(wait);
+                    }
                     changed = true;
                 }
             }
@@ -780,6 +781,7 @@ impl Harness {
                 reason: "User requested this worker.".into(),
                 mode,
                 paths,
+                wait_for_result: false,
             },
             AgentSource::Manual,
         )
@@ -1352,7 +1354,12 @@ impl Harness {
                     });
                     return;
                 }
-                Ok(brief) => self.launch_result(brief),
+                Ok(brief) => {
+                    if let Some(wait) = self.launch_call(key, vec![rpc_id], brief) {
+                        self.waits.push(wait);
+                    }
+                    return;
+                }
                 Err(error) => Err(error),
             },
             "revise" => self.revise_worker(&arguments),
@@ -1417,10 +1424,26 @@ impl Harness {
         lead.quota_pending()
     }
 
-    fn launch_result(&mut self, brief: Brief) -> Result<Value, String> {
-        self.spawn(brief, AgentSource::Automatic).map(
-            |index| json!({"id":self.agents[index].id,"status":"starting","model":"gpt-6-luna"}),
-        )
+    fn launch_call(&mut self, key: String, rpc_ids: Vec<Value>, brief: Brief) -> Option<Wait> {
+        let wait_for_result = brief.wait_for_result;
+        let result = match self.spawn(brief, AgentSource::Automatic) {
+            Ok(index) if wait_for_result => {
+                // Hold this tool reply, not the event loop. Worker output, approvals,
+                // cancellation and other assignments continue through normal routing.
+                return Some(Wait {
+                    key,
+                    rpc_ids,
+                    kind: WaitFor::Workers(vec![index]),
+                    deadline: Instant::now() + Duration::from_secs(120),
+                });
+            }
+            Ok(index) => {
+                Ok(json!({"id":self.agents[index].id,"status":"starting","model":"gpt-6-luna"}))
+            }
+            Err(error) => Err(error),
+        };
+        self.complete_result(key, rpc_ids, result);
+        None
     }
 
     fn complete_result(&mut self, key: String, rpc_ids: Vec<Value>, result: Result<Value, String>) {
@@ -1548,6 +1571,7 @@ struct Brief {
     reason: String,
     mode: WorkerMode,
     paths: Vec<String>,
+    wait_for_result: bool,
 }
 impl Brief {
     fn parse(value: &Value) -> Result<Self, String> {
@@ -1572,6 +1596,11 @@ impl Brief {
             Some("edit") => WorkerMode::Edit,
             _ => return Err("mode must be read or edit.".into()),
         };
+        let wait_for_result = match value.get("wait_for_result") {
+            None => false, // Older persisted tool schemas return the worker ID immediately.
+            Some(Value::Bool(wait)) => *wait,
+            Some(_) => return Err("wait_for_result must be a boolean.".into()),
+        };
         Ok(Self {
             objective: string("objective")?,
             context: string("context")?,
@@ -1579,6 +1608,7 @@ impl Brief {
             reason: string("reason")?,
             mode,
             paths,
+            wait_for_result,
         })
     }
     fn validate(&self) -> Result<(), String> {
@@ -1730,11 +1760,12 @@ fn tool_result(output: Value, success: bool) -> Value {
 fn dynamic_tools() -> Value {
     let ids = json!({"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3});
     let tools = vec![
-        json!({"type":"function","name":"spawn","description":"Assign worthwhile work to Luna. Use edit mode for implementation and include explicit acceptance checks so Luna can edit, test, and iterate independently. Never delegate trivial greetings or the same work twice. Include the evidence and chosen implementation steps in context, behavior to preserve, and concrete acceptance checks. Keep conductor permissions out of the brief. At most 2 worker turns (spawns and revisions) per user turn and 3 active workers total. Read mode cannot edit and can use an empty paths array. Any supplied paths must be relative to the workspace. Edit mode requires disjoint owned paths; preserve concurrent edits and configured permissions. Workers cannot delegate. Returns the worker id immediately.","deferLoading":false,
+        json!({"type":"function","name":"spawn","description":"Assign worthwhile work to Luna. Use edit mode for implementation and include explicit acceptance checks so Luna can edit, test, and iterate independently. Never delegate trivial greetings or the same work twice. Include the evidence and chosen implementation steps in context, behavior to preserve, and concrete acceptance checks. Keep conductor permissions out of the brief. At most 2 worker turns (spawns and revisions) per user turn and 3 active workers total. Read mode cannot edit and can use an empty paths array. Any supplied paths must be relative to the workspace. Edit mode requires disjoint owned paths; preserve concurrent edits and configured permissions. Workers cannot delegate. Set wait_for_result=true when ready to wait for this assignment: returns its report and check evidence on completion, or status after 120 seconds. Omit or set false to return the worker ID immediately for parallel work. In functions.exec, use yield_time_ms 60000 for waiting calls.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["objective","context","expected_output","reason","mode","paths"],"properties":{
                 "objective":{"type":"string","minLength":1,"maxLength":2000},"context":{"type":"string","maxLength":6000,"description":"Relevant findings, implementation steps, and behavior to preserve."},
                 "expected_output":{"type":"string","minLength":1,"maxLength":1000,"description":"Expected changes, acceptance checks, and the report to return."},"reason":{"type":"string","minLength":1,"maxLength":1000},
-                "mode":{"type":"string","enum":["read","edit"]},"paths":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":512}}}}}),
+                "mode":{"type":"string","enum":["read","edit"]},"paths":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":512}},
+                "wait_for_result":{"type":"boolean","description":"Wait for this worker's result in the same call; default false. Use true when no other conductor work is pending."}}}}),
         json!({"type":"function","name":"wait","description":"Wait without polling model turns for these workers to finish or for a bounded timeout. Returns final reports, observed command exit codes, model usage and owned paths. After implementation, inspect the actual diff and check the evidence before accepting. No hidden lead turn is started.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["ids","timeout_ms"],"properties":{"ids":ids,"timeout_ms":{"type":"integer","minimum":0,"maximum":120000}}}}),
         json!({"type":"function","name":"status","description":"Read compact worker status and completed reports when useful; avoid repetitive polling. Prefer wait when you need a result.","deferLoading":false,

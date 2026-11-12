@@ -105,6 +105,8 @@ Melly limits the automatic skill catalog to 3,000 context tokens for the conduct
 
 The terminal draws on changes, ignores unrelated notifications, caches formatting and wrapping measurements per message or activity group, and renders only visible entries. The local UI cannot shorten server inference time. `/status` separates startup time, first-event latency and turn elapsed time.
 
+For a single assignment, the conductor can request the finished report directly from `spawn` with `wait_for_result: true`. Melly holds the tool reply while activity and approvals continue streaming, avoiding a separate conductor call just to wait. Parallel work can still launch immediately and wait later. The held call returns status after 120 seconds if work continues. Start a new Melly chat to expose this optional field; resumed older chats retain their original tools and use the existing launch/wait flow. See [speed measurements](docs/speed.md).
+
 ## Development
 
 ```sh
