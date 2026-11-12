@@ -23,6 +23,7 @@ Type `/` to open the palette. Type to filter, use Up/Down to select, Tab to comp
 | Command | Action |
 | --- | --- |
 | `/agents` | Open the agent switcher; Up/Down selects and Enter opens an observation view |
+| `/review` | Open the latest worker’s brief and review |
 | `/model` | Pick from the models available to your account |
 | `/effort` or `/strength` | Pick a reasoning effort supported by the selected model |
 | `/skills` | Browse enabled Codex skills and attach one to the next message |
@@ -49,6 +50,7 @@ Model and effort changes apply to the next turn. New chats start at the selected
 | Up / Down | Navigate a menu |
 | Tab | Complete a menu choice; otherwise switch panes |
 | Ctrl+B | Switch panes |
+| Ctrl+R | Open or close the selected worker’s brief and review; from conductor, open the latest worker |
 | Ctrl+T | Expand or collapse completed thinking summaries |
 | Ctrl+O | Expand or collapse full tool output |
 | Alt+1 … Alt+9 | Jump directly to an agent; Alt+1 opens the lead |
@@ -76,6 +78,20 @@ The conductor can spawn, wait for, inspect, cancel, and compact workers. New 0.5
 - Luna must be offered by the signed-in account. It receives a bounded brief with relevant context and keeps its context for a revision.
 
 The conductor receives results and up to 12 observed command exit codes through the wait or status tool. These describe the commands that ran. The conductor judges whether those commands covered the requested behavior. Waiting is event-driven and starts no hidden conductor turns.
+
+## Brief and review
+
+Select a worker and press **Ctrl+R**, or use `/review` from the conductor. A focused sheet keeps the main chat uncluttered:
+
+- **Brief:** exact objective, findings/approach, owned paths, expected checks and delegation reason. Press `p` for the complete worker prompt, including the harness wrapper. Follow-up prompts are preserved verbatim.
+- **Review:** the conductor’s explicit verdict and summary, observed conductor commands after report delivery, Luna’s commands and final report. Press `o` to expand recorded output, including diff excerpts. Exit codes are actual command outcomes, not a guarantee that the checks cover the task.
+- **Navigation:** Tab or left/right switches tabs, arrows/Page Up/Down scroll, Ctrl+N/P changes workers, and Esc returns to your chat. The conductor draft is preserved; typing and paste in the sheet never send a message. Approval prompts take precedence.
+
+A small lifecycle rail animates while Luna runs and respects the motion setting. Completion and report delivery never create an acceptance verdict. Only the conductor’s `review` tool records an assessment, and a new worker attempt clears the prior verdict. The verdict is the conductor’s assertion; the observed commands are separate evidence, not an automatic correctness check.
+
+Handoffs and evidence survive reopening Melly. To keep local storage bounded, it retains the original prompt, the latest 32 exact follow-up prompts (with an omitted count for older ones), and the latest 12 recorded command outcomes for each source, newest first. Command labels are capped at 240 characters and output excerpts at 4,000 characters, with an ellipsis when clipped. Output excerpts stay local and are not added to wait/status tool responses. Missing final output is labeled unavailable.
+
+**Start a new Melly chat for explicit review verdicts.** New 0.7 chats register the `review` tool. Existing Codex chats keep their original tool schemas when resumed. Older handoffs without metadata show unknown rather than implying that no review occurred. After restart, new conductor command evidence starts from a fresh report-delivery boundary; an older saved verdict and its evidence remain visible.
 
 ## Thinking, context and usage
 

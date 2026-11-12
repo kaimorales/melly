@@ -55,7 +55,7 @@ fn ready(quota: Option<u64>, resume: bool) -> Harness {
                 .as_array()
                 .unwrap()
                 .len(),
-            6
+            7
         );
     }
     h.receive(
@@ -1245,4 +1245,273 @@ fn edit_worker_uses_its_own_permissions_across_spawn_revision_and_restore() {
         .find(|r| r["method"] == "turn/start")
         .unwrap();
     check_turn(&turn, "Check the parser output");
+}
+
+fn observed_command(h: &mut Harness, thread: &str, turn: &str, command: &str, exit: i64) {
+    h.receive(json!({"method":"item/completed","params":{
+        "threadId":thread,"turnId":turn,
+        "item":{"type":"commandExecution","id":command,"command":command,"exitCode":exit}
+    }}));
+}
+
+#[test]
+fn review_requires_delivery_and_records_observed_commands() {
+    let mut h = ready(Some(10), false);
+    start_lead(&mut h);
+    let requests = tool(&mut h, "assign", "spawn", spawn_args(json!([])));
+    let worker_prompt = connect_worker(
+        &mut h,
+        requests
+            .iter()
+            .find(|r| r["method"] == "thread/start")
+            .unwrap(),
+        "worker",
+    );
+    observed_command(&mut h, "worker", "worker-turn", "inspect parser", 1);
+    finish(&mut h, "worker", "completed");
+
+    let review = json!({"id":"luna-1","verdict":"accepted","summary":"Compared the implementation and the report."});
+    let rejected = tool(&mut h, "premature", "review", review.clone());
+    assert_eq!(
+        reply_output(&rejected, "premature")["error"],
+        "Deliver the current finished worker report before recording review."
+    );
+    observed_command(&mut h, "lead-thread", "lead-turn", "unrelated command", 0);
+    h.receive(json!({"method":"item/started","params":{
+        "threadId":"lead-thread","turnId":"lead-turn",
+        "item":{"type":"commandExecution","id":"started early","command":"started early"}
+    }}));
+    tool(&mut h, "report", "status", json!({"ids":["luna-1"]}));
+    observed_command(&mut h, "lead-thread", "lead-turn", "started early", 0);
+    observed_command(
+        &mut h,
+        "lead-thread",
+        "lead-turn",
+        "inspect working tree",
+        0,
+    );
+
+    let metadata = |h: &Harness| {
+        serde_json::to_value(h.snapshot().unwrap()).unwrap()["workers"][0]["handoff"].clone()
+    };
+    assert_eq!(
+        metadata(&h)["prompt"],
+        worker_prompt["params"]["input"][0]["text"]
+    );
+    assert_eq!(metadata(&h)["report_delivered"], true);
+    assert!(metadata(&h)["review"].is_null());
+    assert_eq!(
+        metadata(&h)["commands"],
+        json!([{"command":"inspect parser","exit_code":1}])
+    );
+
+    let accepted = tool(&mut h, "accept", "review", review);
+    assert_eq!(reply_output(&accepted, "accept")["verdict"], "accepted");
+    assert_eq!(
+        metadata(&h)["review"]["commands"],
+        json!([{"command":"inspect working tree","exit_code":0}])
+    );
+    observed_command(&mut h, "lead-thread", "lead-turn", "later command", 0);
+    tool(
+        &mut h,
+        "accept",
+        "review",
+        json!({"id":"luna-1","verdict":"changes_requested","summary":"Duplicate"}),
+    );
+    assert_eq!(metadata(&h)["review"]["verdict"], "accepted");
+    assert_eq!(
+        metadata(&h)["review"]["commands"].as_array().unwrap().len(),
+        1
+    );
+
+    let mut restored = ready(Some(10), true);
+    restored.restore_team(
+        serde_json::from_value(serde_json::to_value(h.snapshot().unwrap()).unwrap()).unwrap(),
+    );
+    assert_eq!(metadata(&h), metadata(&restored));
+
+    let correction = tool(
+        &mut h,
+        "correct",
+        "revise",
+        json!({"id":"luna-1","feedback":"Check the failed command."}),
+    );
+    let turn = correction
+        .iter()
+        .find(|r| r["method"] == "turn/start")
+        .unwrap();
+    assert_eq!(
+        metadata(&h)["corrections"][0],
+        turn["params"]["input"][0]["text"]
+    );
+    assert!(metadata(&h)["review"].is_null());
+    assert_eq!(metadata(&h)["report_delivered"], false);
+    assert_eq!(metadata(&h)["commands"], json!([]));
+}
+
+#[test]
+fn review_rejects_worker_and_stale_turn_calls() {
+    let mut h = ready(Some(10), false);
+    start_lead(&mut h);
+    let requests = tool(&mut h, "assign", "spawn", spawn_args(json!([])));
+    connect_worker(
+        &mut h,
+        requests
+            .iter()
+            .find(|r| r["method"] == "thread/start")
+            .unwrap(),
+        "worker",
+    );
+    finish(&mut h, "worker", "completed");
+    tool(&mut h, "report", "status", json!({"ids":["luna-1"]}));
+    for (thread, turn) in [("worker", "worker-turn"), ("lead-thread", "stale-turn")] {
+        h.receive(json!({"id":thread,"method":"item/tool/call","params":{
+            "threadId":thread,"turnId":turn,"callId":"bad","namespace":"melly_agents","tool":"review",
+            "arguments":{"id":"luna-1","verdict":"accepted","summary":"Unsupported assertion."}
+        }}));
+        let reply = h.drain_requests();
+        assert_eq!(
+            reply_output(&reply, thread)["error"],
+            "Only the active lead turn may call melly_agents tools."
+        );
+        assert!(h.agents[1].handoff.review.is_none());
+    }
+}
+
+#[test]
+fn old_manifest_defaults_to_unavailable_handoff() {
+    let mut h = ready(Some(10), false);
+    let worker = start_manual(&mut h, "worker");
+    finish(&mut h, "worker", "completed");
+    h.collect_completed();
+    let mut old = serde_json::to_value(h.snapshot().unwrap()).unwrap();
+    old["workers"][0].as_object_mut().unwrap().remove("handoff");
+    let mut restored = ready(Some(10), true);
+    restored.restore_team(serde_json::from_value(old).unwrap());
+    assert_eq!(restored.agents[worker].handoff, Default::default());
+}
+
+#[test]
+fn restored_delivery_does_not_attach_commands_without_a_fresh_report_boundary() {
+    let mut h = ready(Some(10), false);
+    start_lead(&mut h);
+    start_manual(&mut h, "worker");
+    finish(&mut h, "worker", "completed");
+    tool(&mut h, "report", "status", json!({"ids":["luna-1"]}));
+
+    let mut restored = ready(Some(10), true);
+    restored.restore_team(h.snapshot().unwrap());
+    start_lead(&mut restored);
+    observed_command(
+        &mut restored,
+        "lead-thread",
+        "lead-turn",
+        "command before refreshed report",
+        0,
+    );
+    let review =
+        json!({"id":"luna-1","verdict":"accepted","summary":"Reviewed the delivered report."});
+    tool(&mut restored, "accept", "review", review.clone());
+    assert!(
+        restored.agents[1]
+            .handoff
+            .review
+            .as_ref()
+            .unwrap()
+            .commands
+            .is_empty()
+    );
+
+    tool(&mut restored, "report", "status", json!({"ids":["luna-1"]}));
+    observed_command(
+        &mut restored,
+        "lead-thread",
+        "lead-turn",
+        "command after refreshed report",
+        0,
+    );
+    tool(&mut restored, "accept-again", "review", review);
+    let commands = &restored.agents[1].handoff.review.as_ref().unwrap().commands;
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].command, "command after refreshed report");
+}
+
+#[test]
+fn command_evidence_survives_transcript_eviction_and_is_bounded() {
+    let mut h = ready(Some(10), false);
+    start_lead(&mut h);
+    let worker = start_manual(&mut h, "worker");
+    for i in 0..20 {
+        observed_command(&mut h, "worker", "worker-turn", &format!("check {i}"), i);
+    }
+    observed_command(&mut h, "worker", "worker-turn", "check 19", 19);
+    h.agents[worker].session.entries.clear();
+    finish(&mut h, "worker", "completed");
+    let commands = &h.snapshot().unwrap().workers[0].handoff.commands;
+    assert_eq!(commands.len(), 12);
+    assert_eq!(commands[0].command, "check 19");
+    assert_eq!(commands[11].exit_code, 8);
+}
+
+#[test]
+fn correction_history_retains_latest_exact_prompts_with_omission_count() {
+    let mut h = ready(Some(10), false);
+    let worker = start_manual(&mut h, "worker");
+    for i in 0..34 {
+        assert!(h.submit(worker, &format!("  Correction {i}\n")));
+    }
+    let saved = serde_json::to_value(h.snapshot().unwrap()).unwrap();
+    let handoff = &saved["workers"][0]["handoff"];
+    assert_eq!(handoff["corrections_omitted"], 2);
+    let corrections = handoff["corrections"].as_array().unwrap();
+    assert_eq!(corrections.len(), 32);
+    assert_eq!(corrections[0], "  Correction 2\n");
+    assert_eq!(corrections[31], "  Correction 33\n");
+}
+
+#[test]
+fn a_delayed_command_from_a_previous_worker_turn_cannot_attach_to_a_revision() {
+    let mut h = ready(Some(10), false);
+    let worker = start_manual(&mut h, "worker");
+    finish(&mut h, "worker", "completed");
+    assert!(h.submit(worker, "Check another case."));
+    let turn = h
+        .drain_requests()
+        .into_iter()
+        .find(|r| r["method"] == "turn/start")
+        .unwrap();
+    h.receive(json!({"id":turn["id"],"result":{"turn":{"id":"worker-next"}}}));
+    observed_command(&mut h, "worker", "worker-turn", "delayed old command", 2);
+    observed_command(&mut h, "worker", "worker-next", "current command", 0);
+    assert_eq!(h.agents[worker].handoff.commands.len(), 1);
+    assert_eq!(
+        h.agents[worker].handoff.commands[0].command,
+        "current command"
+    );
+}
+
+#[test]
+fn observed_command_output_is_bounded_persisted_and_optional() {
+    let mut h = ready(Some(10), false);
+    start_lead(&mut h);
+    let worker = start_manual(&mut h, "worker");
+    observed_command(&mut h, "worker", "worker-turn", "check without output", 0);
+    let output = "λ".repeat(4500);
+    h.receive(json!({"method":"item/completed","params":{
+        "threadId":"worker","turnId":"worker-turn",
+        "item":{"type":"commandExecution","id":"long-check","command":"check with output","exitCode":1,"aggregatedOutput":output}
+    }}));
+    finish(&mut h, "worker", "completed");
+    let saved = serde_json::to_value(h.snapshot().unwrap()).unwrap();
+    let commands = saved["workers"][0]["handoff"]["commands"]
+        .as_array()
+        .unwrap();
+    let clipped = commands[0]["output"].as_str().expect("recorded output");
+    assert_eq!(clipped.chars().count(), 4000);
+    assert!(clipped.ends_with('…'));
+    assert!(commands[1].get("output").is_none());
+
+    let mut restored = ready(Some(10), true);
+    restored.restore_team(serde_json::from_value(saved).unwrap());
+    assert_eq!(restored.agents[worker].handoff, h.agents[worker].handoff);
 }

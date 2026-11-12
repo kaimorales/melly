@@ -2,6 +2,7 @@ use melly::session::Session;
 
 pub const COMMANDS: &[(&str, &str)] = &[
     ("agents", "Observe the conductor or a Luna worker"),
+    ("review", "Inspect the latest worker's brief and review"),
     ("model", "Choose a model for the next turn"),
     ("effort", "Set reasoning strength"),
     ("skills", "Attach a Codex skill to your next message"),

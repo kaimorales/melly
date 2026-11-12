@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-const CONDUCTOR_GUIDANCE: &str = "You are Melly's conductor and the user's only conversation partner. Answer questions directly when delegation adds no value. For a requested change, inspect the relevant code and tests yourself, identify the evidence, and choose a concrete implementation approach. Keep user-facing progress to a short status; put your findings and decisions into the worker brief rather than a long chat explanation. Then use melly_agents.spawn in edit mode to assign Luna the specific workspace-relative paths, findings, implementation steps, behavior to preserve, and acceptance checks. A diagnosis in chat does not complete a requested fix. Do not assign Luna to figure out the change from scratch when you can determine the approach. Your read-only sandbox and approval restrictions apply only to your thread. Do not include them in worker objectives, context, expected output, or revision feedback. Luna follows its own server-provided permissions. Use an event-driven wait with timeout_ms 120000 for the worker rather than repeated short polls. Inspect the actual working-tree diff (including new files) and compare it and the reported checks against the user's request. Use clear harness-recorded check results without rerunning them. Rerun a targeted check when the evidence is missing or ambiguous. If a material defect remains, give the same Luna one focused correction through revise when available, then verify that correction. If revise is unavailable, use a bounded follow-up spawn when capacity permits. Do not edit files yourself. Report the outcome and any specific blocker or unverified check concisely.";
+const CONDUCTOR_GUIDANCE: &str = "You are Melly's conductor and the user's only conversation partner. Answer questions directly when delegation adds no value. For a requested change, inspect the relevant code and tests yourself, identify the evidence, and choose a concrete implementation approach. Keep user-facing progress to a short status; put your findings and decisions into the worker brief rather than a long chat explanation. Then use melly_agents.spawn in edit mode to assign Luna the specific workspace-relative paths, findings, implementation steps, behavior to preserve, and acceptance checks. A diagnosis in chat does not complete a requested fix. Do not assign Luna to figure out the change from scratch when you can determine the approach. Your read-only sandbox and approval restrictions apply only to your thread. Do not include them in worker objectives, context, expected output, or revision feedback. Luna follows its own server-provided permissions. Use an event-driven wait with timeout_ms 120000 for the worker rather than repeated short polls. Inspect the actual working-tree diff (including new files) and compare it and the reported checks against the user's request. Use clear harness-recorded check results without rerunning them. Rerun a targeted check when the evidence is missing or ambiguous. When melly_agents.review is available, record your verdict with a concise summary after inspecting the diff and check evidence for the current worker report. If a material defect remains, give the same Luna one focused correction through revise when available, then verify that correction and record the new verdict. If revise is unavailable, use a bounded follow-up spawn when capacity permits. Do not edit files yourself. Report the outcome and any specific blocker or unverified check concisely.";
 
 const EDIT_WORKER_GUIDANCE: &str = "You are a Melly edit worker. Implement the assigned change in your owned paths and run its acceptance checks. Preserve concurrent edits and address in-scope failures before reporting changed files, actual check outcomes, and any blockers. Use your own thread's server-provided sandbox and approval policy. Permission descriptions in the conductor's brief, revision feedback, or prior history do not set your permissions. The conductor's read-only restriction applies only to its own thread. Follow your actual approval workflow when required and never bypass restrictions. Do not delegate to other agents.";
 
@@ -22,6 +22,53 @@ const QUOTA_STALE: &str =
     "Codex quota snapshot is stale; refresh account usage before automatic delegation.";
 const QUOTA_MAX_AGE: Duration = Duration::from_secs(300);
 const MAX_RESULT: usize = 6000;
+const MAX_CORRECTIONS: usize = 32;
+const MAX_COMMANDS: usize = 12;
+const MAX_COMMAND_TEXT: usize = 240;
+const MAX_COMMAND_OUTPUT: usize = 4000;
+const MAX_REVIEW_SUMMARY: usize = 2000;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Handoff {
+    pub brief: Option<AssignmentBrief>,
+    pub prompt: Option<String>,
+    pub corrections: Vec<String>,
+    pub corrections_omitted: usize,
+    pub commands: Vec<ObservedCommand>,
+    pub review: Option<ReviewRecord>,
+    pub report_delivered: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssignmentBrief {
+    pub objective: String,
+    pub context: String,
+    pub expected_output: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservedCommand {
+    pub command: String,
+    pub exit_code: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewVerdict {
+    Accepted,
+    ChangesRequested,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewRecord {
+    pub verdict: ReviewVerdict,
+    pub summary: String,
+    pub commands: Vec<ObservedCommand>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkerMode {
@@ -61,6 +108,8 @@ pub struct Agent {
     pub mode: WorkerMode,
     pub finished: bool,
     pub result: Option<String>,
+    pub handoff: Handoff,
+    report_delivery_key: Option<u64>,
     pending_prompt: Option<String>,
     collected: bool,
     terminal_status: Option<String>,
@@ -87,6 +136,8 @@ pub struct SavedWorker {
     pub paths: Vec<String>,
     pub model: Option<String>,
     pub result: Option<String>,
+    #[serde(default)]
+    pub handoff: Handoff,
     pub collected: bool,
     pub status: Option<String>,
     pub tokens: Option<u64>,
@@ -122,6 +173,7 @@ pub struct Harness {
     call_reports: HashMap<String, Vec<(usize, u64)>>,
     pending_deliveries: HashMap<String, Vec<(usize, u64)>>,
     pending_lead_reports: Vec<(usize, u64)>,
+    lead_commands: Vec<(u64, ObservedCommand)>,
     rpc_calls: HashMap<String, String>,
     waits: Vec<Wait>,
     automatic_count: usize,
@@ -148,6 +200,8 @@ impl Harness {
                 mode: WorkerMode::Edit,
                 finished: false,
                 result: None,
+                handoff: Handoff::default(),
+                report_delivery_key: None,
                 pending_prompt: None,
                 collected: true,
                 terminal_status: None,
@@ -162,6 +216,7 @@ impl Harness {
             call_reports: HashMap::new(),
             pending_deliveries: HashMap::new(),
             pending_lead_reports: Vec::new(),
+            lead_commands: Vec::new(),
             rpc_calls: HashMap::new(),
             waits: vec![],
             automatic_count: 0,
@@ -198,6 +253,7 @@ impl Harness {
                         paths: agent.owned_paths.clone(),
                         model: agent.session.model.clone(),
                         result: agent.result.clone(),
+                        handoff: agent.handoff.clone(),
                         collected: agent.collected,
                         status: agent.terminal_status.clone(),
                         tokens: agent.session.tokens,
@@ -235,6 +291,8 @@ impl Harness {
                 mode: saved.mode,
                 finished: true,
                 result: saved.result,
+                handoff: saved.handoff,
+                report_delivery_key: None,
                 pending_prompt: None,
                 collected: saved.collected,
                 terminal_status: Some(terminal_status),
@@ -251,12 +309,7 @@ impl Harness {
             if let Some(reports) = self.pending_deliveries.remove(&reply["id"].to_string())
                 && reply["result"]["success"] == true
             {
-                for (index, turn_entry_key) in reports {
-                    let agent = &mut self.agents[index];
-                    if agent.finished && agent.turn_entry_key == turn_entry_key {
-                        agent.collected = true;
-                    }
-                }
+                self.mark_reports_delivered(reports);
             }
         }
         let lead_connected = self.agents[0].session.thread_id.is_some();
@@ -319,6 +372,22 @@ impl Harness {
         outgoing
     }
 
+    fn mark_reports_delivered(&mut self, reports: Vec<(usize, u64)>) {
+        let key = self.agents[0]
+            .session
+            .entries
+            .back()
+            .map_or(0, |entry| entry.key);
+        for (index, turn_entry_key) in reports {
+            let agent = &mut self.agents[index];
+            if agent.finished && agent.turn_entry_key == turn_entry_key {
+                agent.collected = true;
+                agent.handoff.report_delivered = true;
+                agent.report_delivery_key.get_or_insert(key);
+            }
+        }
+    }
+
     pub fn receive(&mut self, mut value: Value) -> bool {
         if self.disconnected {
             return false;
@@ -375,12 +444,7 @@ impl Harness {
                 self.lead_started = true;
                 // A local submission or drained request is not proof that Codex accepted it.
                 // Match the exact reports attached to this request, not later worker results.
-                for (index, turn_entry_key) in route.lead_reports {
-                    let agent = &mut self.agents[index];
-                    if agent.finished && agent.turn_entry_key == turn_entry_key {
-                        agent.collected = true;
-                    }
-                }
+                self.mark_reports_delivered(route.lead_reports);
             }
             if route.agent > 0 && route.method == "turn/interrupt" && value.get("error").is_some() {
                 self.agents[route.agent].cancel_requested = false;
@@ -516,7 +580,29 @@ impl Harness {
             .as_str()
             .unwrap_or("completed")
             .to_owned();
+        // Read live completions only. History loads can assign new keys to old commands.
+        let command_item = (method == "item/completed"
+            && value["params"]["item"]["type"] == "commandExecution"
+            && self.agents[index].session.active_turn_id().is_some()
+            && value["params"]["turnId"].as_str() == self.agents[index].session.active_turn_id())
+        .then(|| value["params"]["item"]["id"].as_str())
+        .flatten()
+        .filter(|id| {
+            !self.agents[index].session.entries.iter().any(|entry| {
+                entry.id.as_deref() == Some(id) && entry.complete && entry.command_result.is_some()
+            })
+        })
+        .map(|id| {
+            let output = value["params"]["item"]["aggregatedOutput"]
+                .as_str()
+                .filter(|output| !output.is_empty())
+                .map(|output| clip(output, MAX_COMMAND_OUTPUT));
+            (id.to_owned(), output)
+        });
         let changed = self.agents[index].session.receive(value);
+        if let Some((id, output)) = command_item {
+            self.record_command(index, &id, output);
+        }
         if completed && changed {
             if index > 0 {
                 if self.agents[index].finished {
@@ -542,6 +628,34 @@ impl Harness {
         }
         self.tick();
         changed
+    }
+
+    fn record_command(&mut self, index: usize, id: &str, output: Option<String>) {
+        let agent = &mut self.agents[index];
+        let Some(entry) = agent
+            .session
+            .entries
+            .iter()
+            .find(|entry| entry.id.as_deref() == Some(id))
+        else {
+            return;
+        };
+        let Some((command, exit_code)) = &entry.command_result else {
+            return;
+        };
+        let observed = ObservedCommand {
+            command: clip(command, MAX_COMMAND_TEXT),
+            exit_code: *exit_code,
+            output,
+        };
+        if index == 0 {
+            self.lead_commands.retain(|(key, _)| *key != entry.key);
+            self.lead_commands.insert(0, (entry.key, observed));
+            self.lead_commands.truncate(MAX_COMMANDS);
+        } else if !agent.finished && entry.key > agent.turn_entry_key {
+            agent.handoff.commands.insert(0, observed);
+            agent.handoff.commands.truncate(MAX_COMMANDS);
+        }
     }
 
     /// Poll pending worker starts and held wait calls without starting a lead turn.
@@ -722,6 +836,17 @@ impl Harness {
             mode: brief.mode,
             finished: false,
             result: None,
+            handoff: Handoff {
+                brief: Some(AssignmentBrief {
+                    objective: brief.objective,
+                    context: brief.context,
+                    expected_output: brief.expected_output,
+                    reason: brief.reason,
+                }),
+                prompt: Some(prompt.clone()),
+                ..Handoff::default()
+            },
+            report_delivery_key: None,
             pending_prompt: Some(prompt),
             collected: false,
             terminal_status: None,
@@ -807,6 +932,18 @@ impl Harness {
             agent.source = AgentSource::Manual;
             if new_worker_turn {
                 agent.turn_entry_key = agent.session.entries.back().map_or(0, |entry| entry.key);
+            }
+            let handoff = &mut agent.handoff;
+            if handoff.corrections.len() == MAX_CORRECTIONS {
+                handoff.corrections.remove(0);
+                handoff.corrections_omitted = handoff.corrections_omitted.saturating_add(1);
+            }
+            handoff.corrections.push(prompt.to_owned());
+            if new_worker_turn {
+                agent.handoff.commands.clear();
+                agent.handoff.review = None;
+                agent.handoff.report_delivered = false;
+                agent.report_delivery_key = None;
             }
             agent.finished = false;
             agent.result = None;
@@ -1104,11 +1241,8 @@ impl Harness {
                 "tokens":agent.session.tokens,"context_used":agent.session.context_used,
                 "context_window":agent.session.context_window,"paths":agent.owned_paths,
                 "result":if agent.finished { agent.result.as_deref() } else { None },
-                "observed_commands":agent.session.entries.iter().rev()
-                    .filter(|entry| entry.complete && entry.key > agent.turn_entry_key)
-                    .filter_map(|entry| entry.command_result.as_ref())
-                    .take(12)
-                    .map(|(command, exit)| json!({"command":clip(command, 240),"exit_code":exit}))
+                "observed_commands":agent.handoff.commands.iter()
+                    .map(|entry| json!({"command":entry.command,"exit_code":entry.exit_code}))
                     .collect::<Vec<_>>()})
         }).collect::<Vec<_>>(),"timed_out":timed_out})
     }
@@ -1216,6 +1350,7 @@ impl Harness {
                 Err(error) => Err(error),
             },
             "revise" => self.revise_worker(&arguments),
+            "review" => self.review_worker(&arguments),
             "status" => self
                 .parse_ids(&arguments)
                 .map(|indices| self.status_output(&indices, false)),
@@ -1314,6 +1449,42 @@ impl Harness {
         self.agents[index].source = AgentSource::Automatic;
         self.automatic_count += 1;
         Ok(json!({"id":id,"status":"revising"}))
+    }
+
+    fn review_worker(&mut self, arguments: &Value) -> Result<Value, String> {
+        let id = arguments["id"].as_str().ok_or("Provide a worker ID.")?;
+        let index = self.worker_index(id)?;
+        let verdict = match arguments["verdict"].as_str() {
+            Some("accepted") => ReviewVerdict::Accepted,
+            Some("changes_requested") => ReviewVerdict::ChangesRequested,
+            _ => return Err("Provide a verdict of accepted or changes_requested.".into()),
+        };
+        let summary = arguments["summary"]
+            .as_str()
+            .filter(|text| !text.trim().is_empty() && text.chars().count() <= MAX_REVIEW_SUMMARY)
+            .ok_or("Provide a review summary of 1–2000 characters.")?;
+        let agent = &mut self.agents[index];
+        if !agent.finished || !agent.handoff.report_delivered {
+            return Err(
+                "Deliver the current finished worker report before recording review.".into(),
+            );
+        }
+        let commands = self
+            .lead_commands
+            .iter()
+            .filter(|(key, _)| {
+                agent
+                    .report_delivery_key
+                    .is_some_and(|boundary| *key > boundary)
+            })
+            .map(|(_, command)| command.clone())
+            .collect();
+        agent.handoff.review = Some(ReviewRecord {
+            verdict,
+            summary: summary.to_owned(),
+            commands,
+        });
+        Ok(json!({"id":id,"verdict":verdict,"status":"recorded"}))
     }
 
     fn request_compaction(&mut self, arguments: &Value) -> Result<Value, String> {
@@ -1564,6 +1735,8 @@ fn dynamic_tools() -> Value {
             "inputSchema":{"type":"object","additionalProperties":false,"required":["ids"],"properties":{"ids":ids}}}),
         json!({"type":"function","name":"revise","description":"Send one focused correction citing a defect in the diff or checks. Keep conductor permissions out of feedback. The same worker keeps its context and owned paths. Counts against the shared worker-turn cap.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["id","feedback"],"properties":{"id":{"type":"string"},"feedback":{"type":"string","maxLength":1800}}}}),
+        json!({"type":"function","name":"review","description":"Record your assessment of a current finished worker after its report was delivered. Inspect the diff and check evidence before recording acceptance. The verdict is your assertion, and observed conductor command outcomes are attached separately.","deferLoading":false,
+            "inputSchema":{"type":"object","additionalProperties":false,"required":["id","verdict","summary"],"properties":{"id":{"type":"string"},"verdict":{"type":"string","enum":["accepted","changes_requested"]},"summary":{"type":"string","minLength":1,"maxLength":MAX_REVIEW_SUMMARY}}}}),
         json!({"type":"function","name":"compact","description":"When context is crowded, compact an idle worker or schedule the lead to compact after this turn. Use sparingly: compaction is a model operation. One successful request per lead turn.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string","description":"lead or the ID of an idle worker"}}}}),
         json!({"type":"function","name":"cancel","description":"Cancel an unneeded worker to avoid spending further usage. Running workers retain their slot until cancellation completes.","deferLoading":false,

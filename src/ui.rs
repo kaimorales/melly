@@ -27,6 +27,7 @@ const AMBER: Color = Color::Rgb(218, 184, 125);
 pub enum Action {
     Submit(String),
     Agents,
+    Review,
     Collect,
     Stop,
     Compact,
@@ -377,6 +378,7 @@ impl Workspace {
                 self.activity_focused = false;
             }
             "agents" => self.action = Some(Action::Agents),
+            "review" => self.action = Some(Action::Review),
             "settings" => self.action = Some(Action::Settings),
             "collect" => self.action = Some(Action::Collect),
             "usage" => {
@@ -490,7 +492,7 @@ impl Workspace {
         }
         frame.render_widget(
             Paragraph::new(if self.managed && self.agent_label != "lead" {
-                "  Ctrl+N/P agents   Ctrl+O activity   Ctrl+T thinking"
+                "  Ctrl+R brief / review   Ctrl+N/P agents   Ctrl+O activity"
             } else if self.activity_focused {
                 "  Tab chat   ↑↓ scroll   / commands"
             } else if session.busy() {

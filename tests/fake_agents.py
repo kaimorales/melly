@@ -61,7 +61,13 @@ for line in sys.stdin:
             if resumed:
                 call("lead-compact", "compact", {"id": "lead"})
             else:
-                finish("lead", "TEAM_COMPLETE")
+                event("item/completed", "lead", item={"type": "commandExecution", "id": "lead-diff",
+                    "command": "git diff --stat", "exitCode": 0, "status": "completed"})
+                call("lead-review", "review", {"id": spawned[0], "verdict": "accepted",
+                    "summary": "Compared the fixture report with the working tree."})
+        elif m.get("id") == "lead-review":
+            assert m["result"]["success"]
+            finish("lead", "TEAM_COMPLETE")
         elif m.get("id") == "lead-compact":
             assert m["result"]["success"]
             finish("lead", "RESUMED_TEAM_COMPLETE")
@@ -103,7 +109,10 @@ for line in sys.stdin:
     elif method == "thread/start":
         thread = "lead" if not threads else "worker-" + str(len(threads))
         if thread == "lead":
-            assert m["params"]["dynamicTools"][0]["name"] == "melly_agents"
+            namespace = m["params"]["dynamicTools"][0]
+            assert namespace["name"] == "melly_agents"
+            assert len(namespace["tools"]) == 7
+            assert any(tool["name"] == "review" for tool in namespace["tools"])
         else:
             assert "dynamicTools" not in m["params"]
         role = "Melly's conductor" if thread == "lead" else "Melly read worker"

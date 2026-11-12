@@ -32,7 +32,7 @@ impl Speaker {
 pub struct Entry {
     pub speaker: Speaker,
     pub text: String,
-    id: Option<String>,
+    pub(crate) id: Option<String>,
     pub complete: bool,
     pub key: u64,
     pub revision: u64,

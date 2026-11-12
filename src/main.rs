@@ -1,5 +1,6 @@
 mod agent_ui;
 mod commands;
+mod handoff_ui;
 mod rpc;
 mod state;
 mod ui;

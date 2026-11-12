@@ -90,6 +90,15 @@ with tempfile.TemporaryDirectory(prefix="melly-team-pty-", dir="/tmp") as direct
         expect(fd, b"TEAM_COMPLETE")
         os.write(fd, b"\x1b2")
         expect(fd, b"Observing Luna")
+        os.write(fd, b"\x12")  # Ctrl+R: inspect the selected worker's exact handoff.
+        expect(fd, b"Instructions from conductor")
+        os.write(fd, b"\t")
+        expect(fd, b"Accepted by conductor")
+        expect(fd, b"git diff --stat")
+        os.write(fd, b"\x0e")  # Next worker has no fabricated verdict.
+        expect(fd, b"No verdict recorded")
+        dismiss(fd)
+        expect(fd, b"Observing Luna")
         os.write(fd, b"never send this to Luna\r")
         dismiss(fd)
         os.write(fd, b"/agents\r")
@@ -111,11 +120,20 @@ with tempfile.TemporaryDirectory(prefix="melly-team-pty-", dir="/tmp") as direct
     assert len(turns) == 3, len(turns)
     assert turns[1]["sandboxPolicy"] == {"type": "readOnly", "networkAccess": False}
     assert "never send this to Luna" not in log.read_text()
+    saved = json.loads(next(Path(directory, "state", "workspaces").glob("*.json")).read_text())
+    first = saved["team"]["workers"][0]["handoff"]
+    assert first["prompt"] == turns[1]["input"][0]["text"]
+    assert first["review"]["verdict"] == "accepted"
+    assert first["review"]["commands"][0]["command"] == "git diff --stat"
 
     log.unlink()
     with terminal(directory, log, "--continue") as fd:
         expect(fd, b"Restored worker-1")
         expect(fd, b"Observing Luna")
+        os.write(fd, b"\x12\t")
+        expect(fd, b"Accepted by conductor")
+        expect(fd, b"git diff --stat")
+        dismiss(fd)
         dismiss(fd)
         expect(fd, b"draft across restart")
         os.write(fd, b"\x15/settings\r")

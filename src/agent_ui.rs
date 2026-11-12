@@ -11,6 +11,7 @@ use ratatui::{
 };
 
 use crate::{
+    handoff_ui::HandoffView,
     state::Settings,
     ui::{Action, Workspace},
 };
@@ -33,6 +34,7 @@ pub struct AgentWorkspace {
     views: Vec<Workspace>,
     selected: usize,
     picker: Option<usize>,
+    handoff: Option<(usize, HandoffView)>,
     settings: Settings,
     settings_row: Option<usize>,
     settings_changed: bool,
@@ -117,6 +119,7 @@ impl AgentWorkspace {
             self.selected = index;
             self.picker = None;
             self.settings_row = None;
+            self.handoff = None;
         }
         for (view, agent) in self.views.iter_mut().zip(&mut harness.agents) {
             view.agent_label = agent.id.clone();
@@ -128,6 +131,7 @@ impl AgentWorkspace {
         if self.selected == 0
             && self.settings_row.is_none()
             && self.picker.is_none()
+            && self.handoff.is_none()
             && let Some(view) = self.views.get_mut(self.selected)
         {
             view.insert(text);
@@ -143,6 +147,45 @@ impl AgentWorkspace {
         if let Some(row) = self.settings_row {
             return self.settings_key(key, harness, row);
         }
+        if let Some((index, view)) = &mut self.handoff {
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                match key.code {
+                    KeyCode::Char('q') => return true,
+                    KeyCode::Char('c') => {
+                        harness.cancel(0);
+                        return false;
+                    }
+                    KeyCode::Char('r') => {
+                        self.handoff = None;
+                        return false;
+                    }
+                    KeyCode::Char('n' | 'p') if harness.agents.len() > 2 => {
+                        *index = if key.code == KeyCode::Char('n') {
+                            if *index + 1 == harness.agents.len() {
+                                1
+                            } else {
+                                *index + 1
+                            }
+                        } else if *index == 1 {
+                            harness.agents.len() - 1
+                        } else {
+                            *index - 1
+                        };
+                        let review = view.review;
+                        *view = HandoffView::default();
+                        view.review = review;
+                        return false;
+                    }
+                    _ => return false,
+                }
+            }
+            if key.code == KeyCode::Esc {
+                self.handoff = None;
+            } else if key.modifiers.is_empty() || key.code == KeyCode::BackTab {
+                view.key(key.code);
+            }
+            return false;
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && key.code == KeyCode::Char('c')
             && !harness.busy()
@@ -151,6 +194,10 @@ impl AgentWorkspace {
             return true;
         }
         if !approval {
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
+                self.open_handoff(harness);
+                return false;
+            }
             if key.modifiers.contains(KeyModifiers::ALT)
                 && let KeyCode::Char(digit) = key.code
                 && let Some(number) = digit.to_digit(10)
@@ -226,6 +273,7 @@ impl AgentWorkspace {
                     }
                 }
                 Action::Agents => self.picker = Some(self.selected),
+                Action::Review => self.open_handoff(harness),
                 Action::Settings => self.settings_row = Some(0),
                 Action::Collect => {
                     self.selected = 0;
@@ -312,6 +360,26 @@ impl AgentWorkspace {
         if let Some(row) = self.settings_row {
             self.draw_settings(frame, row);
         }
+        let accent = self.accent();
+        if let Some((index, view)) = &mut self.handoff {
+            view.draw(frame, &harness.agents[*index], accent, self.settings.motion);
+        }
+    }
+
+    fn open_handoff(&mut self, harness: &mut Harness) {
+        if harness.agents.len() <= 1 {
+            harness.agents[0]
+                .session
+                .notice("No worker handoffs yet. A brief appears when the conductor delegates.");
+            return;
+        }
+        let index = if self.selected > 0 {
+            self.selected
+        } else {
+            harness.agents.len() - 1
+        };
+        self.handoff = Some((index, HandoffView::default()));
+        self.picker = None;
     }
 
     fn settings_key(&mut self, key: KeyEvent, harness: &mut Harness, row: usize) -> bool {
@@ -551,6 +619,115 @@ mod tests {
             .unwrap(),
         );
         h
+    }
+
+    #[test]
+    fn handoff_view_is_read_only_and_switches_brief_review() {
+        let mut h = harness();
+        h.spawn_manual("Fix the return transition".into(), WorkerMode::Read, vec![])
+            .unwrap();
+        let mut w = AgentWorkspace::default();
+        w.synchronize(&mut h);
+        w.insert("Keep my conductor draft");
+        w.key(
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            &mut h,
+        );
+        let mut t = Terminal::new(TestBackend::new(130, 38)).unwrap();
+        t.draw(|f| w.draw(f, &h)).unwrap();
+        assert!(screen(&t).contains("Instructions from conductor"));
+        assert!(screen(&t).contains("Fix the return transition"));
+        w.insert("never send this");
+        w.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut h);
+        assert_eq!(w.views[0].draft(), "Keep my conductor draft");
+        w.key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &mut h);
+        t.draw(|f| w.draw(f, &h)).unwrap();
+        assert!(screen(&t).contains("No verdict recorded"));
+        w.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &mut h);
+        assert_eq!(w.selected, 0);
+        assert_eq!(w.views[0].draft(), "Keep my conductor draft");
+    }
+
+    #[test]
+    fn handoff_renders_recorded_evidence_and_gives_approvals_priority() {
+        use melly::delegation::{AssignmentBrief, ObservedCommand, ReviewRecord, ReviewVerdict};
+        let mut h = harness();
+        h.spawn_manual("Fix the return transition".into(), WorkerMode::Read, vec![])
+            .unwrap();
+        let a = &mut h.agents[1];
+        a.handoff.brief = Some(AssignmentBrief {
+            objective: "Remove the flicker when returning home.".into(),
+            context: "The scrollbar disappears on the short homepage. Reserve its space in the shared html rule; preserve the intro and reduced-motion behavior.".into(),
+            expected_output: "Run the navigation checks and verify the return transition at desktop and mobile sizes. Report commands and remaining limitations.".into(),
+            reason: "The change is isolated; the cause and acceptance checks are established.".into(),
+        });
+        a.owned_paths = vec!["assets/site/styles.css".into()];
+        a.mode = WorkerMode::Edit;
+        a.session.status = "completed".into();
+        a.finished = true;
+        a.result = Some("Reserved scrollbar space. Navigation checks pass; visual verification is still outstanding.".into());
+        a.handoff.report_delivered = true;
+        a.handoff.commands = vec![ObservedCommand {
+            command: "node --test tests/navigation.test.cjs".into(),
+            exit_code: 0,
+            output: Some("3 checks passed".into()),
+        }];
+        a.handoff.review = Some(ReviewRecord {
+            verdict: ReviewVerdict::ChangesRequested,
+            summary: "The diff is scoped correctly and navigation tests pass. Verify the reported flicker in a browser before accepting the fix.".into(),
+            commands: vec![ObservedCommand {command:"git diff -- assets/site/styles.css".into(), exit_code:0, output:Some("+  scrollbar-gutter: stable;".into())}],
+        });
+        let mut w = AgentWorkspace::default();
+        w.synchronize(&mut h);
+        w.key(
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            &mut h,
+        );
+        for (width, height) in [(130, 44), (80, 30), (40, 16), (24, 8), (20, 5)] {
+            let mut t = Terminal::new(TestBackend::new(width, height)).unwrap();
+            t.draw(|f| w.draw(f, &h)).unwrap();
+            if width == 130 {
+                capture(&t, "handoff-brief");
+            }
+        }
+        w.key(
+            KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
+            &mut h,
+        );
+        let mut t = Terminal::new(TestBackend::new(130, 44)).unwrap();
+        t.draw(|f| w.draw(f, &h)).unwrap();
+        assert!(screen(&t).contains("Full prompt sent to Luna"));
+        w.key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &mut h);
+        t.draw(|f| w.draw(f, &h)).unwrap();
+        let text = screen(&t);
+        assert!(text.contains("Changes requested"));
+        assert!(text.contains("git diff -- assets/site/styles.css"));
+        assert!(text.contains("exit 0"));
+        assert!(!text.contains("Accepted by conductor"));
+        capture(&t, "handoff-review");
+        w.key(
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+            &mut h,
+        );
+        t.draw(|f| w.draw(f, &h)).unwrap();
+        assert!(screen(&t).contains("scrollbar-gutter: stable;"));
+        capture(&t, "handoff-output");
+        h.agents[1].handoff = Default::default();
+        t.draw(|f| w.draw(f, &h)).unwrap();
+        assert!(screen(&t).contains("No saved delivery or review metadata"));
+        assert!(!screen(&t).contains("has not been delivered"));
+        h.agents[0]
+            .session
+            .approvals
+            .push_back(melly::session::Approval {
+                description: "Approve a command".into(),
+                can_accept: true,
+                id: json!("approval"),
+            });
+        w.synchronize(&mut h);
+        assert!(w.handoff.is_none());
+        t.draw(|f| w.draw(f, &h)).unwrap();
+        assert!(screen(&t).contains("Approval required"));
     }
 
     #[test]
