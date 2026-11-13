@@ -1,0 +1,199 @@
+{
+  "models": {
+    "conductor": "gpt-6.1-sol",
+    "worker": "gpt-6-luna",
+    "effort": "high"
+  },
+  "codex_version": "0.167.0",
+  "comparison": "Exploratory single sessions; historical stock row is a reference, not a newly interleaved control.",
+  "usage_note": "All owning-thread responses counted; inherited fork records excluded. Token counters do not establish plan-quota savings.",
+  "runs": [
+    {
+      "candidate": "stock_previous_pair",
+      "arm": "stock",
+      "repeat": 1,
+      "turn_seconds": 355.449,
+      "usage": {
+        "input_tokens": 2114232,
+        "cached_input_tokens": 1946112,
+        "output_tokens": 15003,
+        "reasoning_output_tokens": 3189,
+        "total_tokens": 2129235,
+        "uncached_input_tokens": 168120
+      },
+      "conductor_calls": 24,
+      "worker_calls": 26,
+      "settings_valid": true,
+      "worker_turns": [
+        2,
+        1,
+        1
+      ],
+      "cap_valid": true,
+      "usage_reconciled": true,
+      "resume_valid": true,
+      "contract_passes": 3,
+      "holdout_passed": true,
+      "qualified": true
+    },
+    {
+      "candidate": "melly_0_9_3_previous_pair",
+      "arm": "melly",
+      "repeat": 1,
+      "turn_seconds": 549.381,
+      "usage": {
+        "input_tokens": 2667369,
+        "cached_input_tokens": 2470784,
+        "output_tokens": 21548,
+        "reasoning_output_tokens": 5267,
+        "total_tokens": 2688917,
+        "uncached_input_tokens": 196585
+      },
+      "conductor_calls": 30,
+      "worker_calls": 41,
+      "settings_valid": true,
+      "worker_turns": [
+        2,
+        2,
+        1
+      ],
+      "cap_valid": true,
+      "usage_reconciled": true,
+      "resume_valid": true,
+      "contract_passes": 3,
+      "holdout_passed": true,
+      "qualified": true
+    },
+    {
+      "candidate": "public_persistent_fork",
+      "arm": "melly",
+      "repeat": 1,
+      "turn_seconds": 451.568,
+      "usage": {
+        "input_tokens": 2622651,
+        "cached_input_tokens": 2365440,
+        "output_tokens": 17092,
+        "reasoning_output_tokens": 4273,
+        "total_tokens": 2639743,
+        "uncached_input_tokens": 257211
+      },
+      "conductor_calls": 29,
+      "worker_calls": 24,
+      "settings_valid": true,
+      "worker_turns": [
+        2,
+        1,
+        1
+      ],
+      "cap_valid": true,
+      "usage_reconciled": true,
+      "resume_valid": true,
+      "contract_passes": 3,
+      "holdout_passed": true,
+      "qualified": true
+    },
+    {
+      "candidate": "public_fork_brief_only",
+      "arm": "melly",
+      "repeat": 1,
+      "turn_seconds": 559.187,
+      "usage": {
+        "input_tokens": 4111680,
+        "cached_input_tokens": 3835904,
+        "output_tokens": 21353,
+        "reasoning_output_tokens": 4628,
+        "total_tokens": 4133033,
+        "uncached_input_tokens": 275776
+      },
+      "conductor_calls": 27,
+      "worker_calls": 49,
+      "settings_valid": true,
+      "worker_turns": [
+        2,
+        1,
+        2
+      ],
+      "cap_valid": true,
+      "usage_reconciled": true,
+      "resume_valid": true,
+      "contract_passes": 3,
+      "holdout_passed": true,
+      "qualified": true
+    },
+    {
+      "candidate": "review_evidence_melly",
+      "comparison_group": "review-evidence-pair-1",
+      "source_commit": "67a79420af9c687d5385b9ca569d1ff2d6f167be",
+      "arm": "melly",
+      "repeat": 1,
+      "turn_seconds": 554.06,
+      "usage": {
+        "input_tokens": 2275526,
+        "cached_input_tokens": 2100224,
+        "output_tokens": 23325,
+        "reasoning_output_tokens": 6276,
+        "total_tokens": 2298851,
+        "uncached_input_tokens": 175302
+      },
+      "conductor_calls": 25,
+      "worker_calls": 40,
+      "settings_valid": true,
+      "worker_turns": [
+        2,
+        2,
+        2
+      ],
+      "cap_valid": true,
+      "usage_reconciled": true,
+      "resume_valid": true,
+      "contract_passes": 3,
+      "holdout_passed": true,
+      "qualified": true
+    },
+    {
+      "candidate": "review_evidence_stock",
+      "comparison_group": "review-evidence-pair-1",
+      "source_commit": null,
+      "arm": "stock",
+      "repeat": 1,
+      "turn_seconds": 478.78700000000003,
+      "usage": {
+        "input_tokens": 4023253,
+        "cached_input_tokens": 3754624,
+        "output_tokens": 19937,
+        "reasoning_output_tokens": 5100,
+        "total_tokens": 4043190,
+        "uncached_input_tokens": 268629
+      },
+      "conductor_calls": 34,
+      "worker_calls": 43,
+      "settings_valid": true,
+      "worker_turns": [
+        2,
+        2,
+        2
+      ],
+      "cap_valid": true,
+      "usage_reconciled": true,
+      "resume_valid": true,
+      "contract_passes": 3,
+      "holdout_passed": true,
+      "qualified": true
+    }
+  ],
+  "review_evidence_pair_reductions_pct": {
+    "time": -15.721604805477153,
+    "input_tokens": 43.440643678138066,
+    "cached_input_tokens": 44.06300071591722,
+    "output_tokens": -16.993529618297632,
+    "reasoning_output_tokens": -23.058823529411754,
+    "total_tokens": 43.14264231955461,
+    "uncached_input_tokens": 34.741967546318534
+  },
+  "compatibility_check": {
+    "runtime": "Python 3.11",
+    "holdout_checks": 36,
+    "stock_exit_code": 0,
+    "melly_exit_code": 0
+  }
+}

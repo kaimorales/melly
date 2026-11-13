@@ -1,6 +1,6 @@
 [package]
 name = "melly"
-version = "0.9.4-dev.1"
+version = "0.9.4-dev.2"
 edition = "2024"
 description = "A terminal workspace for Codex"
 
