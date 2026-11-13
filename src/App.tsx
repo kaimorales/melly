@@ -29,7 +29,7 @@ function MessageView({ message, activity, theme, highlight, onSource, onRetry, r
   if (message.role === 'user') return <div id={`message-${message.id}`} className={`message user-message ${highlight ? 'highlighted' : ''}`}>{message.content}</div>;
   if (message.role !== 'assistant') return null;
   const stopped = message.status === 'stopped' || message.status === 'cancelled';
-  const failed = message.status === 'error' || message.status === 'failed';
+  const failed = ['error', 'failed', 'interrupted'].includes(message.status);
   return <article id={`message-${message.id}`} className={`message assistant ${highlight ? 'highlighted' : ''}`} aria-label="Melly response">
     {(folderSources.length > 0 || webSources.length > 0) && <div className="retrieval-line">
       {folderSources.length > 0 && <><Icon name="folder" /><span>{folderSources.length} {folderSources.length === 1 ? 'snippet' : 'snippets'} from other chats</span></>}
@@ -240,7 +240,7 @@ export default function App() {
     setWebSearch(false); closePicker();
   };
   const send = async (retry = false) => {
-    if (!data || !provider || !sendAvailable || activeRun || sendingRef.current || (!retry && !draft.trim())) return;
+    if (!data || !provider || !sendAvailable || activeRun || sendingRef.current || (retry && (viewingOlder || loading)) || (!retry && !draft.trim())) return;
     sendingRef.current = true; setStarting(true); setNotice(''); setHighlight(null); followBottom.current = true;
     let chatId = selectedId;
     try {
@@ -255,7 +255,7 @@ export default function App() {
   const source = async (value: Source) => {
     if (value.kind === 'chat' && value.chatId) {
       let chat = data?.chats.find((entry) => entry.id === value.chatId);
-      if (!chat) { const found = await backend.invoke<Chat[]>('search_chats', { query: value.title }); chat = found.find((entry) => entry.id === value.chatId); }
+      if (!chat) chat = await backend.invoke<Chat | null>('chat', { chatId: value.chatId }) || undefined;
       if (!chat) { setNotice('The source chat is no longer available.'); return; }
       if (value.messageId) jump.current = { chatId: chat.id, messageId: value.messageId };
       if (chat.id === selectedId) { setView('chat'); await loadMessages(chat.id, value.messageId || undefined); }
@@ -325,7 +325,7 @@ export default function App() {
           {!items.length && !loading ? <div className="empty-state"><h1>{selectedFolder ? `A new thought in ${selectedFolder.title}` : 'What’s on your mind?'}</h1><p>{provider.id === 'mock' ? 'Try a synthetic conversation, or connect a provider in Settings.' : `Start a conversation with ${providerName(provider)}.`}</p>{provider.id === 'mock' && <button className="text-action" onClick={() => { void seed().catch((reason) => setNotice(errorText(reason))); }}>Try an example</button>}</div> : <div className={`transcript ${hasOlder || viewingOlder ? 'has-older' : ''}`} aria-label="Conversation">
             {hasOlder && <button className="load-older" disabled={loading} onClick={() => { void older(); }}>{loading ? 'Loading…' : 'Load older messages'}</button>}
             {viewingOlder && <button className="load-older" onClick={() => { if (selectedId) { setHighlight(null); followBottom.current = true; void loadMessages(selectedId); } }}>Back to latest messages</button>}
-            {items.map((message, index) => <MessageView key={message.id} message={message} theme={theme} activity={activities[message.id]} highlight={highlight === message.id} onSource={(value) => { void source(value).catch((reason) => setNotice(errorText(reason))); }} onRetry={() => { void send(true); }} retryEnabled={index === items.length - 1 && !activeRun && !starting} report={setNotice} />)}
+            {items.map((message, index) => <MessageView key={message.id} message={message} theme={theme} activity={activities[message.id]} highlight={highlight === message.id} onSource={(value) => { void source(value).catch((reason) => setNotice(errorText(reason))); }} onRetry={() => { void send(true); }} retryEnabled={index === items.length - 1 && !viewingOlder && !loading && !activeRun && !starting} report={setNotice} />)}
           </div>}
         </div>
         <div className="composer-area" data-menu-root>

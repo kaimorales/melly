@@ -154,9 +154,11 @@ test('loads history in sixty-message pages and bounds the visible transcript', a
   await page.getByRole('button', { name: 'Load older messages', exact: true }).click();
   await expect(page.locator('.message')).toHaveCount(240);
   await expect(page.locator('.user-message').first()).toHaveText('History item 0');
+  await expect(page.getByRole('button', { name: 'Retry response' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Back to latest messages', exact: true }).click();
   await expect(page.locator('.message')).toHaveCount(60);
   await expect(page.locator('.user-message').last()).toHaveText('History item 139');
+  await expect(page.getByRole('button', { name: 'Retry response' })).toBeVisible();
 });
 
 test('resolves inline Rust source links inside the app', async ({ page }) => {
@@ -242,6 +244,43 @@ test('a citation finds its exact message beyond the latest history page', async 
   await expect(page.locator('.message.highlighted')).toContainText('In this synthetic example, I cleaned a city transit');
   await expect(page.locator('.message')).toHaveCount(22);
   await expect(page.getByRole('button', { name: 'Back to latest messages' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry response' })).toHaveCount(0);
+});
+
+test('opens a renamed citation source outside the recent chat list by its ID', async ({ page }) => {
+  await page.evaluate(async () => {
+    const { mockBackend } = await import(performance.getEntriesByType('resource').find((entry) => /\/src\/mock-backend\.ts(?:\?|$)/.test(entry.name))!.name);
+    const original = mockBackend.invoke.bind(mockBackend);
+    mockBackend.invoke = async (command, args) => {
+      const result = await original(command, args);
+      if (command === 'demo_seed') {
+        const source = result.chats.find((chat) => chat.title === 'My experience');
+        await original('rename_chat', { chatId: source.id, title: 'Archived transit project' });
+        result.chats = result.chats.filter((chat) => chat.id !== source.id);
+      }
+      return result;
+    };
+  });
+  await page.getByRole('button', { name: 'Try an example' }).click();
+  await page.getByRole('button', { name: 'Open source My experience' }).click();
+  await expect(page.locator('.chat-title')).toHaveText('Archived transit project');
+  await expect(page.locator('.message.highlighted')).toContainText('reduced average waiting time by 12%');
+});
+
+test('an empty crash-interrupted reply displays a recovery notice', async ({ page }) => {
+  await page.evaluate(async () => {
+    const { mockBackend } = await import(performance.getEntriesByType('resource').find((entry) => /\/src\/mock-backend\.ts(?:\?|$)/.test(entry.name))!.name);
+    const original = mockBackend.invoke.bind(mockBackend);
+    mockBackend.invoke = async (command, args) => {
+      const result = await original(command, args);
+      if (command === 'messages') for (const message of result) if (message.role === 'assistant') {
+        message.status = 'interrupted'; message.content = ''; message.sources = [];
+      }
+      return result;
+    };
+  });
+  await page.getByRole('button', { name: 'Try an example' }).click();
+  await expect(page.getByText('Response interrupted', { exact: true })).toBeVisible();
 });
 
 test('deleting the selected chat removes it from the recent list', async ({ page }) => {

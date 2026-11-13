@@ -54,6 +54,10 @@ async fn create_chat(s: State<'_, AppState>, folder_id: Option<String>) -> Reply
         .map_err(error)
 }
 #[tauri::command]
+async fn chat(s: State<'_, AppState>, chat_id: String) -> Reply<Chat> {
+    s.engine.store.lock().unwrap().chat(&chat_id).map_err(error)
+}
+#[tauri::command]
 async fn rename_chat(s: State<'_, AppState>, chat_id: String, title: String) -> Reply<()> {
     s.engine
         .store
@@ -326,6 +330,7 @@ fn main() {
             create_folder,
             rename_folder,
             messages,
+            chat,
             search_chats,
             save_settings,
             save_connection,
