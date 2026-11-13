@@ -44,12 +44,15 @@ pub(crate) async fn read_stream(
     sink: ProviderSink,
     cancel: &CancellationToken,
 ) -> Result<()> {
+    let content_type = response.headers().get(reqwest::header::CONTENT_TYPE);
+    // The official ChatGPT plan route can return valid Responses SSE without
+    // this header. Validate its framing below; never accept an explicitly
+    // different media type or extend this exception to arbitrary providers.
+    let headerless_plan =
+        content_type.is_none() && provider == "chatgpt" && matches!(protocol, Protocol::Responses);
     ensure!(
-        response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|s| s
+        headerless_plan
+            || content_type.and_then(|v| v.to_str().ok()).is_some_and(|s| s
                 .split(';')
                 .next()
                 .unwrap_or("")
@@ -59,11 +62,17 @@ pub(crate) async fn read_stream(
     );
     let mut chunks = response.bytes_stream();
     let mut decoder = Decoder::new(protocol, provider);
+    let mut prefix = headerless_plan.then(Vec::new);
     loop {
         let chunk = tokio::select! { biased; _ = cancel.cancelled() => bail!("Request cancelled"), chunk = chunks.next() => chunk };
         match chunk {
             Some(Ok(bytes)) => {
                 check_cancel(cancel)?;
+                if let Some(pending) = &mut prefix
+                    && validate_sse_start(pending, &bytes, provider)?
+                {
+                    prefix = None;
+                }
                 if decoder.push(&bytes, &sink)? {
                     check_cancel(cancel)?;
                     return decoder.finish();
@@ -73,6 +82,35 @@ pub(crate) async fn read_stream(
             None => return decoder.finish(),
         }
     }
+}
+
+/// Check a bounded prefix across arbitrary network chunk boundaries before
+/// trusting a headerless stream. JSON/HTML cannot hide a completion event after
+/// a non-SSE prefix. The normal decoder still enforces size and terminal events.
+fn validate_sse_start(prefix: &mut Vec<u8>, bytes: &[u8], provider: &str) -> Result<bool> {
+    const STARTS: [&[u8]; 10] = [
+        b"event:",
+        b"data:",
+        b":",
+        b"id:",
+        b"retry:",
+        b"\xef\xbb\xbfevent:",
+        b"\xef\xbb\xbfdata:",
+        b"\xef\xbb\xbf:",
+        b"\xef\xbb\xbfid:",
+        b"\xef\xbb\xbfretry:",
+    ];
+    for byte in bytes.iter().take(9) {
+        prefix.push(*byte);
+        if STARTS.iter().any(|start| prefix.starts_with(start)) {
+            return Ok(true);
+        }
+        ensure!(
+            STARTS.iter().any(|start| start.starts_with(prefix)),
+            "{provider} did not return an event stream"
+        );
+    }
+    Ok(false)
 }
 
 pub(crate) async fn read_json(
@@ -142,6 +180,170 @@ mod tests {
             .https_only(false)
             .build()
             .unwrap()
+    }
+    async fn read_response(
+        headers: &str,
+        body: &str,
+        provider: &str,
+        protocol: Protocol,
+    ) -> (Result<()>, Vec<ProviderEvent>) {
+        let (url, task, _) = server(Some(format!(
+            "HTTP/1.1 200 OK\r\n{headers}Content-Length: {}\r\n\r\n{body}",
+            body.len()
+        )))
+        .await;
+        let response = test_client().get(url).send().await.unwrap();
+        let events = Arc::new(Mutex::new(vec![]));
+        let captured = events.clone();
+        let result = read_stream(
+            response,
+            protocol,
+            provider,
+            Arc::new(move |e| captured.lock().unwrap().push(e)),
+            &CancellationToken::new(),
+        )
+        .await;
+        task.abort();
+        let events = events.lock().unwrap().clone();
+        (result, events)
+    }
+    const PLAN_REPLY: &str = concat!(
+        "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"Synthetic reply\"}\n\n",
+        "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n"
+    );
+    #[tokio::test]
+    async fn chatgpt_plan_stream_allows_missing_content_type() {
+        // Observed on the official plan Responses endpoint: HTTP 200 with SSE
+        // framing and no Content-Type. Completion must still be native/explicit.
+        let (result, events) = read_response("", PLAN_REPLY, "chatgpt", Protocol::Responses).await;
+        result.unwrap();
+        assert!(
+            matches!(events.first(), Some(ProviderEvent::Delta(text)) if text == "Synthetic reply")
+        );
+        assert!(events.iter().any(|e| matches!(e, ProviderEvent::Done)));
+    }
+    #[tokio::test]
+    async fn missing_content_type_is_not_a_generic_provider_exception() {
+        for (provider, protocol) in [
+            ("custom", Protocol::Responses),
+            ("chatgpt", Protocol::Compatible),
+        ] {
+            let (result, events) = read_response("", PLAN_REPLY, provider, protocol).await;
+            assert!(result.is_err());
+            assert!(events.is_empty());
+        }
+    }
+    #[tokio::test]
+    async fn chatgpt_rejects_explicit_non_sse_content_types() {
+        for mime in [
+            "application/json",
+            "text/html",
+            "text/plain",
+            "application/synthetic-secret",
+        ] {
+            let (result, events) = read_response(
+                &format!("Content-Type: {mime}\r\n"),
+                PLAN_REPLY,
+                "chatgpt",
+                Protocol::Responses,
+            )
+            .await;
+            let error = result.unwrap_err().to_string();
+            assert!(!error.contains("synthetic-secret"));
+            assert!(events.is_empty());
+        }
+    }
+    #[tokio::test]
+    async fn headerless_plan_response_rejects_non_sse_and_false_completion() {
+        for body in [
+            "{\"error\":\"synthetic-secret\"}",
+            "<html>synthetic-secret</html>\nevent: response.completed\ndata: {\"type\":\"response.completed\"}\n\n",
+            "data: [DONE]\n\n",
+            "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"synthetic-secret\"}}}\n\n",
+        ] {
+            let (result, events) = read_response("", body, "chatgpt", Protocol::Responses).await;
+            assert!(!result.unwrap_err().to_string().contains("synthetic-secret"));
+            assert!(!events.iter().any(|e| matches!(e, ProviderEvent::Done)));
+        }
+    }
+    #[tokio::test]
+    async fn headerless_plan_stream_preserves_partial_reply_on_disconnect() {
+        let (result, events) = read_response(
+            "",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Partial\"}\n\n",
+            "chatgpt",
+            Protocol::Responses,
+        )
+        .await;
+        assert!(result.unwrap_err().to_string().contains("interrupted"));
+        assert!(matches!(events.first(), Some(ProviderEvent::Delta(text)) if text == "Partial"));
+        assert!(!events.iter().any(|e| matches!(e, ProviderEvent::Done)));
+    }
+    #[test]
+    fn headerless_sse_prefix_handles_split_bom_fields_and_comments() {
+        for start in [
+            "event:",
+            "data:",
+            ":",
+            "id:",
+            "retry:",
+            "\u{feff}event:",
+            "\u{feff}data:",
+            "\u{feff}:",
+        ] {
+            let mut prefix = Vec::new();
+            for (index, byte) in start.as_bytes().iter().enumerate() {
+                assert_eq!(
+                    validate_sse_start(&mut prefix, &[*byte], "chatgpt").unwrap(),
+                    index + 1 == start.len()
+                );
+            }
+            assert!(prefix.len() <= 9);
+        }
+        for bad in [
+            "<html>",
+            "{\"error\":true}",
+            "invalid",
+            "eventual",
+            "data=",
+            "\u{feff}bad",
+        ] {
+            assert!(validate_sse_start(&mut Vec::new(), bad.as_bytes(), "chatgpt").is_err());
+        }
+    }
+    #[tokio::test]
+    async fn cancellation_interrupts_headerless_plan_stream_and_partial_prefix() {
+        for chunk in ["", "1\r\ne\r\n"] {
+            let (url, task, _) = server(Some(format!(
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{chunk}"
+            )))
+            .await;
+            let response = test_client().get(url).send().await.unwrap();
+            let cancel = CancellationToken::new();
+            let trigger = cancel.clone();
+            let stopper = tokio::spawn(async move {
+                tokio::task::yield_now().await;
+                trigger.cancel();
+            });
+            let events = Arc::new(Mutex::new(vec![]));
+            let captured = events.clone();
+            let result = timeout(
+                Duration::from_millis(500),
+                read_stream(
+                    response,
+                    Protocol::Responses,
+                    "chatgpt",
+                    Arc::new(move |e| captured.lock().unwrap().push(e)),
+                    &cancel,
+                ),
+            )
+            .await
+            .unwrap();
+            task.abort();
+            stopper.abort();
+            assert!(result.unwrap_err().to_string().contains("cancelled"));
+            assert!(events.lock().unwrap().is_empty());
+        }
     }
     #[tokio::test]
     async fn http_429_is_sanitized_and_retains_status() {
