@@ -52,7 +52,15 @@ The native shell writes one content-free `startup-metric.json` record after boot
 
 Verified application code: `a26065d`; signed packaging configuration: `5964287`. The final navigation polish was rebuilt, checked with TypeScript/formatting/Clippy and all 25 UI tests, then operated natively: Settings → Back to chat retained the selected conversation and created no empty chat. The Rust suite was unchanged by that final one-line UI change. The app was left open in light mode on the synthetic demo.
 
+## Sign-in wording and icon follow-up
+
+On the same date, replaced the static “consent required” billing text with “ChatGPT plan”; connection state and the Continue with ChatGPT action remain separate. Re-ran TypeScript, formatting, Clippy, all 102 Rust tests and all 25 UI tests successfully. The actual authorization checks were not relaxed.
+
+Reproduced the silver icon frame in Finder on macOS 26.6.2. A full-bleed graphite source removed it while preserving the approved conversation mark. The release build and strict bundle signature verification passed; the bundled ICNS is byte-identical to the checked-in asset. Relaunched Melly, confirmed history remained present, and inspected the updated ChatGPT panel and the final app's icon in Finder Quick Look. No password prompt or new authorization was involved. Native captures: [ChatGPT settings](screenshots/native-chatgpt-plan-light.png) and [packaged icon](screenshots/native-icon-borderless.png). Older macOS icon appearance remains unverified; see [icon packaging notes](design/app-icon.md).
+
 ## Live checks still required
+
+ChatGPT currently shows **Not connected**. The following live checks remain pending; the wording change does not imply a completed connection.
 
 | Connection | Remaining live verification |
 | --- | --- |
