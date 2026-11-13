@@ -1,0 +1,268 @@
+{
+  "source": {
+    "tag": "rust-v0.167.0",
+    "commit": "086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a",
+    "license": "Apache-2.0",
+    "source_test_patch_sha256": "44c98f580263c66aff01b07d82a0ee857997fffb077d6cf74d4920680be5384c"
+  },
+  "build": {
+    "target": "aarch64-apple-darwin",
+    "rustc": "1.95.0 (59807616e1fa2540724bfbac14d7976d7e4a3860 2026-04-14)",
+    "cargo": "1.95.0 (f2d3ce0bd 2026-03-21)",
+    "LLVM": "22.1.2",
+    "profile": "dev, unoptimized, debug=0",
+    "jobs": 2,
+    "locked": true,
+    "offline": true
+  },
+  "lock": {
+    "upstream_sha256": "9e71c74824a7ea114d0a3a4c94e93d81a1ddd13ca8fa6f698cbd1284c2e9ff2f",
+    "normalized_sha256": "55a002023bcad0b44fbed4a8cf7632d964ac08640c1ac6c7dbd5e905206f9392",
+    "only_change": "171 local workspace package version fields 0.0.0 to 0.167.0",
+    "external_packages_unchanged": 1308
+  },
+  "variant_hashes": {
+    "control": {
+      "codex": "ae012cbb8c35f84aaa14f7d9f8b4f83dd7012072b5f1eb84ec8992e9535e6d47",
+      "codex-app-server": "a788122911d91c1298c7907ad13b986d50fc37b5f0ba87b547818076fb960eb6"
+    },
+    "patched": {
+      "codex": "88e7042d062d1f331fcf16c63806f671604100d3f3fc65e4704ca3e5bd3a1b49",
+      "codex-app-server": "4ed68d413930daf1163b997449ae8563c3fc94e007753aad39831629f93e3f54"
+    }
+  },
+  "validation": {
+    "cache_tests_passed": 7,
+    "runtime_smokes_passed": true,
+    "installed_runtime_changed": false
+  },
+  "controlled_model_calls": 12,
+  "all_experiment_calls": 24,
+  "all_experiment_usage": {
+    "input_tokens": 896024,
+    "cached_input_tokens": 264064,
+    "uncached_input_tokens": 631960,
+    "output_tokens": 1084,
+    "reasoning_output_tokens": 604,
+    "total_tokens": 897108
+  },
+  "rows": [
+    {
+      "order": "forward",
+      "label": "unpatched-oss-debug",
+      "valid": true,
+      "settings_valid": true,
+      "accounting_complete": true,
+      "model_calls": 3,
+      "executable_sha256": "ae012cbb8c35f84aaa14f7d9f8b4f83dd7012072b5f1eb84ec8992e9535e6d47",
+      "total_usage": {
+        "cached_input_tokens": 12416,
+        "input_tokens": 121651,
+        "output_tokens": 136,
+        "reasoning_output_tokens": 76,
+        "total_tokens": 121787,
+        "uncached_input_tokens": 109235
+      },
+      "workers": [
+        {
+          "sibling": 1,
+          "usage": {
+            "cached_input_tokens": 12416,
+            "input_tokens": 44067,
+            "output_tokens": 65,
+            "reasoning_output_tokens": 39,
+            "total_tokens": 44132,
+            "uncached_input_tokens": 31651
+          },
+          "final_correct": true
+        },
+        {
+          "sibling": 2,
+          "usage": {
+            "cached_input_tokens": 0,
+            "input_tokens": 44067,
+            "output_tokens": 63,
+            "reasoning_output_tokens": 37,
+            "total_tokens": 44130,
+            "uncached_input_tokens": 44067
+          },
+          "final_correct": true
+        }
+      ],
+      "visible_pre_response_components_match_other_variant": false,
+      "full_outbound_prompt_equality_verified": false
+    },
+    {
+      "order": "forward",
+      "label": "patched-oss-debug",
+      "valid": true,
+      "settings_valid": true,
+      "accounting_complete": true,
+      "model_calls": 3,
+      "executable_sha256": "88e7042d062d1f331fcf16c63806f671604100d3f3fc65e4704ca3e5bd3a1b49",
+      "total_usage": {
+        "cached_input_tokens": 68608,
+        "input_tokens": 108787,
+        "output_tokens": 137,
+        "reasoning_output_tokens": 77,
+        "total_tokens": 108924,
+        "uncached_input_tokens": 40179
+      },
+      "workers": [
+        {
+          "sibling": 1,
+          "usage": {
+            "cached_input_tokens": 0,
+            "input_tokens": 39779,
+            "output_tokens": 64,
+            "reasoning_output_tokens": 38,
+            "total_tokens": 39843,
+            "uncached_input_tokens": 39779
+          },
+          "final_correct": true
+        },
+        {
+          "sibling": 2,
+          "usage": {
+            "cached_input_tokens": 39552,
+            "input_tokens": 39779,
+            "output_tokens": 65,
+            "reasoning_output_tokens": 39,
+            "total_tokens": 39844,
+            "uncached_input_tokens": 227
+          },
+          "final_correct": true
+        }
+      ],
+      "visible_pre_response_components_match_other_variant": false,
+      "full_outbound_prompt_equality_verified": false
+    },
+    {
+      "order": "reverse",
+      "label": "unpatched-oss-debug",
+      "valid": true,
+      "settings_valid": true,
+      "accounting_complete": true,
+      "model_calls": 3,
+      "executable_sha256": "ae012cbb8c35f84aaa14f7d9f8b4f83dd7012072b5f1eb84ec8992e9535e6d47",
+      "total_usage": {
+        "cached_input_tokens": 51968,
+        "input_tokens": 108787,
+        "output_tokens": 133,
+        "reasoning_output_tokens": 73,
+        "total_tokens": 108920,
+        "uncached_input_tokens": 56819
+      },
+      "workers": [
+        {
+          "sibling": 1,
+          "usage": {
+            "cached_input_tokens": 39552,
+            "input_tokens": 39779,
+            "output_tokens": 61,
+            "reasoning_output_tokens": 35,
+            "total_tokens": 39840,
+            "uncached_input_tokens": 227
+          },
+          "final_correct": true
+        },
+        {
+          "sibling": 2,
+          "usage": {
+            "cached_input_tokens": 12416,
+            "input_tokens": 39779,
+            "output_tokens": 64,
+            "reasoning_output_tokens": 38,
+            "total_tokens": 39843,
+            "uncached_input_tokens": 27363
+          },
+          "final_correct": true
+        }
+      ],
+      "visible_pre_response_components_match_other_variant": true,
+      "full_outbound_prompt_equality_verified": false
+    },
+    {
+      "order": "reverse",
+      "label": "patched-oss-debug",
+      "valid": true,
+      "settings_valid": true,
+      "accounting_complete": true,
+      "model_calls": 3,
+      "executable_sha256": "88e7042d062d1f331fcf16c63806f671604100d3f3fc65e4704ca3e5bd3a1b49",
+      "total_usage": {
+        "cached_input_tokens": 39552,
+        "input_tokens": 108787,
+        "output_tokens": 135,
+        "reasoning_output_tokens": 75,
+        "total_tokens": 108922,
+        "uncached_input_tokens": 69235
+      },
+      "workers": [
+        {
+          "sibling": 1,
+          "usage": {
+            "cached_input_tokens": 0,
+            "input_tokens": 39779,
+            "output_tokens": 64,
+            "reasoning_output_tokens": 38,
+            "total_tokens": 39843,
+            "uncached_input_tokens": 39779
+          },
+          "final_correct": true
+        },
+        {
+          "sibling": 2,
+          "usage": {
+            "cached_input_tokens": 39552,
+            "input_tokens": 39779,
+            "output_tokens": 63,
+            "reasoning_output_tokens": 37,
+            "total_tokens": 39842,
+            "uncached_input_tokens": 227
+          },
+          "final_correct": true
+        }
+      ],
+      "visible_pre_response_components_match_other_variant": true,
+      "full_outbound_prompt_equality_verified": false
+    }
+  ],
+  "host_skills_prompt_difference": {
+    "first_forward_control_characters": 37440,
+    "other_controlled_arms_characters": 19233,
+    "character_difference": 18207,
+    "first_forward_control_sha256": "bd41c060421a130d2c6ddd3ac1e175ca4718ff2bd592ed4c9d63b3bdc81695c7",
+    "other_controlled_arms_sha256": "3b6221f6fbace48b03385561f7f0c136008241c3388b8000f0506436e078ca36",
+    "input_token_difference_per_call": 4288,
+    "both_thread_start_and_turn_start_model": "gpt-6.1-sol",
+    "pre_parent_model_switch_or_model_instructions_message_observed": false,
+    "catalog_change_mechanism": "not established; catalog difference was not independently tokenized; no hidden reasoning or authentication inspected",
+    "first_forward_control_skill_entries": 149,
+    "other_controlled_arms_skill_entries": 99,
+    "visible_messages_before_first_parent_response": 6,
+    "developer_messages": 4,
+    "user_messages": 2,
+    "visible_text_components": 11,
+    "matching_text_components": 10,
+    "different_component": "JSONL line 5, content component index 1: host_skills.instructions",
+    "byte_difference_utf8": 18247,
+    "additional_plugin_families": [
+      "google-drive",
+      "pages",
+      "plugin-management",
+      "sites",
+      "supabase",
+      "vercel",
+      "work-pets"
+    ]
+  },
+  "limits": [
+    "The first forward control arm had 4288 extra input tokens per call. Before the first parent response all visible text matched except host_skills.instructions: 37440 versus 19233 characters (18207 extra). The supplied prompts/settings matched, but effective host-skills catalogs did not. Reverse arm catalogs and input counts match.",
+    "Unpatched control can hit already-warm caches; reverse control pair cached more total than patched. This is not a universal total-cost improvement.",
+    "Patched second siblings consistently cached 39552 of 39779 input tokens; this small lookup probe is not an end-to-end coding result.",
+    "Live outbound routing headers were not captured; source/mock tests verify the routing change.",
+    "No end-to-end coding speed claim. Native Codex agents already share cache routing.",
+    "Cold child resume does not retain parent affinity in this experiment."
+  ]
+}

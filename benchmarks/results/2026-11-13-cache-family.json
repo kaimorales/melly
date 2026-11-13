@@ -1,0 +1,111 @@
+{
+  "family": "pocket-cache-v1",
+  "candidate": {
+    "source_commit": "649f31065a72c9c00a4300f54b2fee329bd3bf8d",
+    "melly_version": "melly 0.9.4-dev.2",
+    "binary_sha256": "50961849160990caa6dd4eb5f8942afec9735dc7986d397fb4e01ac0433baa24",
+    "fixture_sha256": "2f68070e1021ffe685695782fa50fd0db7b668c16d0b1fbc52903d2e9b3731d0",
+    "holdout_sha256": "9f34d3997ecb12f5b1ecc64a8718c095c818d7692fb74c5c515854a3d4958d82"
+  },
+  "actual_arm_order": [
+    "melly",
+    "stock"
+  ],
+  "comparison": "Single matched three-stage coding session; descriptive, not a universal effect.",
+  "models": {
+    "conductor": "gpt-6.1-sol",
+    "worker": "gpt-6-luna",
+    "effort": "high"
+  },
+  "sessions": [
+    {
+      "repeat": 1,
+      "arm": "melly",
+      "stages": 3,
+      "turn_seconds": 569.441,
+      "observed_wall_seconds": 569.6040357080001,
+      "usage": {
+        "input_tokens": 2445281,
+        "cached_input_tokens": 2200064,
+        "output_tokens": 22758,
+        "reasoning_output_tokens": 5366,
+        "total_tokens": 2468039,
+        "uncached_input_tokens": 245217
+      },
+      "conductor_calls": 25,
+      "worker_calls": 29,
+      "settings_valid": true,
+      "worker_turns": [
+        1,
+        1,
+        2
+      ],
+      "cap_valid": true,
+      "usage_reconciled": true,
+      "resume_valid": true,
+      "contract_passes": 3,
+      "holdout_passed": true,
+      "qualified": true,
+      "holdout": {
+        "passed": true,
+        "checks": 2276,
+        "stage": 3,
+        "observed_waiter_cases": 2,
+        "unobserved_waiter_cases": 0
+      }
+    },
+    {
+      "repeat": 1,
+      "arm": "stock",
+      "stages": 3,
+      "turn_seconds": 412.744,
+      "observed_wall_seconds": 418.1165948329999,
+      "usage": {
+        "input_tokens": 3166659,
+        "cached_input_tokens": 2966144,
+        "output_tokens": 17259,
+        "reasoning_output_tokens": 5604,
+        "total_tokens": 3183918,
+        "uncached_input_tokens": 200515
+      },
+      "conductor_calls": 28,
+      "worker_calls": 32,
+      "settings_valid": true,
+      "worker_turns": [
+        1,
+        2,
+        2
+      ],
+      "cap_valid": true,
+      "usage_reconciled": true,
+      "resume_valid": true,
+      "contract_passes": 3,
+      "holdout_passed": true,
+      "qualified": true,
+      "holdout": {
+        "passed": true,
+        "checks": 2276,
+        "stage": 3,
+        "observed_waiter_cases": 2,
+        "unobserved_waiter_cases": 0
+      }
+    }
+  ],
+  "reductions_pct": {
+    "time": -37.96469482294109,
+    "input_tokens": 22.780413047315797,
+    "cached_input_tokens": 25.82747162646183,
+    "output_tokens": -31.861637406570487,
+    "reasoning_output_tokens": 4.246966452533907,
+    "total_tokens": 22.484215987974565,
+    "uncached_input_tokens": -22.29359399546169
+  },
+  "comparable": true,
+  "seal": {
+    "fixture_sha256": "2f68070e1021ffe685695782fa50fd0db7b668c16d0b1fbc52903d2e9b3731d0",
+    "holdout_sha256": "9f34d3997ecb12f5b1ecc64a8718c095c818d7692fb74c5c515854a3d4958d82",
+    "baseline_sha256": "e53314cdfa2fcab1d9eccf8d0e39aedc8bc64d3c4fbf576788cd09ba48fe3e45",
+    "mutants_rejected": 16,
+    "reference_repeat_passes": 20
+  }
+}
