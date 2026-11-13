@@ -8,4 +8,4 @@ Never switch billing routes or endpoints on an error. Folder retrieval scope com
 
 Preserve the approved UI: system font, regular text, narrow sidebar, restrained neutral light/dark themes, no dashboard. Performance is a product feature: bound data loading, no unnecessary timers or startup network, batch streaming renders, cancel promptly.
 
-The user authorized incremental checkpoint commits and pushes on codex/melly-desktop. Push tested checkpoints on that branch; do not force-push, merge into main, publish a release, or alter unrelated projects. The empty-main reset was separately authorized and its old CLI snapshot is preserved.
+The user authorized feature-sized checkpoint commits and pushes directly to main, without a PR. Push tested checkpoints; do not force-push, publish a release, or alter unrelated projects. The empty-main reset was separately authorized and its old CLI snapshot is preserved.
