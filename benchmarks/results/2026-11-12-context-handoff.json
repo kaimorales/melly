@@ -1,0 +1,215 @@
+{
+  "date": "2026-11-12",
+  "candidate_code_commit": "ae5701ec258ea6d359e093e21ddb98d3ca87d509",
+  "release": "0.9.3",
+  "codex_version": "codex-cli 0.167.0",
+  "models": {
+    "conductor": "gpt-6.1-sol",
+    "worker": "gpt-6-luna",
+    "effort": "high"
+  },
+  "source_files_sha256": {
+    "compare.py": "1ae0960b4f9b39be2a9c63a6f1d50778f7de895f7d0506b5fdba04f51c8c9886",
+    "fixture.py": "ac161d1820b4c64a299c5da79fff50e492cf85243531905ca36b36b6b070c134",
+    "rpc_tap.py": "1dba30d71efa12fe875268a06723a85bb1c3dea527e27ca75c69c1419018c58f",
+    "holdout.py": "3cb030546b1521cba6ec5bdb3e0b194797c7f781c4b1e6f6a15ac036974a1235"
+  },
+  "cutoff_seconds": 600,
+  "canary": {
+    "sessions": [
+      {
+        "repeat": 1,
+        "arm": "melly",
+        "stages": 3,
+        "turn_seconds": 570.042,
+        "observed_wall_seconds": 570.1947746659998,
+        "usage": {
+          "input_tokens": 2515745,
+          "cached_input_tokens": 2354816,
+          "output_tokens": 22028,
+          "reasoning_output_tokens": 5377,
+          "total_tokens": 2537773,
+          "uncached_input_tokens": 160929
+        },
+        "conductor_calls": 34,
+        "worker_calls": 41,
+        "settings_valid": true,
+        "worker_turns": [
+          2,
+          2,
+          2
+        ],
+        "cap_valid": true,
+        "usage_reconciled": true,
+        "resume_valid": true,
+        "contract_passes": 3,
+        "holdout_passed": true,
+        "holdout_output": "{\"passed\": true, \"checks\": 36}\n",
+        "qualified": true
+      }
+    ],
+    "arms": {
+      "melly": {
+        "sessions": 1,
+        "qualified_sessions": 1,
+        "mean_session_seconds": 570.042,
+        "median_session_seconds": 570.042,
+        "range_session_seconds": [
+          570.042,
+          570.042
+        ],
+        "mean_usage": {
+          "input_tokens": 2515745,
+          "cached_input_tokens": 2354816,
+          "output_tokens": 22028,
+          "reasoning_output_tokens": 5377,
+          "total_tokens": 2537773,
+          "uncached_input_tokens": 160929
+        },
+        "mean_conductor_calls": 34,
+        "mean_worker_calls": 41
+      }
+    },
+    "comparable": false
+  },
+  "fresh_pair": {
+    "sessions": [
+      {
+        "repeat": 1,
+        "arm": "melly",
+        "stages": 3,
+        "turn_seconds": 549.381,
+        "observed_wall_seconds": 549.5372885419997,
+        "usage": {
+          "input_tokens": 2667369,
+          "cached_input_tokens": 2470784,
+          "output_tokens": 21548,
+          "reasoning_output_tokens": 5267,
+          "total_tokens": 2688917,
+          "uncached_input_tokens": 196585
+        },
+        "conductor_calls": 30,
+        "worker_calls": 41,
+        "settings_valid": true,
+        "worker_turns": [
+          2,
+          2,
+          1
+        ],
+        "cap_valid": true,
+        "usage_reconciled": true,
+        "resume_valid": true,
+        "contract_passes": 3,
+        "holdout_passed": true,
+        "holdout_output": "{\"passed\": true, \"checks\": 36}\n",
+        "qualified": true
+      },
+      {
+        "repeat": 1,
+        "arm": "stock",
+        "stages": 3,
+        "turn_seconds": 355.449,
+        "observed_wall_seconds": 360.8191903760003,
+        "usage": {
+          "input_tokens": 2114232,
+          "cached_input_tokens": 1946112,
+          "output_tokens": 15003,
+          "reasoning_output_tokens": 3189,
+          "total_tokens": 2129235,
+          "uncached_input_tokens": 168120
+        },
+        "conductor_calls": 24,
+        "worker_calls": 26,
+        "settings_valid": true,
+        "worker_turns": [
+          2,
+          1,
+          1
+        ],
+        "cap_valid": true,
+        "usage_reconciled": true,
+        "resume_valid": true,
+        "contract_passes": 3,
+        "holdout_passed": true,
+        "holdout_output": "{\"passed\": true, \"checks\": 36}\n",
+        "qualified": true
+      }
+    ],
+    "arms": {
+      "stock": {
+        "sessions": 1,
+        "qualified_sessions": 1,
+        "mean_session_seconds": 355.449,
+        "median_session_seconds": 355.449,
+        "range_session_seconds": [
+          355.449,
+          355.449
+        ],
+        "mean_usage": {
+          "input_tokens": 2114232,
+          "cached_input_tokens": 1946112,
+          "output_tokens": 15003,
+          "reasoning_output_tokens": 3189,
+          "total_tokens": 2129235,
+          "uncached_input_tokens": 168120
+        },
+        "mean_conductor_calls": 24,
+        "mean_worker_calls": 26
+      },
+      "melly": {
+        "sessions": 1,
+        "qualified_sessions": 1,
+        "mean_session_seconds": 549.381,
+        "median_session_seconds": 549.381,
+        "range_session_seconds": [
+          549.381,
+          549.381
+        ],
+        "mean_usage": {
+          "input_tokens": 2667369,
+          "cached_input_tokens": 2470784,
+          "output_tokens": 21548,
+          "reasoning_output_tokens": 5267,
+          "total_tokens": 2688917,
+          "uncached_input_tokens": 196585
+        },
+        "mean_conductor_calls": 30,
+        "mean_worker_calls": 41
+      }
+    },
+    "comparable": true,
+    "reductions_pct": {
+      "time": -54.55972586784601,
+      "input_tokens": -26.16254980531938,
+      "cached_input_tokens": -26.96001052354644,
+      "output_tokens": -43.62460841165101,
+      "reasoning_output_tokens": -65.16149263091879,
+      "total_tokens": -26.28559083426676,
+      "uncached_input_tokens": -16.931358553414235
+    }
+  },
+  "candidate_mean": {
+    "session_seconds": 559.7115,
+    "model_calls": 73,
+    "worker_calls": 41,
+    "usage": {
+      "input_tokens": 2591557,
+      "cached_input_tokens": 2412800,
+      "output_tokens": 21788,
+      "reasoning_output_tokens": 5322,
+      "total_tokens": 2613345,
+      "uncached_input_tokens": 178757
+    }
+  },
+  "descriptive_reductions_vs_earlier_melly_pct": {
+    "time": 29.427017662426746,
+    "calls": 26.51006711409396,
+    "input_tokens": 37.858688434337154,
+    "cached_input_tokens": 38.12707200455158,
+    "output_tokens": 29.55023118957545,
+    "reasoning_output_tokens": 40.63580591187953,
+    "total_tokens": 37.79752820857601,
+    "uncached_input_tokens": 33.99416586662728
+  },
+  "limits": "Two candidate sessions versus three earlier Melly sessions; one fresh stock-first pair. Descriptive, not a causal estimate or universal savings rate. Raw private traces are not published."
+}

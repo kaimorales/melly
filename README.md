@@ -101,6 +101,8 @@ The conductor can spawn, wait for, inspect, cancel, and compact workers. New 0.5
 
 The conductor receives results and up to 12 observed command exit codes through the wait or status tool. These describe the commands that ran. The conductor judges whether those commands covered the requested behavior. Waiting is event-driven and starts no hidden conductor turns.
 
+At assignment time, Melly attaches complete small owned files and any supporting files selected with `context_paths`. This source snapshot helps Luna start from the conductor's findings without rediscovering every file. Each file is limited to 12 KiB and the serialized packet to 32 KiB; omitted paths are labeled so Luna can read needed ranges normally. Directories are not expanded, and supporting files do not grant edit ownership. The complete snapshot is visible under **Brief → `p`** and persists with the original prompt. Resumed older chats still attach owned files even when their tool schema does not offer `context_paths`.
+
 ## Brief and review
 
 Select a worker and press **Ctrl+R**, or use `/review` from the conductor. A focused sheet keeps the main chat uncluttered:

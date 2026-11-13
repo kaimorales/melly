@@ -2,6 +2,8 @@
 
 [2026-11-12 results: Sol high + Luna high](../docs/benchmarks/2026-11-12-sol-high-luna-high.md)
 
+[Source handoff experiment and fresh comparison](../docs/benchmarks/2026-11-12-context-handoff.md)
+
 This comparison consumes the signed-in Codex plan. It does not call a separately
 billed API, predict subscription charges, or convert tokens into plan percentages.
 Raw traces can contain account metadata and model/tool output; keep the output
