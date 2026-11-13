@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
     time::Duration,
 };
 use tokio_util::sync::CancellationToken;
@@ -59,6 +59,7 @@ impl Transport for CloudTransport {
 pub struct Engine {
     pub store: Arc<Mutex<Store>>,
     pub vault: Arc<dyn SecretStore>,
+    plan_vault: RwLock<Arc<dyn SecretStore>>,
     transport: Arc<dyn Transport>,
     active: Mutex<HashMap<String, CancellationToken>>,
 }
@@ -89,10 +90,18 @@ impl Engine {
     ) -> Self {
         Self {
             store,
+            plan_vault: RwLock::new(vault.clone()),
             vault,
             transport,
             active: Mutex::new(HashMap::new()),
         }
+    }
+    /// One immutable credential namespace for an entire plan operation.
+    pub fn plan_vault(&self) -> Arc<dyn SecretStore> {
+        self.plan_vault.read().unwrap().clone()
+    }
+    pub fn select_plan_vault(&self, vault: Arc<dyn SecretStore>) {
+        *self.plan_vault.write().unwrap() = vault;
     }
     pub fn is_active(&self, chat: &str) -> bool {
         self.active.lock().unwrap().contains_key(chat)
@@ -154,7 +163,7 @@ impl Engine {
             let presence = match spec.id.as_str() {
                 "mock" => Ok(true),
                 "muse" => Ok(false),
-                "chatgpt" => Ok(auth::has_saved_plan(self.vault.as_ref())),
+                "chatgpt" => Ok(auth::has_saved_plan(self.plan_vault().as_ref())),
                 _ => self.vault.contains(&providers::credential_id(&connection)),
             };
             let configured = *presence.as_ref().unwrap_or(&false);
@@ -190,7 +199,15 @@ impl Engine {
         providers::validate_connection(connection)?;
         match connection.provider_id.as_str() {
             "mock" => Ok(None),
-            "chatgpt" => Ok(Some(auth::access_token(self.vault.clone()).await?)),
+            "chatgpt" => {
+                let vault = self.plan_vault();
+                let token = auth::access_token(vault.clone()).await?;
+                ensure!(
+                    Arc::ptr_eq(&vault, &self.plan_vault()),
+                    "ChatGPT connection changed; please retry"
+                );
+                Ok(Some(token))
+            }
             _ => Ok(Some(
                 self.vault
                     .get(&providers::credential_id(connection))?
