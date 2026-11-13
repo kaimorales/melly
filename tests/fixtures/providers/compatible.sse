@@ -1,0 +1,10 @@
+: synthetic fixture, no account data
+data: {"choices":[{"index":0,"delta":{"content":"Café 🌳"}}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_demo","type":"function","function":{"name":"search_folder","arguments":"{\"query\":"}}]}}]}
+
+data: {"choices":[{"index":0,
+data: "delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"interview\"}"}}]},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

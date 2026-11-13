@@ -1,0 +1,2 @@
+# SSE fixture events are deliberately terminated by a blank line.
+tests/fixtures/providers/*.sse whitespace=-blank-at-eof

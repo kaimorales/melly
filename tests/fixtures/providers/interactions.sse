@@ -1,0 +1,24 @@
+event: step.start
+data: {"event_type":"step.start","index":0,"step":{"type":"thought"}}
+
+event: step.delta
+data: {"event_type":"step.delta","index":0,"delta":{"type":"thought_signature","signature":"synthetic-signature"}}
+
+event: step.stop
+data: {"event_type":"step.stop","index":0}
+
+event: step.start
+data: {"event_type":"step.start","index":1,"step":{"type":"function_call","id":"gemini_call","name":"search_folder","arguments":{}}}
+
+event: step.delta
+data: {"event_type":"step.delta","index":1,"delta":{"type":"arguments_delta","arguments":"{\"query\":"}}
+
+event: step.delta
+data: {"event_type":"step.delta","index":1,"delta":{"type":"arguments_delta","arguments":"\"interview\"}"}}
+
+event: step.stop
+data: {"event_type":"step.stop","index":1}
+
+event: interaction.completed
+data: {"event_type":"interaction.completed","interaction":{"status":"requires_action"}}
+

@@ -1,0 +1,15 @@
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_demo","call_id":"call_response","name":"search_web","arguments":""}}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_demo","output_index":0,"delta":"{\"query\":\"public "}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_demo","output_index":0,"delta":"news\"}"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_demo","call_id":"call_response","name":"search_web","arguments":"{\"query\":\"public news\"}"}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"status":"completed"}}
+
