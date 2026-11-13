@@ -27,7 +27,7 @@ function ProviderDialog({ initialId, data, theme, onClose, refresh }: { initialI
   const configureModels = providerId !== 'chatgpt' || provider.configured;
   const [connection, setConnection] = useState<Connection>({ ...provider.connection });
   const [error, setError] = useState(''); const [notice, setNotice] = useState('');
-  const [busy, setBusy] = useState(false); const [pending, setPending] = useState(false);
+  const [busy, setBusy] = useState(false); const [pending, setPending] = useState(providerId === 'chatgpt' && provider.status === 'Sign-in pending');
   const catalog = useModelCatalog(provider);
   useEffect(() => { setConnection({ ...provider.connection }); setError(''); setNotice(''); }, [providerId]); // A route has its own endpoint, model and key.
   useEffect(() => {

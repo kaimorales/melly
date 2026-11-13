@@ -5,8 +5,11 @@ pub struct LoginState {
     active: Option<CancellationToken>,
 }
 impl LoginState {
+    pub fn is_pending(&self) -> bool {
+        self.active.as_ref().is_some_and(|c| !c.is_cancelled())
+    }
     pub fn begin(&mut self) -> Result<(u64, CancellationToken), String> {
-        if self.active.as_ref().is_some_and(|c| !c.is_cancelled()) {
+        if self.is_pending() {
             return Err("ChatGPT sign-in is already open in your browser".into());
         }
         self.generation += 1;
@@ -77,6 +80,19 @@ mod tests {
         let (new, _) = state.begin().unwrap();
         assert!(!state.is_current(old));
         assert!(state.is_current(new));
+    }
+    #[test]
+    fn pending_status_follows_listener_lifetime_including_completion() {
+        let mut state = LoginState::default();
+        assert!(!state.is_pending());
+        let (_, token) = state.begin().unwrap();
+        assert!(state.is_pending());
+        token.cancel(); // Native completion cancels the listener token.
+        assert!(!state.is_pending());
+        state.begin().unwrap();
+        assert!(state.is_pending());
+        state.cancel();
+        assert!(!state.is_pending());
     }
     #[test]
     fn failed_browser_handoff_cancels_listener_and_immediately_allows_retry() {

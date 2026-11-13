@@ -87,6 +87,29 @@ test('provider picker shows only connected providers and explicit Demo', async (
   await expect(page.getByRole('button', { name: 'Choose provider' })).toBeFocused();
 });
 
+test('reopening pending ChatGPT sign-in retains the cancel action', async ({ page }) => {
+  await page.evaluate(async () => {
+    const { mockBackend } = await import(performance.getEntriesByType('resource').find((entry) => /\/src\/mock-backend\.ts(?:\?|$)/.test(entry.name))!.name);
+    const original = mockBackend.invoke.bind(mockBackend);
+    let pending = false;
+    mockBackend.invoke = async (command, args) => {
+      if (command === 'connect_chatgpt') { pending = true; return; }
+      if (command === 'disconnect_chatgpt') { pending = false; return; }
+      const result = await original(command, args);
+      if (command === 'bootstrap') result.providers.find((provider) => provider.id === 'chatgpt').status = pending ? 'Sign-in pending' : 'Not connected';
+      return result;
+    };
+  });
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Configure ChatGPT' }).click();
+  await page.getByRole('button', { name: 'Continue with ChatGPT' }).click();
+  await expect(page.getByRole('button', { name: 'Cancel sign-in' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Close provider settings' }).click();
+  await page.getByRole('button', { name: 'Configure ChatGPT' }).click();
+  await page.getByRole('button', { name: 'Cancel sign-in' }).click();
+  await expect(page.getByRole('button', { name: 'Continue with ChatGPT' })).toBeEnabled();
+});
+
 test('keeps an explicit folder opt-out while editing the same message', async ({ page }) => {
   await page.getByRole('button', { name: 'Try an example' }).click();
   const composer = page.getByRole('textbox', { name: 'Message' });

@@ -3,6 +3,7 @@ mod login_state;
 mod secure_input;
 use melly_core::{
     auth,
+    auth_namespace::AuthNamespaces,
     credentials::{KeychainStore, SecretStore},
     engine::{Engine, SEARCH_KEY_ID},
     models::*,
@@ -15,8 +16,11 @@ use tokio_util::sync::CancellationToken;
 struct AppState {
     engine: Arc<Engine>,
     login: Mutex<login_state::LoginState>,
+    plan_namespaces: Mutex<AuthNamespaces>,
     started: std::time::Instant,
     startup_recorded: std::sync::atomic::AtomicBool,
+    shutdown_requested: std::sync::atomic::AtomicBool,
+    shutdown_complete: std::sync::atomic::AtomicBool,
 }
 type Reply<T> = Result<T, String>;
 #[tauri::command]
@@ -42,7 +46,21 @@ fn error(e: impl std::fmt::Display) -> String {
 }
 #[tauri::command]
 async fn bootstrap(s: State<'_, AppState>) -> Reply<Bootstrap> {
-    s.engine.bootstrap().map_err(error)
+    let mut bootstrap = s.engine.bootstrap().map_err(error)?;
+    let login = s.login.lock().unwrap();
+    if let Some(provider) = bootstrap
+        .providers
+        .iter_mut()
+        .find(|p| p.spec.id == "chatgpt")
+    {
+        if login.is_pending() {
+            provider.status = "Sign-in pending".into();
+        } else if let Some(reason) = s.plan_namespaces.lock().unwrap().startup_error() {
+            provider.configured = false;
+            provider.status = reason.into();
+        }
+    }
+    Ok(bootstrap)
 }
 #[tauri::command]
 async fn create_chat(s: State<'_, AppState>, folder_id: Option<String>) -> Reply<Chat> {
@@ -201,8 +219,23 @@ async fn remove_search_key(s: State<'_, AppState>) -> Reply<()> {
 }
 #[tauri::command]
 async fn connect_chatgpt(app: tauri::AppHandle, s: State<'_, AppState>) -> Reply<()> {
-    let (generation, cancel) = s.login.lock().unwrap().begin()?;
-    let vault = s.engine.vault.clone();
+    let (generation, cancel, attempt) = {
+        let mut login = s.login.lock().unwrap();
+        if s.shutdown_requested
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err("Melly is closing".into());
+        }
+        let (generation, cancel) = login.begin()?;
+        let attempt = match s.plan_namespaces.lock().unwrap().begin() {
+            Ok(attempt) => attempt,
+            Err(error) => {
+                cancel.cancel();
+                return Err(error.to_string());
+            }
+        };
+        (generation, cancel, attempt)
+    };
     let failure = Arc::new(Mutex::new(None::<String>));
     let callback_failure = failure.clone();
     let callback_cancel = cancel.clone();
@@ -222,20 +255,26 @@ async fn connect_chatgpt(app: tauri::AppHandle, s: State<'_, AppState>) -> Reply
         }) {
             return;
         }
-        let result = auth::sign_in(vault, on_url, cancel.clone()).await;
+        let result = attempt.sign_in(on_url, cancel.clone()).await;
         cancel.cancel();
         let result = if let Some(reason) = failure.lock().unwrap().take() {
             Err(anyhow::anyhow!(reason))
         } else {
             result
         };
-        let status = match result {
-            Ok(()) => {
-                serde_json::json!({"status":"connected","message":"ChatGPT plan authorized. Live chat can now be tested."})
-            }
-            Err(e) => serde_json::json!({"status":"error","message":e.to_string()}),
-        };
-        login_state::publish_if_current(&app.state::<AppState>().login, generation, || {
+        let state = app.state::<AppState>();
+        login_state::publish_if_current(&state.login, generation, || {
+            let result = result.and_then(|authorized| {
+                let vault = state.plan_namespaces.lock().unwrap().activate(authorized)?;
+                state.engine.select_plan_vault(vault);
+                Ok(())
+            });
+            let status = match result {
+                Ok(()) => {
+                    serde_json::json!({"status":"connected","message":"ChatGPT plan authorized. Live chat can now be tested."})
+                }
+                Err(error) => serde_json::json!({"status":"error","message":error.to_string()}),
+            };
             let _ = app.emit("connection-update", status);
         });
     });
@@ -243,8 +282,19 @@ async fn connect_chatgpt(app: tauri::AppHandle, s: State<'_, AppState>) -> Reply
 }
 #[tauri::command]
 async fn disconnect_chatgpt(s: State<'_, AppState>) -> Reply<()> {
-    s.login.lock().unwrap().cancel();
-    auth::disconnect(s.engine.vault.as_ref()).map_err(error)
+    let mut login = s.login.lock().unwrap();
+    if s.shutdown_requested
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        return Err("Melly is closing".into());
+    }
+    login.cancel();
+    let mut namespaces = s.plan_namespaces.lock().unwrap();
+    let result = namespaces.detach();
+    // Detach in this process even if public metadata could not be persisted.
+    // Old protected credentials are never opened or deleted by this command.
+    s.engine.select_plan_vault(namespaces.selected_vault());
+    result.map_err(error)
 }
 #[tauri::command]
 async fn models(s: State<'_, AppState>, provider_id: String) -> Reply<Vec<ModelInfo>> {
@@ -307,11 +357,17 @@ fn main() {
             }
             let store = Arc::new(Mutex::new(Store::open(&dir.join("melly.sqlite3"))?));
             let vault: Arc<dyn SecretStore> = Arc::new(KeychainStore::new());
+            let engine = Arc::new(Engine::new(store, vault.clone()));
+            let namespaces = AuthNamespaces::open(vault, dir.join("chatgpt-namespaces.json"))?;
+            engine.select_plan_vault(namespaces.selected_vault());
             app.manage(AppState {
-                engine: Arc::new(Engine::new(store, vault)),
+                engine,
                 login: Mutex::new(login_state::LoginState::default()),
+                plan_namespaces: Mutex::new(namespaces),
                 started,
                 startup_recorded: std::sync::atomic::AtomicBool::new(false),
+                shutdown_requested: std::sync::atomic::AtomicBool::new(false),
+                shutdown_complete: std::sync::atomic::AtomicBool::new(false),
             });
             Ok(())
         })
@@ -352,22 +408,41 @@ fn main() {
     app.run(|app, event| {
         if let tauri::RunEvent::ExitRequested { api, .. } = event {
             let state = app.state::<AppState>();
+            if state
+                .shutdown_complete
+                .load(std::sync::atomic::Ordering::Acquire)
+            {
+                return;
+            }
+            api.prevent_exit();
+            if state
+                .shutdown_requested
+                .swap(true, std::sync::atomic::Ordering::AcqRel)
+            {
+                return; // Repeated Quit must not bypass the current drain.
+            }
+            auth::begin_shutdown();
             state.login.lock().unwrap().cancel();
-            if state.engine.active_count() > 0 {
-                api.prevent_exit();
-                state.engine.stop_all();
-                let engine = state.engine.clone();
-                let app = app.clone();
-                tauri::async_runtime::spawn(async move {
+            state.engine.stop_all();
+            let engine = state.engine.clone();
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let persist_chat = async {
                     for _ in 0..100 {
                         if engine.active_count() == 0 {
                             break;
                         }
                         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                     }
-                    app.exit(0);
-                });
-            }
+                };
+                // Stop can remove the chat before a detached rotating renewal
+                // finishes. Its lifetime is tracked independently of the chat.
+                let _ = tokio::join!(persist_chat, auth::drain_pending(auth::EXIT_DRAIN_TIMEOUT));
+                app.state::<AppState>()
+                    .shutdown_complete
+                    .store(true, std::sync::atomic::Ordering::Release);
+                app.exit(0);
+            });
         }
     });
 }
