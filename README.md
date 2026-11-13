@@ -34,13 +34,13 @@ The first launch is empty and selects **Demo · Mock**. It makes no network requ
 
 Shortcuts: ⌘N new chat, ⌘K chat search, ⌘, settings. Shift-Enter inserts a newline. The sidebar collapses; long histories load in pages.
 
-See the [native screenshot walkthrough](docs/demo.md) and [verification record](docs/verification.md). The signed local release is 12.20 MiB; its measured process-to-render launch on this Mac took 569 ms. Warm-cache measurements exclude cloud latency and the OS launch request.
+See the [native screenshot walkthrough](docs/demo.md) and [verification record](docs/verification.md). The signed local release is 12.23 MiB; a measured process-to-render launch on this Mac took 569 ms. Warm-cache measurements exclude cloud latency and the OS launch request.
 
 ## Accounts and billing
 
-**Live provider inference is not yet verified.** The app ships with no credentials and never imports tokens or history from another application. A saved key is configuration, not proof of live access.
+**ChatGPT plan replies have been verified live; other provider routes remain fixture-tested.** The app ships with no credentials and never imports tokens or history from another application. A saved key is configuration, not proof of live access.
 
-- **ChatGPT:** Continue with ChatGPT opens official app-owned authorization and requests plan-use consent. Browser handoff to OpenAI's account chooser was verified without a Mac password prompt; user consent, eligible allowance, model discovery, real inference, and renewal still need your live account check. No API-key fallback exists on this route.
+- **ChatGPT:** Continue with ChatGPT opens official app-owned authorization and requests plan-use consent. Native verification passed for sign-in, account model discovery, multi-turn replies, Stop, folder-tool continuation and use after relaunch. Renewal, revocation, usage-limit failures and other account/model combinations remain pending. No API-key fallback exists on this route.
 - **Claude, Gemini, Grok, OpenRouter, DeepSeek, Kimi/Moonshot:** API-key routes. Kimi uses Moonshot's general API, not Kimi Code membership.
 - **QwenCloud:** Standard API and Token Plan are separate Singapore endpoints, separate credentials, and explicit billing routes. A plan error cannot switch to metered Standard API.
 - **Custom:** Public HTTPS OpenAI-compatible base URL, API key, and manual model ID. Text streaming only; unknown tool capabilities are disabled.

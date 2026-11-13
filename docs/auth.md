@@ -1,6 +1,6 @@
 # Credentials and ChatGPT sign-in
 
-Implemented against the official OpenAI documentation checked on 2026-11-13 using the OpenAI Docs skill. The local tests use synthetic values and signing keys generated only in memory. The rebuilt Mac app reached the official “Use ChatGPT to sign in to Melly” account chooser without a Mac password prompt. Account selection and consent were left to the user; no live token exchange or plan inference was completed.
+Implemented against the official OpenAI documentation checked on 2026-11-13 using the OpenAI Docs skill. The local tests use synthetic values and signing keys generated only in memory. Live native verification now includes official browser authorization, token exchange and identity verification, account model discovery, completed multi-turn plan replies, Stop, and same-folder tool continuation with a working source link. Synthetic conversations were used; no credentials were logged or imported from another application. See [verification](verification.md) for the remaining live checks.
 
 ## Credential boundary
 
@@ -58,4 +58,6 @@ Eleven `auth_namespace` tests cover namespace isolation, UUID-only private persi
 
 The opt-in `native_keychain_roundtrip_without_authentication_ui` test passed on the Mac: a UUID-named synthetic credential was created, read, updated and deleted without authentication UI. Normal tests use an in-memory vault. Native browser handoff, closing/reopening the pending sign-in panel, and cancellation were also verified; the app returned to Not connected and permitted another Continue action. The test-created browser tab was closed without selecting an account.
 
-Pending live checks: eligible user/workspace consent, actual OpenAI discovery/JWKS and token exchange, model discovery, completed Responses inference on the plan route, and renewal/revocation with the real service. No live-ready claim follows from the offline tests. The provider adapter owns model/inference checks and must never switch to API-key billing after a plan-route error.
+The live plan response exposed a transport mismatch: the official Responses endpoint returned HTTP 200 and valid SSE framing without a Content-Type header. The Rust adapter now accepts a missing header only for the fixed ChatGPT Responses route, validates a bounded SSE prefix across chunks, and still requires `response.completed`. Explicit incompatible media types, JSON/HTML bodies, broken streams and failed terminal events remain errors. No billing or endpoint fallback was introduced. Regression tests cover cancellation before the first event and during a fragmented prefix, partial-output retention, and redacted failures.
+
+Pending live checks: renewal after expiry, remote revocation, entitlement/usage-limit failures and native web search. The verified account/model does not establish eligibility for every user, workspace or model. The provider adapter must never switch to API-key billing after a plan-route error.

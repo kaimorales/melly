@@ -1,6 +1,6 @@
 # Cloud providers
 
-Checked against official documentation on 2026-11-13. These adapters are implemented and tested with synthetic fixtures and local HTTP servers. **No credentialed live inference, billing entitlement, or account-specific model availability has been verified.** Saving a key means configured, not live verified.
+Checked against official documentation on 2026-11-13. These adapters are implemented and tested with synthetic fixtures and local HTTP servers. **The ChatGPT plan route also passed native live authorization, account model discovery, multi-turn inference, Stop, folder-tool continuation and use after relaunch.** Other routes remain unverified with real credentials. Saving a key means configured, not live verified; one working account/model does not establish general entitlement.
 
 ## Explicit routes
 
@@ -53,6 +53,7 @@ For a human-operable native Stop demonstration, send **“Demonstrate streaming 
 - Cancellation interrupts connection setup, waiting for response headers, and blocked stream reads. The engine additionally protects the stop/write race. Dropping a request does not prove that the provider stopped billing work already accepted.
 - Errors include provider and HTTP status when available. Raw HTTP bodies, redirect locations, key values, and provider-supplied error messages are not exposed or logged.
 - SSE lines/events and complete streams are bounded at 1 MiB and 8 MiB. JSON responses and serialized requests are bounded at 2 MiB. Native step indices, tool counts, citations, query length and snippets are bounded. Truncated, invalid, incomplete, or explicitly failed streams never emit Done.
+- The live ChatGPT plan endpoint was observed returning valid SSE without Content-Type. Only this fixed Responses route accepts an absent header, after bounded framing validation. Explicit incompatible types and other providers retain the normal SSE media-type requirement; the same decoder, completion and cancellation checks apply.
 - Client tool calls are dispatched only after a successful protocol terminal event and validated argument JSON. IDs and fragments are preserved. Native continuation metadata exists only on ephemeral `ToolCall.provider_data`; the engine must not persist or expose it.
 
 ## Evidence and remaining live checks
@@ -71,4 +72,6 @@ Coverage includes byte-fragmented UTF-8 and multiline SSE; tool argument assembl
 
 Verified on 2026-11-13: **28 provider unit tests and 10 public integration tests passed**, including external search with the native-search flag off and cancellation during the explicit paced Mock demo. The full `melly-core` all-target Clippy check also passed with warnings denied.
 
-Still pending for **every live provider**: account authorization, the selected model, actual inference and tool follow-up, native search/citation shape, region/plan entitlement and billing confirmation, real-service cancellation, and error behavior with that account. Muse remains intentionally disabled. No fixture test changes this status.
+The subsequent live ChatGPT fix added seven transport regressions; the full suite now passes 109 Rust tests and 25 UI tests. ChatGPT was verified natively with `gpt-5.6-sol` and synthetic conversation content, including an actual folder-tool round trip and source navigation. See [verification](verification.md).
+
+Still pending for ChatGPT: renewal/revocation, native web search, usage-limit and entitlement failures, and other account/model combinations. Still pending for **other live providers**: account authorization, the selected model, actual inference and tool follow-up, native search/citation shape, region/plan entitlement and billing confirmation, real-service cancellation, and account-specific errors. Muse remains intentionally disabled.

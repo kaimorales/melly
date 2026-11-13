@@ -1,6 +1,6 @@
 # Native Mac walkthrough
 
-These are captures of the built Tauri app, running the Rust backend on macOS. Every conversation and web result shown is synthetic and the model selector says **Demo · Mock**. Browser preview tests are separate. The purple screen-control badge and highlighted pointer are macOS automation overlays, not Melly interface elements.
+These are captures of the built Tauri app, running the Rust backend on macOS. The initial walkthrough uses synthetic conversations and web results with **Demo · Mock**. The final ChatGPT section uses the real plan route with synthetic test content. Browser preview tests are separate. The purple screen-control badge and highlighted pointer are macOS automation overlays, not Melly interface elements.
 
 ## Folder context and exact sources
 
@@ -32,4 +32,12 @@ Provider rows show actual configured state and billing route, with official artw
 
 See [verification](verification.md) for commands, measurements, regression coverage and the live tests that still require an account or API key.
 
-The final native ChatGPT check opened OpenAI's account chooser for Melly without a Mac password prompt. Closing and reopening the provider panel preserved Cancel sign-in; cancelling returned the app to Not connected. No account selection, consent, token exchange or live model reply was completed.
+The initial ChatGPT browser-handoff check reached OpenAI's account chooser without a Mac password prompt, verified cancellation, and stopped before account authorization.
+
+## Live ChatGPT plan check
+
+After correcting a missing response-header incompatibility, the native app completed official authorization and model discovery, answered the original failed `hi`, preserved a synthetic test word across turns, streamed a long reply, and stopped while preserving partial output. A subsequent reply completed, and another completed after ordinary Quit and relaunch without another sign-in.
+
+A fresh chat explicitly requested the transit result from other chats in **Job search demo**. The real ChatGPT model called Melly's read-only folder tool, received three local snippets and cited the 18% result. The **My experience** citation opened the exact synthetic source message. The response below is live inference, not the mock adapter; all conversation content is synthetic.
+
+![Live ChatGPT plan reply with a folder citation](screenshots/native-chatgpt-live-folder.png)

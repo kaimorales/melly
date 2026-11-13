@@ -6,9 +6,9 @@ Local verification on 2026-11-13, Apple Silicon macOS. The desktop uses Rust and
 
 Run `npm run check`, `npm test`, and `npm run build`. `npm run check` checks TypeScript, Rust formatting and Clippy with warnings denied. `npm test` runs Rust plus Playwright browser UI tests. Browser tests use the labeled mock backend and do not prove native IPC or live provider access.
 
-Final automated run: **102 Rust tests passed** (96 core and 6 native login-state tests), **25 Playwright UI tests passed**, zero failures. One optional Keychain test is excluded from the default suite and is run separately below. TypeScript, formatting and Clippy passed. The UI suite includes reopening a pending browser sign-in and retaining its cancel action.
+Final automated run: **109 Rust tests passed** (103 core and 6 native login-state tests), **25 Playwright UI tests passed**, zero failures. One optional Keychain test is excluded from the default suite and was run separately below. TypeScript, formatting and Clippy passed. The UI suite includes reopening a pending browser sign-in and retaining its cancel action.
 
-The release build passed and produced `target/release/bundle/macos/Melly.app` (12.20 MiB); launch with `npm run launch`. This is a local ad-hoc signed build, not a notarized distribution. It requires no Rust, Node or development server at runtime.
+The release build passed and produced `target/release/bundle/macos/Melly.app` (12.23 MiB); launch with `npm run launch`. This is a local ad-hoc signed build, not a notarized distribution. It requires no Rust, Node or development server at runtime.
 
 The initial bundle had only a linker signature and failed strict resource-seal verification. The build now explicitly sets macOS `signingIdentity` to `-`, using [Tauri's documented local ad-hoc signing mode](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing). This signs the complete bundle without a signing certificate, Keychain password or Apple account; it does not claim notarization or permission to publish a release. Verify packaging with `codesign --verify --deep --strict target/release/bundle/macos/Melly.app`.
 
@@ -58,13 +58,30 @@ On the same date, replaced the static “consent required” billing text with �
 
 Reproduced the silver icon frame in Finder on macOS 26.6.2. A full-bleed graphite source removed it while preserving the approved conversation mark. The release build and strict bundle signature verification passed; the bundled ICNS is byte-identical to the checked-in asset. Relaunched Melly, confirmed history remained present, and inspected the updated ChatGPT panel and the final app's icon in Finder Quick Look. No password prompt or new authorization was involved. Native captures: [ChatGPT settings](screenshots/native-chatgpt-plan-light.png) and [packaged icon](screenshots/native-icon-borderless.png). Older macOS icon appearance remains unverified; see [icon packaging notes](design/app-icon.md).
 
+## Live ChatGPT stream correction
+
+Reproduced the user's failed `hi` reply in the native app: authorization had succeeded, but the adapter reported “chatgpt did not return an event stream.” Temporary content-free instrumentation identified HTTP 200, an absent Content-Type header, and SSE framing from the official plan Responses endpoint. No token, arbitrary header, account identity or response body was printed. The temporary diagnostic code was removed.
+
+Commit `4c543ab` accepts a missing header only on the fixed ChatGPT Responses route after bounded SSE-prefix validation. It does not accept an explicit JSON/HTML content type, use another endpoint or change billing. The existing decoder still requires the native completion event. The regression first failed against the original guard, then passed with the fix. Seven additional regressions cover the observed response, provider/protocol isolation, invalid media types and bodies, false completion, fragmented prefixes, broken connections and cancellation.
+
+The fixed release build and strict bundle-signature check passed. Native verification with the actual connected ChatGPT account and `gpt-5.6-sol` passed:
+
+- Official browser reconnect, verified token exchange and account-specific model discovery, without a Mac password prompt.
+- Retry of the original failed `hi`, returning a completed live reply.
+- A synthetic two-turn memory check: the follow-up correctly returned `marigold`.
+- A live long reply streamed incrementally, stopped with partial text retained, and accepted a subsequent completed reply.
+- A fresh chat in the synthetic Job search demo folder called the read-only folder tool, received three snippets, continued through a second provider request, and cited the 18% forecast result. Opening its citation navigated to the exact My experience message. [Native capture](screenshots/native-chatgpt-live-folder.png).
+- After ordinary Quit and relaunch of the same final build, history and the saved connection remained usable. A new live follow-up again returned `marigold`, without another sign-in. The app was left open on the synthetic ChatGPT connection check.
+
+Changing an ad-hoc-signed development binary can make its previous Keychain entries inaccessible. This was observed during the diagnostic rebuild and resolved through the existing official reconnect flow, without weakening item access rules. The final app's connection is separate from the discarded diagnostic build; protected old namespaces remain retained.
+
 ## Live checks still required
 
-ChatGPT currently shows **Not connected**. The following live checks remain pending; the wording change does not imply a completed connection.
+ChatGPT has now completed live plan replies and folder-tool continuation. The following checks remain pending; mock coverage does not substitute for them.
 
 | Connection | Remaining live verification |
 | --- | --- |
-| ChatGPT Plan | User/workspace consent, eligible allowance, discovery, actual Responses inference, tool continuation, Stop, token exchange/renewal and revocation. No ChatGPT history or memory is imported. |
+| ChatGPT Plan | Expiry/renewal, remote revocation, entitlement and usage-limit failure cases, other account/model combinations, and native web search. No ChatGPT history or memory is imported. |
 | Claude, Gemini, Grok, OpenRouter, DeepSeek, Moonshot, Custom | A key for the configured endpoint, live model/inference/tool behavior and account-specific billing/error/cancellation checks. Custom is text-only. |
 | QwenCloud | Independently verify Standard API and Token Plan credentials, Singapore region, entitlement and billing. No cross-route fallback exists. |
 | External web search | Tavily key and real results/error checks. Native provider search also needs live model/auth support verification. |
