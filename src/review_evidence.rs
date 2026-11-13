@@ -13,7 +13,7 @@ const OUTPUT_LIMIT: usize = 32 * 1024;
 const FILE_LIMIT: usize = 8 * 1024;
 const MAX_FILES: usize = 128;
 const CAPTURE_TIME: Duration = Duration::from_millis(1000);
-const SOURCE: &str = "Owned paths versus HEAD at completion; not attribution; may include preexisting edits. Staged and unstaged changes plus Git-visible untracked files; ignored contents are omitted. This non-atomic snapshot may be stale after capture. It is not an acceptance verdict or proof of checks. If evidence is absent, omitted, failed, or changed later, inspect directly.";
+const SOURCE: &str = "Owned paths at completion in two independent views: staged (HEAD to index) and unstaged (index to worktree); not attribution; may include preexisting edits. Git-visible untracked contents are separate; ignored contents are omitted. This non-atomic snapshot may be stale after capture. It is not an acceptance verdict or proof of checks. If evidence is absent, omitted, failed, or changed later, inspect directly.";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewEvidence {
@@ -236,14 +236,26 @@ fn capture_inner(
                 "--no-relative",
                 "--src-prefix=a/",
                 "--dst-prefix=b/",
-                "HEAD",
-                "--",
             ]
             .map(str::to_owned),
         );
-        let args: Vec<_> = args.iter().map(String::as_str).collect();
-        match git(&args, &safe_tracked) {
-            Ok(bytes) => match String::from_utf8(bytes) {
+        let common: Vec<_> = args.iter().map(String::as_str).collect();
+        let mut combined = String::new();
+        let mut captured_both = true;
+        for (label, suffix) in [
+            (
+                "Staged changes (HEAD -> index)",
+                &["--cached", "HEAD", "--"][..],
+            ),
+            ("Unstaged changes (index -> worktree)", &["--"][..]),
+        ] {
+            let mut args = common.clone();
+            args.extend_from_slice(suffix);
+            let result = git(&args, &safe_tracked).and_then(|bytes| {
+                String::from_utf8(bytes)
+                    .map_err(|_| "non-UTF-8 diff omitted; inspect directly".into())
+            });
+            match result {
                 Ok(diff) => {
                     if diff.contains("\nBinary files ") || diff.contains("\nGIT binary patch\n") {
                         packet.omit(
@@ -251,11 +263,25 @@ fn capture_inner(
                             "binary contents unavailable; inspect directly",
                         );
                     }
-                    packet.diff = Some(diff);
+                    combined.push_str(label);
+                    combined.push('\n');
+                    combined.push_str(if diff.is_empty() {
+                        "(no changes)\n"
+                    } else {
+                        &diff
+                    });
                 }
-                Err(_) => packet.omit("(tracked diff)", "non-UTF-8 diff omitted; inspect directly"),
-            },
-            Err(reason) => packet.omit("(tracked diff)", &reason),
+                Err(reason) => {
+                    packet.omit("(tracked diff)", &format!("{label}: {reason}"));
+                    captured_both = false;
+                    break;
+                }
+            }
+        }
+        if captured_both {
+            // Both views share the existing serialized packet budget; do not
+            // silently substitute the empty net HEAD diff for opposing edits.
+            packet.diff = Some(combined);
         }
     } else {
         packet.diff = Some(String::new());

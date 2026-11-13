@@ -2386,3 +2386,50 @@ fn completion_review_staged_deletion_keeps_the_untracked_worktree_copy() {
         json!([{"path":"src/tracked","content":"remaining untracked contents\n"}])
     );
 }
+
+#[test]
+fn completion_review_preserves_opposing_staged_and_unstaged_changes_with_one_budget() {
+    for lines in [1, 7000] {
+        let workspace = OwnershipWorkspace::new();
+        let project = review_repository(&workspace);
+        let mut h = workspace.harness();
+        start_lead(&mut h);
+        let start = spawn_with_sources(&mut h, "assign", json!(["src/tracked"]), json!([]));
+        connect_worker(&mut h, &start, "worker");
+        std::fs::write(project.join("src/tracked"), "A\n".repeat(lines)).unwrap();
+        review_git(&project, &["add", "--", "src/tracked"]);
+        std::fs::write(project.join("src/tracked"), "before\n").unwrap();
+        finish(&mut h, "worker", "completed");
+        let packet = review_packet(&mut h, "report");
+        assert!(serde_json::to_vec(&packet).unwrap().len() <= 32 * 1024);
+        if lines == 1 {
+            assert_eq!(packet["complete"], true, "{packet}");
+            let diff = packet["diff"].as_str().unwrap();
+            let (staged, unstaged) = diff
+                .split_once("Unstaged changes (index -> worktree)")
+                .expect("both independent views");
+            assert!(staged.contains("Staged changes (HEAD -> index)"));
+            assert!(
+                staged.contains("-before") && staged.contains("+A"),
+                "{diff}"
+            );
+            assert!(
+                unstaged.contains("-A") && unstaged.contains("+before"),
+                "{diff}"
+            );
+        } else {
+            assert_eq!(
+                packet["complete"], false,
+                "combined views must share the packet budget"
+            );
+            assert!(packet["diff"].is_null());
+            assert!(
+                packet["omissions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|entry| entry["path"] == "(tracked diff)")
+            );
+        }
+    }
+}
