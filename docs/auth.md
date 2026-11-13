@@ -20,6 +20,8 @@ The native browser handoff validates the exact official authorization origin/pat
 
 The requested scopes are `openid profile email offline_access resource.invoke chatgpt.tokens.use.direct`, with resource `https://api.openai.com/v1`. Identity and inference permission remain separate. Identity-only completion is retained, produces a visible plan-permission error, and cannot supply an inference token. An explicit retry after identity-only consent requests `prompt=consent`; ordinary reauthorization does not force consent. [Consent recovery](https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery)
 
+Settings labels the billing route **ChatGPT plan** separately from connection state. It never presents a permanent “consent required” label. The normal action is **Continue with ChatGPT**; pending and connected copy follow the actual state. OpenAI owns the browser authorization step, and removing the misleading label does not bypass the plan-permission check.
+
 Tokens are exchanged only at `https://auth.openai.com/api/accounts/oauth/token`. OpenID discovery and JWKS URLs are pinned to the documented OpenAI values. The JWT verifier checks an allowed asymmetric signature and key usage, issuer, client audience, expiration, issued-at, nonce, and returning subject. Unsupported metadata, HTTP redirects, oversized responses, and invalid identities fail closed. Network/error messages retain safe status/code/request-ID details and omit request and response bodies. [Identity verification and discovery](https://developers.openai.com/siwc/website)
 
 ## Credential namespaces and development rebuilds

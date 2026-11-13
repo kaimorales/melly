@@ -19,7 +19,7 @@ pub fn catalog() -> Vec<ProviderSpec> {
         (
             "chatgpt",
             "ChatGPT",
-            "Plan · ChatGPT consent required",
+            "ChatGPT plan",
             "https://api.openai.com/v1",
             "gpt-6.1-sol",
             "responses",

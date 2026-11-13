@@ -67,7 +67,7 @@ function ProviderDialog({ initialId, data, theme, onClose, refresh }: { initialI
     </div>}
     <div className="connection-status"><strong>{providerId === 'qwen-token-plan' ? 'Token Plan subscription' : providerId === 'qwen-standard' ? 'Standard API · metered billing' : provider.billingRoute}</strong><span>{pending ? 'Sign-in pending' : provider.status}</span></div>
     {provider.disabledReason ? <p style={{ marginTop: 18 }}>{provider.disabledReason} No connection is available.</p> : providerId === 'mock' ? <p style={{ marginTop: 18 }}>A synthetic conversation for trying Melly. No provider is contacted and no account is needed.</p> : <>
-      {providerId === 'chatgpt' && <p style={{ marginTop: 18 }}>Use your eligible ChatGPT plan allowance. Continue in your browser to authorize Melly. Your ChatGPT history and memory are not imported.</p>}
+      {providerId === 'chatgpt' && <p style={{ marginTop: 18 }}>{provider.configured ? 'Eligible replies use your ChatGPT plan.' : pending ? 'Finish signing in with ChatGPT in your browser to connect your plan.' : 'Sign in with ChatGPT in your browser to use your eligible plan in Melly.'} Your ChatGPT history and memory are not imported.</p>}
       {qwen && <p style={{ marginTop: 18 }}>{providerId === 'qwen-token-plan' ? 'Use a Token Plan key for the Singapore Token Plan endpoint.' : 'Use a Standard API key for the Singapore metered endpoint.'} Each route has its own key. Errors keep the selected route.</p>}
       {providerId === 'moonshot' && <p style={{ marginTop: 18 }}>Uses the general Moonshot API. A Kimi coding subscription is not used here.</p>}
       {configureModels && <>

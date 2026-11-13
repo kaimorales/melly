@@ -14,7 +14,7 @@ try {
 
 const rows: Array<[string, string, string, string, string, string, boolean, boolean, string | null]> = [
   ['mock', 'Mock', 'Mock · no billing', 'mock://local', 'melly-demo', 'mock', false, true, null],
-  ['chatgpt', 'ChatGPT', 'ChatGPT plan · consent required', 'https://api.openai.com/v1', 'gpt-6.1-sol', 'responses', true, true, null],
+  ['chatgpt', 'ChatGPT', 'ChatGPT plan', 'https://api.openai.com/v1', 'gpt-6.1-sol', 'responses', true, true, null],
   ['muse', 'Muse', 'Unavailable', '', '', 'disabled', false, false, 'The official Muse host is not verified for chat-only use.'],
   ['claude', 'Claude', 'Anthropic API', 'https://api.anthropic.com/v1', 'claude-sonnet-5-5', 'messages', true, true, null],
   ['gemini', 'Gemini', 'Google Gemini API', 'https://generativelanguage.googleapis.com/v1beta', 'gemini-4-hydrogen', 'interactions', true, true, null],
