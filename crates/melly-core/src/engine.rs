@@ -141,23 +141,23 @@ impl Engine {
         for mut spec in providers::catalog() {
             let connection = self.connection(&spec.id)?;
             spec.native_search = providers::supports_native_search(&connection);
-            let configured = match spec.id.as_str() {
-                "mock" => true,
-                "muse" => false,
-                "chatgpt" => auth::is_connected(self.vault.as_ref()),
-                _ => self
-                    .vault
-                    .get(&providers::credential_id(&connection))?
-                    .is_some(),
+            let presence = match spec.id.as_str() {
+                "mock" => Ok(true),
+                "muse" => Ok(false),
+                "chatgpt" => Ok(auth::has_saved_plan(self.vault.as_ref())),
+                _ => self.vault.contains(&providers::credential_id(&connection)),
             };
+            let configured = *presence.as_ref().unwrap_or(&false);
             let status = if spec.disabled_reason.is_some() {
                 "Unavailable · chat-only limits unverified"
             } else if spec.id == "mock" {
                 "Demo · no network"
+            } else if presence.is_err() {
+                "Secure storage unavailable"
             } else if !configured {
                 "Not connected"
             } else if spec.id == "chatgpt" {
-                "Plan authorized · live check pending"
+                "Plan saved · checked when used"
             } else {
                 "Key saved · live check pending"
             };
@@ -173,7 +173,7 @@ impl Engine {
             chats,
             settings,
             providers: views,
-            search_configured: self.vault.get(SEARCH_KEY_ID)?.is_some(),
+            search_configured: self.vault.contains(SEARCH_KEY_ID).unwrap_or(false),
         })
     }
     pub async fn credential(&self, connection: &Connection) -> Result<Option<String>> {

@@ -36,6 +36,28 @@ fn empty_or_malformed_session_is_not_connected() {
     assert!(!auth::is_connected(&vault));
 }
 
+#[test]
+fn saved_plan_status_reads_metadata_only_and_never_decrypts_credentials() {
+    struct MetadataOnly;
+    impl SecretStore for MetadataOnly {
+        fn contains(&self, id: &str) -> anyhow::Result<bool> {
+            assert_eq!(id, "chatgpt.saved-plan.v1");
+            Ok(true)
+        }
+        fn get(&self, _: &str) -> anyhow::Result<Option<String>> {
+            panic!("startup must not read secret bytes")
+        }
+        fn set(&self, _: &str, _: &str) -> anyhow::Result<()> {
+            panic!("startup must not change credentials")
+        }
+        fn delete(&self, _: &str) -> anyhow::Result<()> {
+            panic!("startup must not change credentials")
+        }
+    }
+    assert!(auth::has_saved_plan(&MetadataOnly));
+    assert!(!auth::has_saved_plan(&MemorySecrets::default()));
+}
+
 #[tokio::test]
 async fn cancellation_never_opens_the_browser_or_connects() {
     let vault = Arc::new(MemorySecrets::default());
@@ -70,6 +92,7 @@ fn disconnect_removes_tokens_and_retains_registration_and_provider_keys() {
     vault
         .set("chatgpt.session.v1", "synthetic-session")
         .unwrap();
+    vault.set("chatgpt.saved-plan.v1", "saved").unwrap();
     vault
         .set("chatgpt.registration.v1", "synthetic-registration")
         .unwrap();
@@ -82,4 +105,5 @@ fn disconnect_removes_tokens_and_retains_registration_and_provider_keys() {
     );
     assert!(vault.get("provider-key").unwrap().is_some());
     assert!(!auth::is_connected(&vault));
+    assert!(!auth::has_saved_plan(&vault));
 }

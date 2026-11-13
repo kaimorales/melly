@@ -2218,6 +2218,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
+ "core-foundation",
  "futures-util",
  "jsonwebtoken",
  "rand 0.8.8",

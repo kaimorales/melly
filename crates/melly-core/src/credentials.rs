@@ -6,6 +6,10 @@ const SERVICE: &str = "app.melly.desktop.credentials";
 
 pub trait SecretStore: Send + Sync {
     fn get(&self, id: &str) -> Result<Option<String>>;
+    /// Presence only. Production must not decrypt secrets or show auth UI here.
+    fn contains(&self, id: &str) -> Result<bool> {
+        Ok(self.get(id)?.is_some())
+    }
     fn set(&self, id: &str, value: &str) -> Result<()>;
     fn delete(&self, id: &str) -> Result<()>;
 }
@@ -63,17 +67,70 @@ fn validate_id(id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Also covers the legacy login Keychain used by local, ad-hoc-signed builds.
+/// Never allow Security.framework to ask for the user's Mac password. A denied
+/// operation stays denied; there is no interactive retry or plaintext fallback.
+#[cfg(target_os = "macos")]
+fn noninteractive_options(id: &str) -> security_framework::passwords::PasswordOptions {
+    use core_foundation::{
+        base::TCFType,
+        string::{CFString, CFStringRef},
+    };
+    #[link(name = "Security", kind = "framework")]
+    unsafe extern "C" {
+        static kSecUseAuthenticationUI: CFStringRef;
+        static kSecUseAuthenticationUIFail: CFStringRef;
+    }
+    let mut options =
+        security_framework::passwords::PasswordOptions::new_generic_password(SERVICE, id);
+    // The wrapper has no authentication-UI setter. These documented framework
+    // constants are process-lifetime CFStrings; wrap_under_get_rule retains them.
+    #[allow(deprecated)]
+    unsafe {
+        options.query.push((
+            CFString::wrap_under_get_rule(kSecUseAuthenticationUI),
+            CFString::wrap_under_get_rule(kSecUseAuthenticationUIFail).into_CFType(),
+        ));
+    }
+    options
+}
+
 impl SecretStore for KeychainStore {
+    fn contains(&self, id: &str) -> Result<bool> {
+        validate_id(id)?;
+        #[cfg(target_os = "macos")]
+        {
+            use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
+            let result = ItemSearchOptions::new()
+                .class(ItemClass::generic_password())
+                .service(SERVICE)
+                .account(id)
+                .load_attributes(true)
+                .load_data(false)
+                .limit(Limit::Max(1))
+                .skip_authenticated_items(true)
+                .search();
+            match result {
+                Ok(items) => Ok(!items.is_empty()),
+                Err(e) if e.code() == -25300 || e.code() == -25308 => Ok(false),
+                Err(_) => bail!("macOS Keychain status is unavailable"),
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        bail!("Melly credentials require macOS Keychain")
+    }
     fn get(&self, id: &str) -> Result<Option<String>> {
         validate_id(id)?;
         #[cfg(target_os = "macos")]
         {
-            match security_framework::passwords::get_generic_password(SERVICE, id) {
+            match security_framework::passwords::generic_password(noninteractive_options(id)) {
                 Ok(value) => String::from_utf8(value)
                     .map(Some)
                     .map_err(|_| anyhow!("Stored credential is invalid")),
                 Err(error) if error.code() == -25300 => Ok(None),
-                Err(_) => bail!("macOS Keychain could not read the credential"),
+                Err(_) => bail!(
+                    "This saved connection is unavailable. Reconnect the provider in Settings."
+                ),
             }
         }
         #[cfg(not(target_os = "macos"))]
@@ -87,8 +144,15 @@ impl SecretStore for KeychainStore {
         }
         #[cfg(target_os = "macos")]
         {
-            security_framework::passwords::set_generic_password(SERVICE, id, value.as_bytes())
-                .map_err(|_| anyhow!("macOS Keychain could not save the credential"))
+            security_framework::passwords::set_generic_password_options(
+                value.as_bytes(),
+                noninteractive_options(id),
+            )
+            .map_err(|_| {
+                anyhow!(
+                    "Secure storage is unavailable. Nothing was saved; you can keep using Demo."
+                )
+            })
         }
         #[cfg(not(target_os = "macos"))]
         bail!("Melly credentials require macOS Keychain")
@@ -98,7 +162,9 @@ impl SecretStore for KeychainStore {
         validate_id(id)?;
         #[cfg(target_os = "macos")]
         {
-            match security_framework::passwords::delete_generic_password(SERVICE, id) {
+            match security_framework::passwords::delete_generic_password_options(
+                noninteractive_options(id),
+            ) {
                 Ok(()) => Ok(()),
                 Err(error) if error.code() == -25300 => Ok(()),
                 Err(_) => bail!("macOS Keychain could not remove the credential"),
@@ -106,5 +172,34 @@ impl SecretStore for KeychainStore {
         }
         #[cfg(not(target_os = "macos"))]
         bail!("Melly credentials require macOS Keychain")
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+
+    // Opt in only: touches one UUID-named synthetic credential, never real keys.
+    // The same no-UI policy is used by every operation, including the update path.
+    #[test]
+    #[ignore = "native Keychain smoke check; run explicitly on a Mac"]
+    fn native_keychain_roundtrip_without_authentication_ui() {
+        let vault = KeychainStore::new();
+        let id = format!("synthetic-check-{}", uuid::Uuid::new_v4());
+        assert!(!vault.contains(&id).unwrap());
+        assert!(vault.get(&id).unwrap().is_none());
+        vault.set(&id, "synthetic-not-a-provider-key").unwrap();
+        assert!(vault.contains(&id).unwrap());
+        assert_eq!(
+            vault.get(&id).unwrap().as_deref(),
+            Some("synthetic-not-a-provider-key")
+        );
+        vault.set(&id, "synthetic-replacement").unwrap();
+        assert_eq!(
+            vault.get(&id).unwrap().as_deref(),
+            Some("synthetic-replacement")
+        );
+        vault.delete(&id).unwrap();
+        assert!(!vault.contains(&id).unwrap());
     }
 }

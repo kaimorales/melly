@@ -9,6 +9,86 @@ use serde_json::json;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
+#[test]
+fn bootstrap_never_decrypts_credentials_or_requests_keychain_authorization() {
+    struct MetadataOnly;
+    impl melly_core::credentials::SecretStore for MetadataOnly {
+        fn get(&self, _: &str) -> anyhow::Result<Option<String>> {
+            panic!("Startup must not read secret bytes")
+        }
+        fn contains(&self, _: &str) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+        fn set(&self, _: &str, _: &str) -> anyhow::Result<()> {
+            panic!("No startup writes")
+        }
+        fn delete(&self, _: &str) -> anyhow::Result<()> {
+            panic!("No startup writes")
+        }
+    }
+    let e = Engine::new(
+        Arc::new(Mutex::new(Store::memory().unwrap())),
+        Arc::new(MetadataOnly),
+    );
+    let state = e.bootstrap().unwrap();
+    assert!(
+        state
+            .providers
+            .iter()
+            .find(|p| p.spec.id == "mock")
+            .unwrap()
+            .configured
+    );
+    assert!(
+        state
+            .providers
+            .iter()
+            .filter(|p| p.spec.id != "mock")
+            .all(|p| !p.configured)
+    );
+}
+
+#[test]
+fn unavailable_vault_does_not_block_history_or_demo() {
+    struct Unavailable;
+    impl melly_core::credentials::SecretStore for Unavailable {
+        fn get(&self, _: &str) -> anyhow::Result<Option<String>> {
+            panic!("No secret reads")
+        }
+        fn contains(&self, _: &str) -> anyhow::Result<bool> {
+            anyhow::bail!("Unavailable")
+        }
+        fn set(&self, _: &str, _: &str) -> anyhow::Result<()> {
+            panic!("No writes")
+        }
+        fn delete(&self, _: &str) -> anyhow::Result<()> {
+            panic!("No deletes")
+        }
+    }
+    let store = Store::memory().unwrap();
+    let chat = store.create_chat(None).unwrap();
+    let engine = Engine::new(Arc::new(Mutex::new(store)), Arc::new(Unavailable));
+    let state = engine.bootstrap().unwrap();
+    assert!(state.chats.iter().any(|item| item.id == chat.id));
+    assert!(
+        state
+            .providers
+            .iter()
+            .find(|item| item.spec.id == "mock")
+            .unwrap()
+            .configured
+    );
+    assert!(
+        !state
+            .providers
+            .iter()
+            .find(|item| item.spec.id == "claude")
+            .unwrap()
+            .configured
+    );
+    assert!(!state.search_configured);
+}
+
 struct Fake {
     mode: &'static str,
     calls: Mutex<Vec<ProviderRequest>>,

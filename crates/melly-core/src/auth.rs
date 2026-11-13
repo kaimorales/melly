@@ -23,6 +23,7 @@ const SCOPES: &str =
     "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
 const RESOURCE: &str = "https://api.openai.com/v1";
 const SESSION_KEY: &str = "chatgpt.session.v1";
+const SAVED_PLAN_KEY: &str = "chatgpt.saved-plan.v1";
 const REGISTRATION_KEY: &str = "chatgpt.registration.v1";
 const HOST_KEY: &str = "chatgpt.host.v1";
 const GENERATION_KEY: &str = "chatgpt.generation.v1";
@@ -804,6 +805,7 @@ mod tests {
             session_from_response(response(Some(SCOPES)), identity(), None, now()).unwrap();
         session.expires_at = now() - 1;
         put(vault.as_ref(), SESSION_KEY, &encode(&session).unwrap()).unwrap();
+        put(vault.as_ref(), "chatgpt.saved-plan.v1", "saved").unwrap();
         put(
             vault.as_ref(),
             REGISTRATION_KEY,
@@ -821,6 +823,7 @@ mod tests {
     fn expired_access_remains_configured_while_its_verified_grant_can_renew() {
         let vault = saved_expired();
         assert!(is_connected(vault.as_ref()));
+        assert!(has_saved_plan(vault.as_ref()));
         let raw = get(vault.as_ref(), SESSION_KEY).unwrap().unwrap();
         let mut expired: Value = serde_json::from_str(&raw).unwrap();
         expired["refresh_expires_at"] = json!(now() - 1);
@@ -878,6 +881,7 @@ mod tests {
             );
             assert!(access_token_with(vault.clone(), &service).await.is_err());
             assert_eq!(get(vault.as_ref(), SESSION_KEY).unwrap().is_none(), clear);
+            assert_eq!(has_saved_plan(vault.as_ref()), !clear);
             assert!(get(vault.as_ref(), REGISTRATION_KEY).unwrap().is_some());
         }
     }
@@ -890,6 +894,7 @@ mod tests {
         assert!(access_token_with(vault.clone(), &service).await.is_err());
         assert!(get(vault.as_ref(), SESSION_KEY).unwrap().is_none());
         assert!(!is_connected(vault.as_ref()));
+        assert!(!has_saved_plan(vault.as_ref()));
     }
 
     struct PausedRefresh {
@@ -958,6 +963,7 @@ mod tests {
         let service = fake(vault.clone(), Ok(response));
         assert!(access_token_with(vault.clone(), &service).await.is_err());
         assert!(!is_connected(vault.as_ref()));
+        assert!(!has_saved_plan(vault.as_ref()));
         assert!(get(vault.as_ref(), SESSION_KEY).unwrap().is_some());
         assert!(access_token_with(vault.clone(), &service).await.is_err());
         assert_eq!(service.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -965,45 +971,50 @@ mod tests {
 
     #[tokio::test]
     async fn sign_in_runs_loopback_and_saves_only_verified_plan_grant() {
-        let vault = Arc::new(crate::credentials::MemorySecrets::default());
-        let service = Arc::new(fake(vault.clone(), Ok(response(Some(SCOPES)))));
-        let callback_service = service.clone();
-        let on_url = Arc::new(move |authorization: String| {
-            let authorization = Url::parse(&authorization).unwrap();
-            let values: HashMap<_, _> = authorization.query_pairs().into_owned().collect();
-            let mut payload = claims();
-            payload["nonce"] = json!(values["nonce"]);
-            let (token, keys) = signed(&payload);
-            let mut response = response(Some(SCOPES));
-            response.id_token = Some(token);
-            *callback_service.reply.lock().unwrap() = Some(Ok(response));
-            *callback_service.keys.lock().unwrap() = Some(keys);
-            let mut callback = Url::parse(&values["redirect_uri"]).unwrap();
-            callback
-                .query_pairs_mut()
-                .append_pair("code", "synthetic-code")
-                .append_pair("state", &values["state"])
-                .append_pair("client_id", "oaiapp_test");
-            tokio::spawn(async move {
-                reqwest::get(callback).await.unwrap();
+        for scopes in [SCOPES, "openid profile email"] {
+            let vault = Arc::new(crate::credentials::MemorySecrets::default());
+            // An identity-only reauthorization must remove even an older marker.
+            put(vault.as_ref(), "chatgpt.saved-plan.v1", "saved").unwrap();
+            let service = Arc::new(fake(vault.clone(), Ok(response(Some(SCOPES)))));
+            let callback_service = service.clone();
+            let on_url = Arc::new(move |authorization: String| {
+                let authorization = Url::parse(&authorization).unwrap();
+                let values: HashMap<_, _> = authorization.query_pairs().into_owned().collect();
+                let mut payload = claims();
+                payload["nonce"] = json!(values["nonce"]);
+                let (token, keys) = signed(&payload);
+                let mut response = response(Some(scopes));
+                response.id_token = Some(token);
+                *callback_service.reply.lock().unwrap() = Some(Ok(response));
+                *callback_service.keys.lock().unwrap() = Some(keys);
+                let mut callback = Url::parse(&values["redirect_uri"]).unwrap();
+                callback
+                    .query_pairs_mut()
+                    .append_pair("code", "synthetic-code")
+                    .append_pair("state", &values["state"])
+                    .append_pair("client_id", "oaiapp_test");
+                tokio::spawn(async move {
+                    reqwest::get(callback).await.unwrap();
+                });
             });
-        });
-        sign_in_with(
-            vault.clone(),
-            on_url,
-            CancellationToken::new(),
-            service.as_ref(),
-        )
-        .await
-        .unwrap();
-        assert!(is_connected(vault.as_ref()));
-        assert_eq!(service.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert!(
-            get(vault.as_ref(), HOST_KEY)
-                .unwrap()
-                .unwrap()
-                .starts_with("urn:uuid:")
-        );
+            let result = sign_in_with(
+                vault.clone(),
+                on_url,
+                CancellationToken::new(),
+                service.as_ref(),
+            )
+            .await;
+            assert_eq!(result.is_ok(), scopes == SCOPES);
+            assert_eq!(is_connected(vault.as_ref()), scopes == SCOPES);
+            assert_eq!(has_saved_plan(vault.as_ref()), scopes == SCOPES);
+            assert_eq!(service.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert!(
+                get(vault.as_ref(), HOST_KEY)
+                    .unwrap()
+                    .unwrap()
+                    .starts_with("urn:uuid:")
+            );
+        }
     }
 
     #[tokio::test]
@@ -1423,7 +1434,7 @@ async fn sign_in_with(
                 identity: Some(identity),
             })?,
         )?;
-        put(vault.as_ref(), SESSION_KEY, &encode(&session)?)?;
+        save_session(vault.as_ref(), &session)?;
     }
     ensure!(
         session.can_infer(now()),
@@ -1520,6 +1531,7 @@ async fn access_token_with(
                     .lock()
                     .map_err(|_| anyhow!("ChatGPT connection is busy"))?;
                 if get(vault.as_ref(), SESSION_KEY)?.as_deref() == Some(raw.as_str()) {
+                    remove(vault.as_ref(), SAVED_PLAN_KEY)?;
                     remove(vault.as_ref(), SESSION_KEY)?;
                 }
             }
@@ -1548,7 +1560,7 @@ async fn access_token_with(
                 && get(vault.as_ref(), SESSION_KEY)?.as_deref() == Some(raw.as_str()),
             "ChatGPT connection changed while renewing"
         );
-        put(vault.as_ref(), SESSION_KEY, &encode(&updated)?)?;
+        save_session(vault.as_ref(), &updated)?;
     }
     ensure!(
         updated.can_infer(now()),
@@ -1576,6 +1588,24 @@ fn validate_registration(vault: &dyn SecretStore, session: &Session) -> Result<(
     Ok(())
 }
 
+// Called only after identity verification and the generation check, with COMMIT
+// held. Clear first so a failed replacement cannot leave an obsolete plan marker.
+fn save_session(vault: &dyn SecretStore, session: &Session) -> Result<()> {
+    remove(vault, SAVED_PLAN_KEY)?;
+    put(vault, SESSION_KEY, &encode(session)?)?;
+    if session.has_permission() {
+        put(vault, SAVED_PLAN_KEY, "saved")?;
+    }
+    Ok(())
+}
+
+/// Startup-safe metadata only: a plan connection was saved after verification.
+/// This does not decrypt tokens, check expiry, or assert a current live grant.
+/// `access_token` performs the complete validation when the user uses the route.
+pub fn has_saved_plan(vault: &dyn SecretStore) -> bool {
+    vault.contains(SAVED_PLAN_KEY).unwrap_or(false)
+}
+
 /// Local verified grant status, including renewable sessions whose access token
 /// has expired. This does not claim live model/API verification.
 pub fn is_connected(vault: &dyn SecretStore) -> bool {
@@ -1596,5 +1626,6 @@ pub fn disconnect(vault: &dyn SecretStore) -> Result<()> {
         .lock()
         .map_err(|_| anyhow!("ChatGPT connection is busy"))?;
     put(vault, GENERATION_KEY, &random())?;
+    remove(vault, SAVED_PLAN_KEY)?;
     remove(vault, SESSION_KEY)
 }
