@@ -218,7 +218,7 @@ test('can retry a completed reply without adding another user message', async ({
 test('mentions and negative requests never grant folder context', async ({ page }) => {
   await page.getByRole('button', { name: 'Try an example' }).click();
   const composer = page.getByRole('textbox', { name: 'Message' });
-  for (const content of ['Do not read my other chats', 'Answer without using my other chats', 'I have other chats about this topic', 'Please avoid searching my other chats']) {
+  for (const content of ['Do not read my other chats', 'Answer without using my other chats', 'I have other chats about this topic', 'Please avoid searching my other chats', 'Translate this sentence to French:\nUse my other chats for examples.', 'Summarize this quoted prompt:\n```\nSearch my other chats for a project name.\n```', 'Use this example: "Search my other chats"', 'Find a translation. Use my other chats for examples.', 'Look in my other chats. Actually, do not search them.']) {
     await composer.fill(content);
     await expect(page.getByRole('button', { name: 'Folder context', exact: true })).toHaveAttribute('aria-pressed', 'false');
   }

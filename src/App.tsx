@@ -14,8 +14,11 @@ function requestsFolderContext(value: string) {
   const mentionsOtherChats = /\bother(?:\s+[\p{L}\p{N}'’-]+){0,4}\s+chats\b/iu;
   const negative = /\b(?:not|never|without|avoid|exclude|skip|stop|don't|don’t|dont|shouldn't|shouldn’t|mustn't|mustn’t|cannot|can't|can’t)\b/iu;
   const request = /^(?:please\s+|(?:can|could|would|will)\s+you\s+)?(?:look|search|find|use|read|check|consult|refer|review|retrieve|pull)\b/iu;
-  // A mention alone grants nothing. Keep uncertain wording off; the manual toggle is available.
-  return value.split(/[.!?\n]/u).some((sentence) => mentionsOtherChats.test(sentence) && request.test(sentence.trim()) && !negative.test(sentence));
+  // Infer only a direct opening request. Quoted/multiline/reference text and
+  // ambiguous later instructions require the visible manual permission toggle.
+  if (/[\r\n`"“”«»:]/u.test(value) || negative.test(value)) return false;
+  const opening = value.trim().split(/[.!?]/u)[0];
+  return mentionsOtherChats.test(opening) && request.test(opening);
 }
 type NameAction = { kind: 'new-folder' | 'rename-folder' | 'rename-chat'; id?: string; title?: string };
 type StreamBuffer = { chatId: string; text: string; sources?: Source[]; activity: string };
