@@ -8,7 +8,7 @@ Run `npm run check`, `npm test`, and `npm run build`. `npm run check` checks Typ
 
 Final automated run: **109 Rust tests passed** (103 core and 6 native login-state tests), **25 Playwright UI tests passed**, zero failures. One optional Keychain test is excluded from the default suite and was run separately below. TypeScript, formatting and Clippy passed. The UI suite includes reopening a pending browser sign-in and retaining its cancel action.
 
-The release build passed and produced `target/release/bundle/macos/Melly.app` (12.23 MiB); launch with `npm run launch`. This is a local ad-hoc signed build, not a notarized distribution. It requires no Rust, Node or development server at runtime.
+The release build passed and produced `target/release/bundle/macos/Melly.app` (11.82 MiB); launch with `npm run launch`. This is a local ad-hoc signed build, not a notarized distribution. It requires no Rust, Node or development server at runtime.
 
 The initial bundle had only a linker signature and failed strict resource-seal verification. The build now explicitly sets macOS `signingIdentity` to `-`, using [Tauri's documented local ad-hoc signing mode](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing). This signs the complete bundle without a signing certificate, Keychain password or Apple account; it does not claim notarization or permission to publish a release. Verify packaging with `codesign --verify --deep --strict target/release/bundle/macos/Melly.app`.
 
@@ -75,16 +75,26 @@ The fixed release build and strict bundle-signature check passed. Native verific
 
 Changing an ad-hoc-signed development binary can make its previous Keychain entries inaccessible. This was observed during the diagnostic rebuild and resolved through the existing official reconnect flow, without weakening item access rules. The final app's connection is separate from the discarded diagnostic build; protected old namespaces remain retained.
 
+## White default icon and live web search
+
+The user-selected black-on-white logo is now the packaged default. The complete check, test and release-build commands passed again: 109 Rust tests, 25 UI tests, TypeScript, formatting and Clippy. Strict bundle signature verification passed and the bundled ICNS matched the checked-in asset. Finder Quick Look displayed the white rounded icon without an inset silver frame.
+
+Selected the account-discovered `gpt-6.1-sol`, enabled Search the web and requested the official Rust homepage. The actual ChatGPT plan response completed with one web source, Rust Programming Language, and its public link. No external search key was configured. [Native capture](screenshots/native-chatgpt-web-search.png). The previous model's disabled control reflected Melly's conservative native-search allowlist; it did not establish that every other model lacks search.
+
+The icon rebuild changed the ad-hoc binary and its prior Keychain item was inaccessible. The official reconnect flow restored the same account and plan permissions without a Mac password prompt or access-rule changes. Retry then completed another live web-search reply on the final build. Melly was left open on that conversation with `gpt-6.1-sol` selected. A stable distribution signing identity remains needed to address development-build credential continuity.
+
+Provider-independent search without user-supplied keys remains a proposed Melly-owned gateway, not a deployed feature. See [research, architecture and costs](research/search-service.md).
+
 ## Live checks still required
 
-ChatGPT has now completed live plan replies and folder-tool continuation. The following checks remain pending; mock coverage does not substitute for them.
+ChatGPT has now completed live plan replies, folder-tool continuation and native web search on the tested account/model. The following checks remain pending; mock coverage does not substitute for them.
 
 | Connection | Remaining live verification |
 | --- | --- |
-| ChatGPT Plan | Expiry/renewal, remote revocation, entitlement and usage-limit failure cases, other account/model combinations, and native web search. No ChatGPT history or memory is imported. |
+| ChatGPT Plan | Expiry/renewal, remote revocation, entitlement and usage-limit failure cases, and other account/model combinations. Native search was verified only on the tested account with `gpt-6.1-sol`. No ChatGPT history or memory is imported. |
 | Claude, Gemini, Grok, OpenRouter, DeepSeek, Moonshot, Custom | A key for the configured endpoint, live model/inference/tool behavior and account-specific billing/error/cancellation checks. Custom is text-only. |
 | QwenCloud | Independently verify Standard API and Token Plan credentials, Singapore region, entitlement and billing. No cross-route fallback exists. |
-| External web search | Tavily key and real results/error checks. Native provider search also needs live model/auth support verification. |
+| External web search | Tavily key and real results/error checks. Other provider-native search routes still need live model/auth verification. A shared Melly search service is proposed only. |
 | Meta Muse Code | Disabled. The actual official host was inspected, but safe chat-only constraints and a compatible SDK/host pairing are unverified. See [precise evidence and blockers](muse.md). This requires a supported integration contract, not a Mac password. |
 
 Saved credentials mean configuration, not live verification. No API key or token from another application was imported. Provider artwork identifies integrations, not endorsements; [asset terms](research/provider-artwork.md) record remaining distribution permissions. The local build is not a claim of permission to publish a branded product release.

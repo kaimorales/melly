@@ -41,3 +41,11 @@ After correcting a missing response-header incompatibility, the native app compl
 A fresh chat explicitly requested the transit result from other chats in **Job search demo**. The real ChatGPT model called Melly's read-only folder tool, received three local snippets and cited the 18% result. The **My experience** citation opened the exact synthetic source message. The response below is live inference, not the mock adapter; all conversation content is synthetic.
 
 ![Live ChatGPT plan reply with a folder citation](screenshots/native-chatgpt-live-folder.png)
+
+## Live ChatGPT web search
+
+Selected `gpt-6.1-sol` from the connected account's models, enabled Search the web and asked for the official Rust homepage. The plan route completed with one real web source and a clickable citation, without configuring an external search key. This verifies that account/model combination; the earlier synthetic web demo remains separately labeled above.
+
+![Live ChatGPT plan web-search reply](screenshots/native-chatgpt-web-search.png)
+
+After the white-icon rebuild, the existing development credential required the official reconnect flow. Retry completed a second live search reply on the final app, without a Mac password prompt.
