@@ -24,6 +24,7 @@ function ProviderDialog({ initialId, data, theme, onClose, refresh }: { initialI
   const [providerId, setProviderId] = useState(initialId);
   const provider = data.providers.find((entry) => entry.id === providerId)!;
   const qwen = providerId.startsWith('qwen');
+  const configureModels = providerId !== 'chatgpt' || provider.configured;
   const [connection, setConnection] = useState<Connection>({ ...provider.connection });
   const [error, setError] = useState(''); const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false); const [pending, setPending] = useState(false);
@@ -66,10 +67,11 @@ function ProviderDialog({ initialId, data, theme, onClose, refresh }: { initialI
     </div>}
     <div className="connection-status"><strong>{providerId === 'qwen-token-plan' ? 'Token Plan subscription' : providerId === 'qwen-standard' ? 'Standard API · metered billing' : provider.billingRoute}</strong><span>{pending ? 'Sign-in pending' : provider.status}</span></div>
     {provider.disabledReason ? <p style={{ marginTop: 18 }}>{provider.disabledReason} No connection is available.</p> : providerId === 'mock' ? <p style={{ marginTop: 18 }}>A synthetic conversation for trying Melly. No provider is contacted and no account is needed.</p> : <>
-      {providerId === 'chatgpt' && <p style={{ marginTop: 18 }}>Connect your ChatGPT plan in your browser. This connection stays on the plan route.</p>}
+      {providerId === 'chatgpt' && <p style={{ marginTop: 18 }}>Use your eligible ChatGPT plan allowance. Continue in your browser to authorize Melly. Your ChatGPT history and memory are not imported.</p>}
       {qwen && <p style={{ marginTop: 18 }}>{providerId === 'qwen-token-plan' ? 'Use a Token Plan key for the Singapore Token Plan endpoint.' : 'Use a Standard API key for the Singapore metered endpoint.'} Each route has its own key. Errors keep the selected route.</p>}
       {providerId === 'moonshot' && <p style={{ marginTop: 18 }}>Uses the general Moonshot API. A Kimi coding subscription is not used here.</p>}
-      <label className="field">Base URL<input aria-label="Base URL" value={connection.baseUrl} readOnly={providerId !== 'custom'} placeholder="https://api.example.com/v1" spellCheck={false} onChange={(event) => setConnection({ ...connection, baseUrl: event.target.value })} />{providerId === 'custom' && <small>Public HTTPS only. Changing the endpoint requires a separate key.</small>}</label>
+      {configureModels && <>
+      {providerId !== 'chatgpt' && <label className="field">Base URL<input aria-label="Base URL" value={connection.baseUrl} readOnly={providerId !== 'custom'} placeholder="https://api.example.com/v1" spellCheck={false} onChange={(event) => setConnection({ ...connection, baseUrl: event.target.value })} />{providerId === 'custom' && <small>Public HTTPS only. Changing the endpoint requires a separate key.</small>}</label>}
       <label className="field">Model ID<input value={connection.modelId} spellCheck={false} placeholder="Enter a model ID" onChange={(event) => setConnection({ ...connection, modelId: event.target.value })} /></label>
       <button className="text-action" disabled={busy} onClick={() => run(async () => {
         if (connection.modelId !== provider.connection.modelId || connection.baseUrl !== provider.connection.baseUrl) await persistConnection();
@@ -79,14 +81,15 @@ function ProviderDialog({ initialId, data, theme, onClose, refresh }: { initialI
       {catalog.status === 'loading' && <p role="status" className="model-discovery-status">Loading models…</p>}
       {catalog.status === 'error' && !error && <div className="dialog-error" role="alert">{catalog.error}</div>}
       {catalog.models.length > 0 && <div className="models-discovered" aria-label="Discovered models">{catalog.models.map((model) => <button key={model.id} onClick={() => setConnection({ ...connection, modelId: model.id })}>{model.name || model.id}</button>)}</div>}
+      </>}
       {error && <div className="dialog-error" role="alert">{error}</div>}
       {notice && <p role="status" style={{ marginTop: 14 }}>{notice}</p>}
       <div className="dialog-actions spread">
         {providerId === 'chatgpt' ? (provider.configured || pending ? <button className="button quiet" disabled={busy} onClick={() => run(async () => { await backend.invoke('disconnect_chatgpt'); invalidateModelCatalog(providerId); setPending(false); await refresh(); setNotice(pending ? 'Sign-in cancelled.' : 'Disconnected.'); })}>{pending ? 'Cancel sign-in' : 'Disconnect'}</button> : <button className="button" disabled={busy} onClick={connect}>Continue with ChatGPT</button>) : <button className="button" disabled={busy} onClick={addKey}>{provider.configured ? 'Replace key securely' : 'Add key securely'}</button>}
-        <button className="button primary" disabled={busy || !connection.modelId.trim() || !connection.baseUrl.trim()} onClick={() => run(save)}>Save connection</button>
+        {configureModels && <button className="button primary" disabled={busy || !connection.modelId.trim() || !connection.baseUrl.trim()} onClick={() => run(save)}>Save connection</button>}
       </div>
       {provider.configured && providerId !== 'chatgpt' && <button className="text-action" style={{ marginTop: 14 }} disabled={busy} onClick={() => run(async () => { await backend.invoke('remove_provider_key', { providerId }); invalidateModelCatalog(providerId); await refresh(); setNotice('Key removed.'); })}>Remove saved key</button>}
-      <p className="settings-note"><Icon name="lock" />{nativeApp ? 'Keys are entered in a native secure dialog and stored in Keychain.' : 'Browser preview never accepts keys. Use the native desktop app to connect.'}</p>
+      <p className="settings-note"><Icon name="lock" />{providerId === 'chatgpt' ? 'Plan billing only. Melly never switches this connection to a paid API key.' : nativeApp ? 'Keys are entered in a native secure dialog and stored in Keychain.' : 'Browser preview never accepts keys. Use the native desktop app to connect.'}</p>
     </>}
   </Dialog>;
 }
