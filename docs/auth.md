@@ -1,6 +1,6 @@
 # Credentials and ChatGPT sign-in
 
-Implemented against the official OpenAI documentation checked on 2026-11-13 using the OpenAI Docs skill. The local tests use synthetic values and signing keys generated only in memory. No live account authorization or plan inference has been attempted.
+Implemented against the official OpenAI documentation checked on 2026-11-13 using the OpenAI Docs skill. The local tests use synthetic values and signing keys generated only in memory. The rebuilt Mac app reached the official “Use ChatGPT to sign in to Melly” account chooser without a Mac password prompt. Account selection and consent were left to the user; no live token exchange or plan inference was completed.
 
 ## Credential boundary
 
@@ -54,6 +54,6 @@ The desktop supports one selected ChatGPT connection. Disconnect cancels pending
 
 Eleven `auth_namespace` tests cover namespace isolation, UUID-only private persistence, process-only pending reuse, failure/cancellation preserving active selection, stale activation rejection, captured refresh isolation, persistence failure, unchanged API-key routing, browser handoff when old active/legacy records deny access, and safe recovery from malformed/unreadable metadata without losing healthy history. Auth shutdown regressions verify draining a rotated response after Stop, rejecting queued/new exchanges, bounded waiting, idle completion and cancelled sign-in tracking. The six native LoginState tests cover generation-guarded publication, pending status and browser handoff failure. These are synthetic tests; they do not authorize a real account.
 
-The opt-in `native_keychain_roundtrip_without_authentication_ui` test passed on the Mac: a UUID-named synthetic credential was created, read, updated and deleted without authentication UI. Normal tests use an in-memory vault.
+The opt-in `native_keychain_roundtrip_without_authentication_ui` test passed on the Mac: a UUID-named synthetic credential was created, read, updated and deleted without authentication UI. Normal tests use an in-memory vault. Native browser handoff, closing/reopening the pending sign-in panel, and cancellation were also verified; the app returned to Not connected and permitted another Continue action. The test-created browser tab was closed without selecting an account.
 
 Pending live checks: eligible user/workspace consent, actual OpenAI discovery/JWKS and token exchange, model discovery, completed Responses inference on the plan route, and renewal/revocation with the real service. No live-ready claim follows from the offline tests. The provider adapter owns model/inference checks and must never switch to API-key billing after a plan-route error.
