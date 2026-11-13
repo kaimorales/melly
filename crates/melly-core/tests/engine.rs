@@ -131,7 +131,7 @@ impl Transport for Fake {
                 arguments: json!({"query":"forecast"}),
                 provider_data: None,
             })),
-            "web" if !second => sink(ProviderEvent::ToolCall(ToolCall {
+            "web" | "web-failure" if !second => sink(ProviderEvent::ToolCall(ToolCall {
                 id: "call1".into(),
                 name: "search_web".into(),
                 arguments: json!({"query":"transit"}),
@@ -148,6 +148,9 @@ impl Transport for Fake {
         _: &str,
         _: CancellationToken,
     ) -> anyhow::Result<Vec<Source>> {
+        if self.mode == "web-failure" {
+            anyhow::bail!("Search request limit reached (HTTP 429)");
+        }
         panic!("Mock must not make live web requests")
     }
 }
@@ -191,6 +194,57 @@ async fn finish(e: &Engine, chat: &str) {
     })
     .await
     .unwrap()
+}
+
+#[tokio::test]
+async fn failed_external_search_is_visible_and_cannot_finish_as_a_successful_reply() {
+    let (engine, transport, chat) = fixture("web-failure");
+    let connection = engine.connection("deepseek").unwrap();
+    engine
+        .vault
+        .set(
+            &melly_core::providers::credential_id(&connection),
+            "synthetic-provider-key",
+        )
+        .unwrap();
+    engine
+        .vault
+        .set(melly_core::engine::SEARCH_KEY_ID, "synthetic-search-key")
+        .unwrap();
+    let mut request = input(&chat);
+    request.provider_id = connection.provider_id;
+    request.model_id = connection.model_id;
+    request.folder_context = false;
+    request.web_search = true;
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let observed = events.clone();
+    let reply = engine
+        .start(
+            request,
+            Arc::new(move |event| observed.lock().unwrap().push(event)),
+        )
+        .unwrap();
+    finish(&engine, &chat).await;
+    assert_eq!(
+        engine
+            .store
+            .lock()
+            .unwrap()
+            .message(&reply.id)
+            .unwrap()
+            .status,
+        "error"
+    );
+    assert_eq!(
+        transport.calls.lock().unwrap().len(),
+        1,
+        "A failed search must not continue as though reference material was retrieved"
+    );
+    let events = events.lock().unwrap();
+    let failure = events.iter().find(|event| event.kind == "error").unwrap();
+    assert!(failure.text.contains("HTTP 429"));
+    assert!(!failure.text.contains("synthetic-"));
+    assert!(!events.iter().any(|event| event.kind == "done"));
 }
 #[tokio::test]
 async fn oversized_reply_cancels_transport_promptly_as_error() {
