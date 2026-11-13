@@ -1,0 +1,11 @@
+# Source and artwork notices
+
+Melly's application source was written for this project. Ollama's Go/React desktop UI was studied at commit `5632619189ab493c70bd3f9435214b8788cc1c80`; no Ollama application code, branding, mascot, or backend was copied. The approved visual study uses its restraint as an interaction reference, with Melly's own identity and cloud-only scope.
+
+UI line paths in `src/icons.tsx` include Heroicons, copyright Tailwind Labs, Inc., MIT. The required notice is preserved in [licenses/heroicons.txt](licenses/heroicons.txt). Additional simple line shapes were drawn for this app. The new conversation app icon was generated for Melly with OpenAI image generation; its design direction is recorded in [design/app-icon.md](design/app-icon.md). Runtime dependency notices/licenses remain in the locked package distributions and Cargo crates.
+
+Official provider artwork identifies provider choices, not endorsement. [The artwork record](research/provider-artwork.md) contains exact official asset URLs, archive members, usage terms, and file checksums. ChatGPT uses its SIWC artwork; Claude its supplied spark; Meta its official standalone symbol; Gemini and Qwen their official application icons; Grok and Kimi their supplied light/dark logomarks; OpenRouter its small glyphs; and DeepSeek its official blue icon. Both QwenCloud billing routes share Qwen's mark. The Meta image does not imply that the unavailable Muse connection works. Mock and Custom use Melly's own identifiers.
+
+The user requested these unchanged official marks for the local desktop app. The marks remain their owners' property; no blanket trademark license, provider approval, or partnership is claimed. Applicable integration-logo permission remains unresolved for Claude, Meta, Gemini, Qwen, and Kimi. Kimi's brand kit specifies editorial/media/noncommercial-promotion use; the other recorded restrictions remain in the artwork record. Including the files does not establish general redistribution clearance or authorize a public product release.
+
+The documentation links current official provider resources; they are not a guarantee of account eligibility or live-tested integration. No secrets or real chats are bundled.
