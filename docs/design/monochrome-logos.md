@@ -1,6 +1,6 @@
 # Melly monochrome logo variants
 
-Created on 2026-11-13 with the built-in OpenAI image-generation tool, editing the approved conversation mark. These are separate opaque logo assets; they do not add a theme-dependent Dock icon or change the installed application bundle.
+Created on 2026-11-13 with the built-in OpenAI image-generation tool, editing the approved conversation mark. The user subsequently selected black on white as the default: it is copied to `public/melly-icon.png` and packaged into the Mac app. Both separate opaque logo assets remain available. There is no automatic theme-dependent Dock icon switching.
 
 - White on black: `public/branding/melly-white-on-black.png`
 - Black on white: `public/branding/melly-black-on-white.png`
