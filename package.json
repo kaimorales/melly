@@ -1,0 +1,35 @@
+{
+  "name": "melly-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/tauri.mjs dev",
+    "web": "vite --host 127.0.0.1 --port 1420 --strictPort",
+    "build:web": "tsc --noEmit && vite build",
+    "build": "node scripts/tauri.mjs build --bundles app",
+    "check": "tsc --noEmit && node scripts/rust.mjs fmt --all -- --check && node scripts/rust.mjs clippy --workspace --all-targets -- -D warnings",
+    "test": "npm run test:rust && npm run test:ui",
+    "test:rust": "node scripts/rust.mjs test --workspace",
+    "test:ui": "playwright test --config tests/ui/playwright.config.ts",
+    "test:core": "node scripts/rust.mjs test -p melly-core",
+    "launch": "open target/release/bundle/macos/Melly.app",
+    "perf": "node scripts/rust.mjs run --release -p melly-core --example performance"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.10.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@tauri-apps/cli": "^2.10.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.1"
+  }
+}
