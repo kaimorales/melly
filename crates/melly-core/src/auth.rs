@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -35,6 +35,66 @@ const SIGN_IN_SECONDS: u64 = 300;
 const MAX_RESPONSE: usize = 256 * 1024;
 static COMMIT: Mutex<()> = Mutex::new(());
 static REFRESH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static AUTH_WORK: LazyLock<Arc<AuthWork>> = LazyLock::new(|| Arc::new(AuthWork::default()));
+
+// A renewal can make three sequential requests (token, discovery, JWKS), each
+// with the 20-second client deadline. Queued renewals are cancelled on shutdown.
+pub const EXIT_DRAIN_TIMEOUT: Duration = Duration::from_secs(65);
+
+#[derive(Default)]
+struct AuthWork {
+    active: Mutex<usize>,
+    closed: CancellationToken,
+    changed: tokio::sync::Notify,
+}
+struct AuthWorkGuard(Arc<AuthWork>);
+impl AuthWork {
+    fn start(self: &Arc<Self>) -> Result<AuthWorkGuard> {
+        let mut active = self.active.lock().unwrap();
+        ensure!(!self.closed.is_cancelled(), "Melly is closing");
+        *active = active
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("ChatGPT connection is busy"))?;
+        Ok(AuthWorkGuard(self.clone()))
+    }
+    fn close(&self) {
+        let _active = self.active.lock().unwrap();
+        self.closed.cancel();
+    }
+    async fn drain(&self, timeout: Duration) -> bool {
+        tokio::time::timeout(timeout, async {
+            loop {
+                let changed = self.changed.notified();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
+                if *self.active.lock().unwrap() == 0 {
+                    return;
+                }
+                changed.await;
+            }
+        })
+        .await
+        .is_ok()
+    }
+}
+impl Drop for AuthWorkGuard {
+    fn drop(&mut self) {
+        *self.0.active.lock().unwrap() -= 1;
+        self.0.changed.notify_waiters();
+    }
+}
+
+/// Close admission synchronously before cancelling chats/login on orderly exit.
+/// Renewals already exchanging a rotating token retain their tracked lifetime.
+pub fn begin_shutdown() {
+    AUTH_WORK.close();
+}
+
+/// Wait for accepted credential work, including detached renewals and sign-in
+/// writes. False means the deadline expired; force termination cannot be saved.
+pub async fn drain_pending(timeout: Duration) -> bool {
+    AUTH_WORK.drain(timeout).await
+}
 
 #[derive(Serialize, Deserialize)]
 struct Registration {
@@ -956,6 +1016,115 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn orderly_shutdown_drains_rotation_after_its_chat_has_stopped() {
+        let vault = saved_expired();
+        let service = Arc::new(PausedRefresh {
+            inner: fake(vault.clone(), Ok(refresh_response())),
+            rotated: tokio::sync::Notify::new(),
+            deliver: tokio::sync::Notify::new(),
+        });
+        let work = Arc::new(AuthWork::default());
+        let caller = tokio::spawn(access_token_tracked(
+            vault.clone(),
+            service.clone(),
+            work.clone(),
+        ));
+        service.rotated.notified().await;
+        caller.abort();
+        assert!(caller.await.is_err());
+        let queued_vault = saved_expired();
+        let queued_service = Arc::new(fake(queued_vault.clone(), Ok(refresh_response())));
+        let queued = access_token_tracked(queued_vault, queued_service.clone(), work.clone());
+        tokio::pin!(queued);
+        assert!(matches!(
+            futures_util::poll!(queued.as_mut()),
+            std::task::Poll::Pending
+        ));
+        work.close();
+        assert!(
+            work.start().is_err(),
+            "exit must reject new credential work"
+        );
+        let drain = work.drain(Duration::from_secs(1));
+        tokio::pin!(drain);
+        assert!(matches!(
+            futures_util::poll!(drain.as_mut()),
+            std::task::Poll::Pending
+        ));
+        service.deliver.notify_one();
+        assert!(
+            drain.await,
+            "exit must observe the credential commit, not only the stopped chat"
+        );
+        assert!(queued.await.is_err());
+        assert_eq!(
+            queued_service
+                .calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "shutdown must not begin another queued token exchange"
+        );
+        let session: Session =
+            decode_saved(&get(vault.as_ref(), SESSION_KEY).unwrap().unwrap()).unwrap();
+        assert_eq!(
+            session.refresh_token.as_deref(),
+            Some("synthetic-new-refresh")
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_drain_is_bounded_and_cancelling_sign_in_releases_its_work() {
+        let vault = Arc::new(crate::credentials::MemorySecrets::default());
+        let service = Arc::new(fake(vault.clone(), Ok(response(Some(SCOPES)))));
+        let work = Arc::new(AuthWork::default());
+        let opened = Arc::new(tokio::sync::Notify::new());
+        let observed = opened.clone();
+        let cancel = CancellationToken::new();
+        let flow_cancel = cancel.clone();
+        let flow_work = work.clone();
+        let flow_service = service.clone();
+        let flow = tokio::spawn(async move {
+            sign_in_tracked(
+                vault,
+                Arc::new(move |_| observed.notify_one()),
+                flow_cancel,
+                flow_service.as_ref(),
+                flow_work,
+            )
+            .await
+        });
+        opened.notified().await;
+        work.close();
+        assert!(
+            !work.drain(Duration::from_millis(1)).await,
+            "pending sign-in must be counted"
+        );
+        cancel.cancel();
+        assert!(work.drain(Duration::from_secs(1)).await);
+        assert!(flow.await.unwrap().is_err());
+        assert_eq!(service.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(
+            work.drain(Duration::ZERO).await,
+            "normal quit has no polling delay"
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_rejects_new_renewal_before_spawning_or_touching_credentials() {
+        let vault = saved_expired();
+        let service = Arc::new(fake(vault.clone(), Ok(refresh_response())));
+        let work = Arc::new(AuthWork::default());
+        work.close();
+        assert!(
+            access_token_tracked(vault, service.clone(), work.clone())
+                .await
+                .is_err()
+        );
+        assert_eq!(service.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(work.drain(Duration::ZERO).await);
+    }
+
+    #[tokio::test]
     async fn scope_removed_on_refresh_is_saved_but_cannot_be_used() {
         let vault = saved_expired();
         let mut response = refresh_response();
@@ -1323,15 +1492,27 @@ pub async fn sign_in(
     cancel: CancellationToken,
 ) -> Result<()> {
     check_cancel(&cancel)?;
-    sign_in_with(
+    sign_in_tracked(
         vault,
         on_url,
         cancel,
         &OpenAiAuth {
             client: http_client()?,
         },
+        AUTH_WORK.clone(),
     )
     .await
+}
+
+async fn sign_in_tracked(
+    vault: Arc<dyn SecretStore>,
+    on_url: Arc<dyn Fn(String) + Send + Sync>,
+    cancel: CancellationToken,
+    service: &dyn AuthService,
+    work: Arc<AuthWork>,
+) -> Result<()> {
+    let _operation = work.start()?;
+    sign_in_with(vault, on_url, cancel, service).await
 }
 
 async fn sign_in_with(
@@ -1459,20 +1640,45 @@ async fn access_token_owned(
     vault: Arc<dyn SecretStore>,
     service: Arc<dyn AuthService>,
 ) -> Result<String> {
-    // A caller may stop a chat while the authorization server is rotating the
-    // refresh token. Detaching this bounded operation lets its replacement be
-    // saved even when that caller drops the returned future. Disconnect still
-    // invalidates the generation and prevents the task from restoring a session.
-    tokio::spawn(async move { access_token_with(vault, service.as_ref()).await })
-        .await
-        .map_err(|_| anyhow!("ChatGPT credential renewal was interrupted; please sign in again"))?
+    access_token_tracked(vault, service, AUTH_WORK.clone()).await
 }
 
+async fn access_token_tracked(
+    vault: Arc<dyn SecretStore>,
+    service: Arc<dyn AuthService>,
+    work: Arc<AuthWork>,
+) -> Result<String> {
+    // A caller may stop a chat while the authorization server is rotating the
+    // refresh token. Detaching this bounded operation lets its replacement be
+    // saved even when that caller drops the returned future. Register before
+    // spawning so an immediate orderly exit cannot miss an unscheduled task.
+    let operation = work.start()?;
+    tokio::spawn(async move {
+        let _operation = operation;
+        let _refresh = tokio::select! {
+            biased;
+            _ = work.closed.cancelled() => bail!("Melly is closing"),
+            refresh = REFRESH.lock() => refresh,
+        };
+        access_token_locked(vault, service.as_ref()).await
+    })
+    .await
+    .map_err(|_| anyhow!("ChatGPT credential renewal was interrupted; please sign in again"))?
+}
+
+#[cfg(test)]
 async fn access_token_with(
     vault: Arc<dyn SecretStore>,
     service: &dyn AuthService,
 ) -> Result<String> {
     let _refresh = REFRESH.lock().await;
+    access_token_locked(vault, service).await
+}
+
+async fn access_token_locked(
+    vault: Arc<dyn SecretStore>,
+    service: &dyn AuthService,
+) -> Result<String> {
     let (raw, session, generation) = {
         let _commit = COMMIT
             .lock()
