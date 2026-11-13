@@ -355,15 +355,13 @@ impl Store {
         ensure!(q.chars().count() <= 500, "Search is too long");
         let literal = format!(
             "%{}%",
-            q.replace('\\', "\\\\")
-                .replace('%', "\\%")
-                .replace('_', "\\_")
+            q.replace('!', "!!").replace('%', "!%").replace('_', "!_")
         );
         let fts = fts_query(q);
         let sql = if fts.is_empty() {
-            "SELECT id,title,folder_id,updated_at FROM chats WHERE title LIKE ?1 ESCAPE '\' ORDER BY updated_at DESC LIMIT 100"
+            "SELECT id,title,folder_id,updated_at FROM chats WHERE title LIKE ?1 ESCAPE '!' ORDER BY updated_at DESC LIMIT 100"
         } else {
-            "SELECT id,title,folder_id,updated_at FROM chats WHERE title LIKE ?1 ESCAPE '\' OR id IN (SELECT m.chat_id FROM messages_fts JOIN messages m ON m.rowid=messages_fts.rowid WHERE messages_fts MATCH ?2) ORDER BY updated_at DESC LIMIT 100"
+            "SELECT id,title,folder_id,updated_at FROM chats WHERE title LIKE ?1 ESCAPE '!' OR id IN (SELECT m.chat_id FROM messages_fts JOIN messages m ON m.rowid=messages_fts.rowid WHERE messages_fts MATCH ?2) ORDER BY updated_at DESC LIMIT 100"
         };
         let mut s = self.conn.prepare(sql)?;
         let result = if fts.is_empty() {

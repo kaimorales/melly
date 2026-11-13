@@ -85,6 +85,33 @@ fn search_is_literal_bounded_and_sources_open_exact_messages() {
     assert!(db.search_folder(&active.id, "\" OR * --", 5).is_ok());
 }
 #[test]
+fn global_chat_search_matches_titles_and_messages_and_escapes_wildcards() {
+    let db = Store::memory().unwrap();
+    let titled = db.create_chat(None).unwrap();
+    db.rename_chat(&titled.id, "Interview prep_100%!").unwrap();
+    let other = db.create_chat(None).unwrap();
+    db.rename_chat(&other.id, "Unrelated").unwrap();
+    db.insert_message(
+        &other.id,
+        "user",
+        "Synthetic forecast result",
+        "complete",
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    for query in ["Interview prep", "_", "%", "!"] {
+        let results = db.search_chats(query).unwrap();
+        assert_eq!(results.len(), 1, "literal query {query}");
+        assert_eq!(results[0].id, titled.id);
+    }
+    assert_eq!(db.search_chats("forecast").unwrap()[0].id, other.id);
+    assert!(db.search_chats("' OR 1=1 --").unwrap().is_empty());
+    assert!(db.search_chats(&"a".repeat(501)).is_err());
+}
+
+#[test]
 fn history_persists_and_pages_without_duplicates() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("chat.db");
