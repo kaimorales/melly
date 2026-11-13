@@ -44,7 +44,7 @@ fn ready(quota: Option<u64>, resume: bool) -> Harness {
     assert_eq!(open["params"]["approvalPolicy"], "never");
     let role = open["params"]["developerInstructions"].as_str().unwrap();
     assert!(role.contains("Melly's conductor"));
-    assert!(role.contains("acceptance checks"));
+    assert!(role.contains("acceptance commands"));
     assert_eq!(
         open["params"]["config"]["skills"]["max_context_tokens"],
         3000
@@ -858,13 +858,15 @@ fn usage_and_skill_refreshes_from_a_worker_update_shared_account_state() {
 struct OwnershipWorkspace(std::path::PathBuf);
 impl OwnershipWorkspace {
     fn new() -> Self {
+        static NEXT_WORKSPACE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
-            "melly-ownership-{}-{}",
+            "melly-ownership-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT_WORKSPACE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         std::fs::create_dir_all(path.join("project/src")).unwrap();
         std::fs::create_dir_all(path.join("outside")).unwrap();
@@ -1603,7 +1605,7 @@ fn observed_command_output_is_bounded_persisted_and_optional() {
     start_lead(&mut h);
     let worker = start_manual(&mut h, "worker");
     observed_command(&mut h, "worker", "worker-turn", "check without output", 0);
-    let output = "λ".repeat(4500);
+    let output = format!("BEGIN OUTPUT\n{}\nTEST SUMMARY AT END", "λ".repeat(4500));
     h.receive(json!({"method":"item/completed","params":{
         "threadId":"worker","turnId":"worker-turn",
         "item":{"type":"commandExecution","id":"long-check","command":"check with output","exitCode":1,"aggregatedOutput":output}
@@ -1615,12 +1617,39 @@ fn observed_command_output_is_bounded_persisted_and_optional() {
         .unwrap();
     let clipped = commands[0]["output"].as_str().expect("recorded output");
     assert_eq!(clipped.chars().count(), 4000);
-    assert!(clipped.ends_with('…'));
+    assert!(clipped.starts_with("BEGIN OUTPUT"));
+    assert!(clipped.contains("middle omitted"));
+    assert!(clipped.ends_with("TEST SUMMARY AT END"));
     assert!(commands[1].get("output").is_none());
 
     let mut restored = ready(Some(10), true);
     restored.restore_team(serde_json::from_value(saved).unwrap());
     assert_eq!(restored.agents[worker].handoff, h.agents[worker].handoff);
+
+    let reports = tool(
+        &mut h,
+        "output-preview",
+        "status",
+        json!({"ids":["luna-1"]}),
+    );
+    let report = reply_output(&reports, "output-preview");
+    let observed = &report["agents"][0]["observed_commands"];
+    assert_eq!(
+        observed[0]["output_preview"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count(),
+        512
+    );
+    assert_eq!(observed[0]["output_preview_truncated"], true);
+    assert!(
+        observed[0]["output_preview"]
+            .as_str()
+            .unwrap()
+            .ends_with("TEST SUMMARY AT END")
+    );
+    assert!(observed[1].get("output_preview").is_none());
 }
 
 const SOURCE_SNAPSHOT: &str = "\n\nSource snapshot (JSON)\n";
@@ -1958,4 +1987,402 @@ fn source_packet_is_not_repeated_on_a_worker_revision() {
     assert!(revision.contains("Check the empty input."));
     assert!(!revision.contains(SOURCE_SNAPSHOT));
     assert_eq!(h.agents[1].handoff.prompt.as_deref(), Some(original));
+}
+
+fn review_git(project: &std::path::Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .arg("-c")
+        .arg("core.hooksPath=/dev/null")
+        .args(args)
+        .current_dir(project)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn review_repository(workspace: &OwnershipWorkspace) -> std::path::PathBuf {
+    let project = workspace.0.join("project");
+    review_git(&project, &["init", "-q"]);
+    review_git(&project, &["config", "user.name", "Melly test"]);
+    review_git(&project, &["config", "user.email", "test@example.invalid"]);
+    std::fs::write(project.join("src/tracked"), "before\n").unwrap();
+    std::fs::write(project.join("src/staged"), "before staged\n").unwrap();
+    std::fs::write(project.join("src/deleted"), "delete me\n").unwrap();
+    review_git(&project, &["add", "."]);
+    review_git(&project, &["commit", "-qm", "baseline"]);
+    project
+}
+
+fn review_packet(h: &mut Harness, call: &str) -> Value {
+    let requests = tool(h, call, "status", json!({"ids":["luna-1"]}));
+    reply_output(&requests, call)["agents"][0]["review_evidence"].clone()
+}
+
+#[test]
+fn completion_review_captures_actual_owned_changes_and_survives_resume() {
+    let workspace = OwnershipWorkspace::new();
+    let project = review_repository(&workspace);
+    let mut h = workspace.harness();
+    start_lead(&mut h);
+    let start = spawn_with_sources(&mut h, "assign", json!(["src"]), json!([]));
+    connect_worker(&mut h, &start, "worker");
+    std::fs::write(project.join("src/tracked"), "after unstaged\n").unwrap();
+    std::fs::write(project.join("src/staged"), "after staged\n").unwrap();
+    review_git(&project, &["add", "src/staged"]);
+    std::fs::remove_file(project.join("src/deleted")).unwrap();
+    std::fs::write(project.join("src/new"), "new contents\n").unwrap();
+    std::fs::write(project.join("outside_scope"), "do not include\n").unwrap();
+    assert!(
+        tool(
+            &mut h,
+            "completion-wait",
+            "wait",
+            json!({"ids":["luna-1"],"timeout_ms":120000})
+        )
+        .is_empty()
+    );
+    finish(&mut h, "worker", "completed");
+    let waited = h.drain_requests();
+    let packet = review_packet(&mut h, "report");
+    assert_eq!(
+        reply_output(&waited, "completion-wait")["agents"][0]["review_evidence"],
+        packet
+    );
+    assert_eq!(packet["complete"], true);
+    let diff = packet["diff"].as_str().unwrap();
+    assert!(
+        diff.contains("+after unstaged")
+            && diff.contains("+after staged")
+            && diff.contains("-delete me")
+    );
+    assert!(!diff.contains("outside_scope"));
+    assert_eq!(
+        packet["untracked_files"],
+        json!([{"path":"src/new","content":"new contents\n"}])
+    );
+    assert!(
+        packet["source"]
+            .as_str()
+            .unwrap()
+            .contains("not attribution")
+    );
+    assert!(
+        packet["source"]
+            .as_str()
+            .unwrap()
+            .contains("preexisting edits")
+    );
+    assert!(packet["source"].as_str().unwrap().contains("stale"));
+    assert!(packet["head"].as_str().unwrap().len() >= 40);
+    assert!(h.agents[1].handoff.review.is_none());
+
+    // Repeated status/completion notices must not silently refresh the reviewed snapshot.
+    std::fs::write(project.join("src/new"), "changed later\n").unwrap();
+    finish(&mut h, "worker", "completed");
+    assert_eq!(review_packet(&mut h, "again"), packet);
+    let saved = serde_json::to_value(h.snapshot().unwrap()).unwrap();
+    assert_eq!(saved["workers"][0]["handoff"]["review_evidence"], packet);
+    let mut restored = ready(Some(10), true);
+    restored.restore_team(serde_json::from_value(saved.clone()).unwrap());
+    assert_eq!(
+        serde_json::to_value(&restored.agents[1].handoff).unwrap()["review_evidence"],
+        packet
+    );
+    let mut old = saved;
+    old["workers"][0]["handoff"]
+        .as_object_mut()
+        .unwrap()
+        .remove("review_evidence");
+    let old: melly::delegation::SavedTeam = serde_json::from_value(old).unwrap();
+    assert!(serde_json::to_value(&old.workers[0].handoff).unwrap()["review_evidence"].is_null());
+
+    let revision = tool(
+        &mut h,
+        "revise",
+        "revise",
+        json!({"id":"luna-1","feedback":"Check the changed file."}),
+    );
+    let turn = revision
+        .iter()
+        .find(|request| request["method"] == "turn/start")
+        .unwrap();
+    assert!(review_packet(&mut h, "revising").is_null());
+    h.receive(json!({"id":turn["id"],"result":{"turn":{"id":"worker-revised"}}}));
+    h.receive(json!({"method":"turn/completed","params":{"threadId":"worker","turn":{"id":"worker-revised","status":"completed"}}}));
+    h.tick();
+    assert_eq!(
+        review_packet(&mut h, "revised")["untracked_files"][0]["content"],
+        "changed later\n"
+    );
+}
+
+#[test]
+fn completion_review_limits_large_binary_and_special_files() {
+    let workspace = OwnershipWorkspace::new();
+    let project = review_repository(&workspace);
+    let mut h = workspace.harness();
+    start_lead(&mut h);
+    let start = spawn_with_sources(&mut h, "assign", json!(["src"]), json!([]));
+    connect_worker(&mut h, &start, "worker");
+    std::fs::write(project.join("src/large"), "x".repeat(40_000)).unwrap();
+    std::fs::write(project.join("src/binary"), [0, 1, 2]).unwrap();
+    std::fs::write(project.join("src/tracked"), [0, 1, 2]).unwrap();
+    #[cfg(unix)]
+    {
+        std::fs::write(workspace.0.join("outside/secret"), "outside secret").unwrap();
+        std::os::unix::fs::symlink(workspace.0.join("outside/secret"), project.join("src/link"))
+            .unwrap();
+        let status = std::process::Command::new("mkfifo")
+            .arg(project.join("src/pipe"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+    finish(&mut h, "worker", "completed");
+    let packet = review_packet(&mut h, "report");
+    let encoded = serde_json::to_string(&packet).unwrap();
+    assert_eq!(packet["complete"], false);
+    assert!(encoded.len() <= 32 * 1024);
+    assert!(!encoded.contains("outside secret"));
+    let omissions = packet["omissions"].as_array().unwrap();
+    assert!(omissions.iter().any(|entry| entry["path"] == "src/large"));
+    assert!(omissions.iter().any(|entry| entry["path"] == "src/binary"));
+    #[cfg(unix)]
+    for path in ["src/link", "src/pipe"] {
+        assert!(
+            omissions.iter().any(|entry| entry["path"] == path),
+            "{packet}"
+        );
+    }
+}
+
+#[test]
+fn completion_review_bounds_serialized_escaped_content() {
+    let workspace = OwnershipWorkspace::new();
+    let project = review_repository(&workspace);
+    let mut h = workspace.harness();
+    start_lead(&mut h);
+    let start = spawn_with_sources(&mut h, "assign", json!(["src"]), json!([]));
+    connect_worker(&mut h, &start, "worker");
+    for i in 0..12 {
+        std::fs::write(
+            project.join(format!("src/escaped-{i:02}")),
+            "\u{0001}".repeat(7000),
+        )
+        .unwrap();
+    }
+    finish(&mut h, "worker", "completed");
+    let packet = review_packet(&mut h, "report");
+    assert_eq!(packet["complete"], false);
+    assert!(serde_json::to_vec(&packet).unwrap().len() <= 32 * 1024);
+    assert!(!packet["omissions"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn completion_review_uses_literal_git_paths() {
+    let workspace = OwnershipWorkspace::new();
+    let project = review_repository(&workspace);
+    let name = "*";
+    std::fs::write(project.join(name), "magic before\n").unwrap();
+    review_git(&project, &["--literal-pathspecs", "add", "--", name]);
+    review_git(&project, &["commit", "-qm", "literal"]);
+    let mut h = workspace.harness();
+    start_lead(&mut h);
+    let start = spawn_with_sources(&mut h, "assign", json!([name]), json!([]));
+    connect_worker(&mut h, &start, "worker");
+    std::fs::write(project.join(name), "magic after\n").unwrap();
+    std::fs::write(project.join("src/tracked"), "unrelated marker\n").unwrap();
+    finish(&mut h, "worker", "completed");
+    let packet = review_packet(&mut h, "report");
+    assert_eq!(packet["complete"], true);
+    let diff = packet["diff"].as_str().unwrap();
+    assert!(diff.contains("+magic after"));
+    assert!(!diff.contains("unrelated marker"));
+}
+
+#[test]
+fn completion_review_reports_unavailable_and_skips_read_workers() {
+    let workspace = OwnershipWorkspace::new();
+    let mut h = workspace.harness();
+    start_lead(&mut h);
+    let start = spawn_with_sources(&mut h, "assign", json!(["src/missing"]), json!([]));
+    connect_worker(&mut h, &start, "worker");
+    finish(&mut h, "worker", "completed");
+    let packet = review_packet(&mut h, "report");
+    assert_eq!(packet["complete"], false);
+    assert!(packet["failure"].is_string());
+    assert!(
+        packet["source"]
+            .as_str()
+            .unwrap()
+            .contains("inspect directly")
+    );
+    let mut read = workspace.harness();
+    start_lead(&mut read);
+    let requests = tool(&mut read, "assign", "spawn", spawn_args(json!([])));
+    connect_worker(
+        &mut read,
+        requests
+            .iter()
+            .find(|r| r["method"] == "thread/start")
+            .unwrap(),
+        "reader",
+    );
+    finish(&mut read, "reader", "completed");
+    assert!(review_packet(&mut read, "report").is_null());
+}
+
+#[test]
+fn completion_review_disables_git_helpers_and_reports_missing_owned_paths() {
+    let workspace = OwnershipWorkspace::new();
+    let project = review_repository(&workspace);
+    std::fs::write(
+        project.join(".gitattributes"),
+        "src/tracked diff=probe filter=probe\n",
+    )
+    .unwrap();
+    review_git(&project, &["config", "diff.external", "false"]);
+    review_git(&project, &["config", "diff.probe.textconv", "false"]);
+    review_git(&project, &["config", "filter.probe.clean", "false"]);
+    review_git(&project, &["config", "filter.probe.required", "true"]);
+    let mut h = workspace.harness();
+    start_lead(&mut h);
+    let start = spawn_with_sources(
+        &mut h,
+        "assign",
+        json!(["src/tracked", "missing"]),
+        json!([]),
+    );
+    connect_worker(&mut h, &start, "worker");
+    std::fs::write(project.join("src/tracked"), "safe plain diff\n").unwrap();
+    finish(&mut h, "worker", "completed");
+    let packet = review_packet(&mut h, "report");
+    assert!(
+        packet["diff"]
+            .as_str()
+            .unwrap()
+            .contains("+safe plain diff"),
+        "{packet}"
+    );
+    assert_eq!(packet["complete"], false);
+    assert!(
+        packet["omissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|omission| omission["path"] == "missing")
+    );
+}
+
+#[test]
+fn completion_review_omits_an_oversized_diff_instead_of_claiming_completeness() {
+    let workspace = OwnershipWorkspace::new();
+    let project = review_repository(&workspace);
+    let mut h = workspace.harness();
+    start_lead(&mut h);
+    let start = spawn_with_sources(&mut h, "assign", json!(["src"]), json!([]));
+    connect_worker(&mut h, &start, "worker");
+    std::fs::write(project.join("src/tracked"), "changed line\n".repeat(4000)).unwrap();
+    finish(&mut h, "worker", "completed");
+    let packet = review_packet(&mut h, "report");
+    assert_eq!(packet["complete"], false);
+    assert!(packet["diff"].is_null());
+    assert!(
+        packet["omissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|omission| omission["path"] == "(tracked diff)")
+    );
+    assert!(serde_json::to_vec(&packet).unwrap().len() <= 32 * 1024);
+}
+
+#[test]
+fn completion_review_omits_ignored_contents_and_repository_metadata() {
+    let workspace = OwnershipWorkspace::new();
+    let project = review_repository(&workspace);
+    std::fs::write(project.join(".gitignore"), "src/.env\nsrc/cache/\n").unwrap();
+    std::fs::write(project.join("src/.env"), "private ignored marker").unwrap();
+    std::fs::create_dir_all(project.join("src/cache")).unwrap();
+    std::fs::write(project.join("src/cache/artifact"), "build ignored marker").unwrap();
+    std::fs::create_dir_all(project.join("src/.git")).unwrap();
+    std::fs::write(project.join("src/.git/config"), "administrative marker").unwrap();
+    let mut h = workspace.harness();
+    start_lead(&mut h);
+    let start = spawn_with_sources(&mut h, "assign", json!(["src"]), json!([]));
+    connect_worker(&mut h, &start, "worker");
+    finish(&mut h, "worker", "completed");
+    let packet = review_packet(&mut h, "report");
+    let encoded = serde_json::to_string(&packet).unwrap();
+    assert!(!encoded.contains("private ignored marker"));
+    assert!(!encoded.contains("build ignored marker"));
+    assert!(!encoded.contains("administrative marker"));
+    assert_eq!(packet["complete"], false);
+    assert!(
+        packet["omissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["path"] == "src/.env")
+    );
+}
+
+#[test]
+fn completion_review_staged_deletions_include_head_only_paths_and_respect_cwd() {
+    for nested_cwd in [false, true] {
+        let workspace = OwnershipWorkspace::new();
+        let project = review_repository(&workspace);
+        let mut h = workspace.harness();
+        if nested_cwd {
+            h.agents[0].session.cwd = project.join("src").to_string_lossy().into_owned();
+        }
+        start_lead(&mut h);
+        let owned = if nested_cwd {
+            json!(["deleted"])
+        } else {
+            json!(["src"])
+        };
+        let start = spawn_with_sources(&mut h, "assign", owned, json!([]));
+        connect_worker(&mut h, &start, "worker");
+        review_git(&project, &["rm", "-q", "--", "src/deleted"]);
+        std::fs::remove_file(project.join("src/tracked")).unwrap();
+        finish(&mut h, "worker", "completed");
+        let packet = review_packet(&mut h, "report");
+        assert_eq!(packet["complete"], true, "{packet}");
+        let diff = packet["diff"].as_str().unwrap();
+        assert!(diff.contains("-delete me"), "{packet}");
+        assert_eq!(diff.contains("a/src/tracked"), !nested_cwd, "{packet}");
+        assert!(packet["omissions"].as_array().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn completion_review_staged_deletion_keeps_the_untracked_worktree_copy() {
+    let workspace = OwnershipWorkspace::new();
+    let project = review_repository(&workspace);
+    let mut h = workspace.harness();
+    start_lead(&mut h);
+    let start = spawn_with_sources(&mut h, "assign", json!(["src/tracked"]), json!([]));
+    connect_worker(&mut h, &start, "worker");
+    review_git(&project, &["rm", "-q", "--cached", "--", "src/tracked"]);
+    std::fs::write(
+        project.join("src/tracked"),
+        "remaining untracked contents\n",
+    )
+    .unwrap();
+    finish(&mut h, "worker", "completed");
+    let packet = review_packet(&mut h, "report");
+    assert_eq!(packet["complete"], true, "{packet}");
+    assert!(
+        packet["diff"].as_str().unwrap().contains("-before"),
+        "{packet}"
+    );
+    assert_eq!(
+        packet["untracked_files"],
+        json!([{"path":"src/tracked","content":"remaining untracked contents\n"}])
+    );
 }

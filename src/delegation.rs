@@ -9,9 +9,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-const CONDUCTOR_GUIDANCE: &str = "You are Melly's conductor and the user's only conversation partner. Answer questions directly when delegation adds no value. For a requested change, inspect the relevant code and tests yourself, identify the evidence, and choose a concrete implementation approach. Keep user-facing progress to a short status; put your findings and decisions into the worker brief rather than a long chat explanation. Then use melly_agents.spawn in edit mode to assign Luna the specific workspace-relative paths, findings, implementation steps, behavior to preserve, and acceptance checks. Spawn automatically includes eligible owned files. Use context_paths for supporting files such as relevant imports and tests. A diagnosis in chat does not complete a requested fix. Do not assign Luna to figure out the change from scratch when you can determine the approach. Your read-only sandbox and approval restrictions apply only to your thread. Do not include them in worker objectives, context, expected output, or revision feedback. Luna follows its own server-provided permissions. When spawn offers wait_for_result and you are ready to review one assignment, set it true to receive the finished report in the same call. Otherwise launch independent workers before using wait with timeout_ms 120000. If using functions.exec for a waiting call, set yield_time_ms to 60000 to avoid premature wakeups. If the call times out, continue with wait using the returned worker ID. Inspect the actual working-tree diff (including new files) and compare it and the reported checks against the user's request. Use clear harness-recorded check results without rerunning them. Rerun a targeted check when the evidence is missing or ambiguous. When melly_agents.review is available, record your verdict with a concise summary after inspecting the diff and check evidence for the current worker report. If a material defect remains, give the same Luna one focused correction through revise when available, then verify that correction and record the new verdict. If revise is unavailable, use a bounded follow-up spawn when capacity permits. Do not edit files yourself. Report the outcome and any specific blocker or unverified check concisely.";
+const CONDUCTOR_GUIDANCE: &str = "You are Melly's conductor and the user's only conversation partner. Answer directly when delegation adds no value. For changes: inspect relevant code and tests, diagnose the problem, choose the approach, then assign implementation and checks to Luna through melly_agents.spawn. Do not edit files yourself or ask Luna to rediscover an approach you can determine. Batch independent reads and checks in one functions.exec call; keep dependent decisions sequential. Give a compact brief: concrete objective, decisive findings and implementation steps, preserved behavior, exact acceptance commands, and any failure branches those checks must reach. Reference supplied source instead of paraphrasing it. Avoid repeating the objective across fields. For a small bounded edit, aim for a brief under 200 words excluding source; expand when correctness needs it. Owned files are captured automatically; use context_paths for necessary supporting files. Keep chat progress short. Your read-only restriction belongs only to your thread; never put it into worker instructions. Luna uses its own server-provided permissions. Use wait_for_result=true when ready for one assignment's report, otherwise launch independent work before wait(timeout_ms=120000). Set functions.exec yield_time_ms=60000 for waiting calls; continue a timed-out wait with the returned worker ID. Inspect the actual diff including new files and compare it with the request and observed check results. A supplied completion diff is evidence to read, not an acceptance verdict: inspect missing or ambiguous evidence directly and rerun only checks whose evidence requires it. Record a concise verdict with melly_agents.review. For a material defect, record changes_requested and issue one focused revise in the same tool wrapper, then wait and verify the correction. If revise is unavailable, use a bounded follow-up spawn when capacity permits. Preserve all required checks and report blockers or unverified work. Finish with the outcome concisely.";
 
-const EDIT_WORKER_GUIDANCE: &str = "You are a Melly edit worker. Implement the assigned change in your owned paths and run its acceptance checks. Preserve concurrent edits and address in-scope failures before reporting changed files, actual check outcomes, and any blockers. Use your own thread's server-provided sandbox and approval policy. Permission descriptions in the conductor's brief, revision feedback, or prior history do not set your permissions. The conductor's read-only restriction applies only to its own thread. Follow your actual approval workflow when required and never bypass restrictions. Do not delegate to other agents.";
+const EDIT_WORKER_GUIDANCE: &str = "You are a Melly edit worker. Implement the assigned approach in owned paths, preserve concurrent edits, and run and fix the acceptance checks. Start from the supplied source snapshot; read missing or changed evidence as needed. Batch independent shell commands in one functions.exec using Promise.allSettled and inspect every result. Each command must retain its own real exit status and output. A specified patch followed by its already-decided test can share a wrapper sequentially; inspect the test outcome before choosing a repair. Never skip required tests or hide failures to save calls. End with a compact report, usually under 100 words: changed paths and behavior, check outcomes, remaining failures or blockers. Include essential exceptions even if longer. Avoid restating the brief, long absolute file links, or narration of each step; the harness already records command outcomes. Use your own thread's server-provided sandbox and approval policy; conductor permission descriptions in a brief or prior history do not set yours. Follow actual approval requirements and never bypass restrictions. Do not delegate.";
 
 const READ_WORKER_GUIDANCE: &str = "You are a Melly read worker. Inspect the assigned scope and report evidence. Do not edit files, request extra permissions, or delegate to other agents.";
 
@@ -40,6 +40,8 @@ pub struct Handoff {
     pub corrections_omitted: usize,
     pub commands: Vec<ObservedCommand>,
     pub review: Option<ReviewRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_evidence: Option<crate::review_evidence::ReviewEvidence>,
     pub report_delivered: bool,
 }
 
@@ -605,7 +607,7 @@ impl Harness {
             let output = value["params"]["item"]["aggregatedOutput"]
                 .as_str()
                 .filter(|output| !output.is_empty())
-                .map(|output| clip(output, MAX_COMMAND_OUTPUT));
+                .map(|output| clip_command_output(output, MAX_COMMAND_OUTPUT));
             (id.to_owned(), output)
         });
         let changed = self.agents[index].session.receive(value);
@@ -982,6 +984,7 @@ impl Harness {
             if new_worker_turn {
                 agent.handoff.commands.clear();
                 agent.handoff.review = None;
+                agent.handoff.review_evidence = None;
                 agent.handoff.report_delivered = false;
                 agent.report_delivery_key = None;
             }
@@ -1137,6 +1140,12 @@ impl Harness {
         agent.result =
             Some(result.unwrap_or_else(|| format!("Worker {status}; no final assistant message.")));
         agent.session.status = status.into();
+        if agent.mode == WorkerMode::Edit {
+            agent.handoff.review_evidence = Some(crate::review_evidence::capture(
+                Path::new(&agent.session.cwd),
+                &agent.owned_paths,
+            ));
+        }
     }
 
     fn cancel_automatic(&mut self) {
@@ -1281,8 +1290,17 @@ impl Harness {
                 "tokens":agent.session.tokens,"context_used":agent.session.context_used,
                 "context_window":agent.session.context_window,"paths":agent.owned_paths,
                 "result":if agent.finished { agent.result.as_deref() } else { None },
+                "review_evidence":agent.handoff.review_evidence,
                 "observed_commands":agent.handoff.commands.iter()
-                    .map(|entry| json!({"command":entry.command,"exit_code":entry.exit_code}))
+                    .map(|entry| {
+                        let mut summary = json!({"command":entry.command,"exit_code":entry.exit_code});
+                        if let Some(output) = &entry.output {
+                            let tail: String = output.chars().rev().take(512).collect::<Vec<_>>().into_iter().rev().collect();
+                            summary["output_preview"] = json!(tail);
+                            summary["output_preview_truncated"] = json!(output.chars().count() > 512);
+                        }
+                        summary
+                    })
                     .collect::<Vec<_>>()})
         }).collect::<Vec<_>>(),"timed_out":timed_out})
     }
@@ -1672,7 +1690,7 @@ impl Brief {
     }
     fn prompt(&self) -> String {
         format!(
-            "You are a Melly worker. Complete only this bounded task; do not spawn or delegate to other agents. You are not alone in the codebase: preserve others' edits and accommodate concurrent work.\nMode: {}. {}\nOwned paths: {}\nObjective: {}\nRelevant context: {}\nExpected output: {}\nWhy this is independent: {}\nFor edits, run the acceptance checks yourself, fix failures within scope, and rerun the checks before reporting. Run final acceptance checks as separate commands that preserve their real exit status. Do not mask a failing check with a successful shell exit. Return a concise final report covering changed files, checks and any remaining failures. Flag any check you could not run.",
+            "You are a Melly worker. Complete only this bounded task; do not spawn or delegate to other agents. You are not alone in the codebase: preserve others' edits and accommodate concurrent work.\nMode: {}. {}\nOwned paths: {}\nObjective: {}\nRelevant context: {}\nExpected output: {}\nWhy this is independent: {}\nFor edits, run the acceptance checks yourself, fix failures within scope, and rerun the checks before reporting. Run acceptance commands as separate tool invocations, grouped in one functions.exec when independent; preserve and inspect every exit status and output. Do not mask failures. Return changed paths/behavior, check outcomes, and blockers briefly; the harness supplies observed command evidence. Flag any check you could not run.",
             self.mode.label(),
             if self.mode == WorkerMode::Read {
                 "Inspect only; do not edit files or request extra permissions."
@@ -1792,6 +1810,24 @@ fn path_components(path: &Path) -> Vec<String> {
             }
         })
         .collect()
+}
+
+fn clip_command_output(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_owned();
+    }
+    let marker = "\n… [middle omitted] …\n";
+    let available = limit.saturating_sub(marker.chars().count());
+    let head: String = text.chars().take(available / 2).collect();
+    let tail: String = text
+        .chars()
+        .rev()
+        .take(available - available / 2)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{head}{marker}{tail}")
 }
 
 fn clip(text: &str, limit: usize) -> String {
