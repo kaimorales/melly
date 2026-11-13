@@ -5,7 +5,7 @@ use reqwest::{
 };
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 use url::{Host, Url};
@@ -107,9 +107,16 @@ pub(crate) fn client_builder() -> reqwest::ClientBuilder {
         .user_agent("Melly/1.0")
 }
 pub(crate) fn client() -> Result<Client> {
-    client_builder()
+    // Reuse origin-keyed connections and TLS sessions between turns. Credentials
+    // stay on each request; the shared client has no auth or cookie defaults.
+    static CLIENT: OnceLock<Client> = OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let client = client_builder()
         .build()
-        .map_err(|_| anyhow::anyhow!("Could not initialize secure provider transport"))
+        .map_err(|_| anyhow::anyhow!("Could not initialize secure provider transport"))?;
+    Ok(CLIENT.get_or_init(|| client).clone())
 }
 
 fn approved_addresses(

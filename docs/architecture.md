@@ -6,6 +6,8 @@ Melly is a native Tauri Mac application. Rust is the trust boundary and owns all
 
 Launch reads bounded local state, creates the window, and never waits for network or model discovery. Message history pages are bounded; text search uses a local FTS index. Streamed deltas render in animation-frame batches; final/partial turns are committed once. Cancel tokens drop HTTP requests promptly. There is no polling timer while idle.
 
+The provider HTTP client is reused across turns, keeping origin-scoped connections and TLS sessions warm. Credentials are attached to individual requests, never client-wide defaults. Redirects, environment proxies and cookies remain disabled; new connections still use the public-address-only resolver.
+
 Each connection has one provider identity and one endpoint/billing route. Endpoint changes cannot reuse another connection's key. Subscription errors remain on that route. Keys are entered through a native secure dialog and never passed through JavaScript. OAuth belongs to this app; it does not read other applications' credentials or ChatGPT history.
 
 Folder tools accept a query only, never an authorization scope. Rust derives the folder from the active chat and returns at most five bounded snippets from other chats in that folder. The model sees references with source IDs, not whole transcripts. Tool results are explicitly untrusted, and the only actions are local search and a fixed read-only web search API. Web citation navigation is separate and validates public HTTPS URLs.
