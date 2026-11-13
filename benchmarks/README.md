@@ -77,6 +77,30 @@ malformed cursors, Unicode, and CLI export behavior. Run the holdout grader agai
 each final session tree even when reading results from an earlier runner version.
 Faster incorrect results do not establish a speed win.
 
+Automated qualification means the recorded checks passed; it does not establish
+complete correctness. A known unresolved defect can veto a session even when its
+contract and holdout checks are green. Record that evidence outside the agent's
+project in `<output>/repeat-N/<arm>/quality_audit.json`, then rerun the analyzer:
+
+```json
+{
+  "passed": false,
+  "reasons": ["An independently reproduced cursor input still raises an uncaught RecursionError."]
+}
+```
+
+The optional file must be a JSON object with a boolean `passed` field. `reasons`
+is optional and, when present, must be an array of nonempty strings. A false,
+malformed, or unreadable audit disqualifies that session and prevents a comparable
+result or savings percentages for the pair. A positive audit never overrides a
+failed automated check. Without an audit, the existing automated qualification
+rules apply; the report explicitly labels this coverage and the absence of an
+external audit. Neither a positive audit nor automated qualification proves
+complete correctness. The JSON summary retains automated qualification separately
+from the final qualification, along with audit status and reasons; the Markdown
+report shows the audit outcome and details. Keep audit evidence out of the project
+and leave fixture, contract, and holdout data unchanged.
+
 Caching and backend load cannot be fully controlled. Alternating order reduces,
 but does not remove, warm-cache effects. Three sessions are a small sample from
 one machine/account and a compact synthetic project. Retain individual runs and
@@ -104,4 +128,5 @@ experiment; an existing session directory is never silently overwritten.
 The analyzer reruns independent checks on every final session tree and withholds
 savings percentages if either arm has incomplete, unmatched, or failed sessions.
 Offline accounting tests check that inherited and duplicate usage records are
-excluded and that failed work cannot become a reported savings win.
+excluded and that failed work cannot become a reported savings win, including
+external quality-audit vetoes when automated checks are green.

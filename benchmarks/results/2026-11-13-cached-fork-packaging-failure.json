@@ -1,0 +1,22 @@
+{
+  "experiment": "persistent public fork/shared-cache coding prototype",
+  "attempt": "missing-runtime-companion",
+  "qualified": false,
+  "failure": "Pinned custom bundle lacked codex-code-mode-host; no workers could run. Not a performance result.",
+  "source_commit": "c8281257519533a8479e91796d27ebca70b098c2",
+  "runtime_source": "086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a",
+  "recorded_turn_seconds": 37.6,
+  "observed_seconds": 37.74399425000047,
+  "usage": {
+    "input_tokens": 158929,
+    "cached_input_tokens": 128640,
+    "output_tokens": 430,
+    "reasoning_output_tokens": 77,
+    "total_tokens": 159359,
+    "uncached_input_tokens": 30289
+  },
+  "conductor_calls": 6,
+  "worker_calls": 0,
+  "contracts_passed": false,
+  "installed_runtime_changed": false
+}

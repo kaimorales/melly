@@ -1,0 +1,21 @@
+{
+  "experiment": "persistent public fork/shared-cache coding prototype",
+  "attempt": "debug-public-fork-history-panic",
+  "qualified": false,
+  "failure": "Copied pending custom tool call lacks inherited metadata; debug normalization panicked before Luna model execution. Lead timed out after600seconds. Not a performance result.",
+  "source_commit": "c8281257519533a8479e91796d27ebca70b098c2",
+  "runtime_source": "086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a",
+  "observed_seconds": 600.0438727090004,
+  "usage": {
+    "input_tokens": 2626268,
+    "cached_input_tokens": 2548480,
+    "output_tokens": 4199,
+    "reasoning_output_tokens": 727,
+    "total_tokens": 2630467,
+    "uncached_input_tokens": 77788
+  },
+  "conductor_calls": 90,
+  "worker_calls": 0,
+  "contracts_passed": false,
+  "installed_runtime_changed": false
+}

@@ -107,5 +107,22 @@
     "baseline_sha256": "e53314cdfa2fcab1d9eccf8d0e39aedc8bc64d3c4fbf576788cd09ba48fe3e45",
     "mutants_rejected": 16,
     "reference_repeat_passes": 20
+  },
+  "compatibility_check": {
+    "runtime": "Python 3.11.15",
+    "melly": {
+      "unit_tests": 37,
+      "holdout_assertions": 2276,
+      "observed_waiter_cases": 2,
+      "unobserved_waiter_cases": 0,
+      "exit_code": 0
+    },
+    "stock": {
+      "unit_tests": 33,
+      "holdout_assertions": 2276,
+      "observed_waiter_cases": 2,
+      "unobserved_waiter_cases": 0,
+      "exit_code": 0
+    }
   }
 }

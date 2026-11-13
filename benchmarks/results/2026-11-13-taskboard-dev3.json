@@ -1,0 +1,112 @@
+{
+  "candidate": {
+    "source_commit": "c8281257519533a8479e91796d27ebca70b098c2",
+    "version": "melly 0.9.4-dev.3",
+    "binary_sha256": "95b23e00468e4c5c465f29f2de81fdb3eab658f18f84edabfba242ac900d6b0c",
+    "fixture_sha256": "ac161d1820b4c64a299c5da79fff50e492cf85243531905ca36b36b6b070c134",
+    "holdout_sha256": "3cb030546b1521cba6ec5bdb3e0b194797c7f781c4b1e6f6a15ac036974a1235",
+    "actual_arm_order": [
+      "melly",
+      "stock"
+    ],
+    "backend": "installed Codex0.167.0 unchanged",
+    "family": "taskboard-v1",
+    "note": "Short equivalent project prefixes. Sol High/Luna High, unchanged contracts and complete accounting."
+  },
+  "comparison": "One observed Taskboard session per harness; Melly fails an independently reproduced supported-runtime requirement. Not a quality-qualified performance comparison.",
+  "models": {
+    "conductor": "gpt-6.1-sol",
+    "worker": "gpt-6-luna",
+    "effort": "high"
+  },
+  "sessions": [
+    {
+      "repeat": 1,
+      "arm": "melly",
+      "stages": 3,
+      "turn_seconds": 709.948,
+      "observed_wall_seconds": 710.0508067909996,
+      "usage": {
+        "input_tokens": 3228428,
+        "cached_input_tokens": 3022976,
+        "output_tokens": 29559,
+        "reasoning_output_tokens": 7933,
+        "total_tokens": 3257987,
+        "uncached_input_tokens": 205452
+      },
+      "conductor_calls": 38,
+      "worker_calls": 40,
+      "settings_valid": true,
+      "worker_turns": [
+        2,
+        2,
+        2
+      ],
+      "cap_valid": true,
+      "usage_reconciled": true,
+      "resume_valid": true,
+      "contract_passes": 3,
+      "holdout_passed": true,
+      "automated_qualified": true,
+      "quality_audit": {
+        "status": "failed",
+        "passed": false,
+        "reasons": [
+          "Supported Python3.11.15 still raises RecursionError for a base64url cursor encoding 2000 nested arrays; the contract requires ValueError. Independently reproduced on the final frozen project.",
+          "The conductor recorded changes_requested and disclosed this defect after exhausting the two-assignment cap. Passing44 unit tests and36 holdout assertions does not resolve it."
+        ]
+      },
+      "qualified": false,
+      "holdout": {
+        "passed": true,
+        "checks": 36
+      }
+    },
+    {
+      "repeat": 1,
+      "arm": "stock",
+      "stages": 3,
+      "turn_seconds": 428.61199999999997,
+      "observed_wall_seconds": 433.46418095899935,
+      "usage": {
+        "input_tokens": 3061350,
+        "cached_input_tokens": 2877056,
+        "output_tokens": 17089,
+        "reasoning_output_tokens": 3259,
+        "total_tokens": 3078439,
+        "uncached_input_tokens": 184294
+      },
+      "conductor_calls": 30,
+      "worker_calls": 35,
+      "settings_valid": true,
+      "worker_turns": [
+        2,
+        2,
+        2
+      ],
+      "cap_valid": true,
+      "usage_reconciled": true,
+      "resume_valid": true,
+      "contract_passes": 3,
+      "holdout_passed": true,
+      "automated_qualified": true,
+      "quality_audit": {
+        "status": "passed",
+        "passed": true,
+        "reasons": [
+          "Owned conductor tool calls delegate edits, inspect tracked and untracked diffs, and run checks without editing source/tests/docs.",
+          "Python3.11.15 deep-cursor probe returns required ValueError;37 unit tests and36 independent holdout assertions pass."
+        ]
+      },
+      "qualified": true,
+      "holdout": {
+        "passed": true,
+        "checks": 36
+      }
+    }
+  ],
+  "comparable": false,
+  "qualification_scope": "Qualification reflects automated coverage plus any supplied external audit vetoes, not complete correctness. An absent audit means no external audit was supplied.",
+  "installed_runtime_changed": false,
+  "raw_automated_result_preserved": true
+}
