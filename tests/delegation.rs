@@ -62,6 +62,20 @@ fn ready(quota: Option<u64>, resume: bool) -> Harness {
                 .len(),
             7
         );
+        let spawn_schema = &open["params"]["dynamicTools"][0]["tools"][0]["inputSchema"];
+        assert_eq!(
+            spawn_schema["properties"]["expected_output"]["maxLength"],
+            10_000
+        );
+        assert_eq!(spawn_schema["properties"]["objective"]["maxLength"], 2000);
+        assert_eq!(spawn_schema["properties"]["context"]["maxLength"], 6000);
+        assert_eq!(spawn_schema["properties"]["reason"]["maxLength"], 1000);
+        assert!(
+            spawn_schema["description"]
+                .as_str()
+                .unwrap()
+                .contains("10000 Unicode characters")
+        );
     }
     h.receive(
         json!({"id":open["id"],"result":{"thread":{"id":"lead-thread"},"model":"gpt-6.1-sol"}}),
@@ -744,7 +758,7 @@ fn bounds_reject_invalid_briefs_before_spending_a_launch() {
         match index {
             0 => arguments["objective"] = json!("x".repeat(2001)),
             1 => arguments["context"] = json!("x".repeat(6001)),
-            2 => arguments["expected_output"] = json!("x".repeat(1001)),
+            2 => arguments["expected_output"] = json!("x".repeat(10_001)),
             _ => arguments["reason"] = json!(""),
         }
         let id = format!("invalid-{index}");
@@ -753,6 +767,72 @@ fn bounds_reject_invalid_briefs_before_spending_a_launch() {
     }
     assert_eq!(h.auto_launches(), 0);
     assert_eq!(h.agents.len(), 1);
+}
+
+#[test]
+fn spawn_accepts_1016_expected_output_characters_without_truncating_checks() {
+    let mut h = ready(Some(10), false);
+    start_lead(&mut h);
+    let mut arguments = spawn_args(json!([]));
+    arguments["objective"] = json!("o".repeat(43));
+    arguments["context"] = json!("c".repeat(1364));
+    arguments["expected_output"] = json!(format!("{}REQUIRED CHECK", "x".repeat(1002)));
+    arguments["reason"] = json!("r".repeat(78));
+    let expected = arguments["expected_output"].as_str().unwrap().to_owned();
+    assert_eq!(expected.chars().count(), 1016);
+    let requests = tool(&mut h, "long-checks", "spawn", arguments);
+    assert_eq!(reply_output(&requests, "long-checks")["id"], "luna-1");
+    assert_eq!(
+        h.agents[1].handoff.brief.as_ref().unwrap().expected_output,
+        expected
+    );
+    assert!(
+        h.agents[1]
+            .handoff
+            .prompt
+            .as_ref()
+            .unwrap()
+            .contains(&expected)
+    );
+}
+
+#[test]
+fn spawn_brief_aggregate_limit_counts_unicode_and_preserves_old_valid_maxima() {
+    for fill in ["x", "🦀"] {
+        for (sizes, valid) in [
+            ([2000, 6000, 1000, 1000], true), // Every formerly valid field at its maximum.
+            ([1, 0, 9998, 1], true),
+            ([1, 0, 9999, 1], false),
+        ] {
+            let mut h = ready(Some(10), false);
+            start_lead(&mut h);
+            let mut arguments = spawn_args(json!([]));
+            for (field, size) in ["objective", "context", "expected_output", "reason"]
+                .into_iter()
+                .zip(sizes)
+            {
+                arguments[field] = json!(fill.repeat(size));
+            }
+            let requests = tool(&mut h, "aggregate", "spawn", arguments);
+            let output = reply_output(&requests, "aggregate");
+            if valid {
+                assert_eq!(output["id"], "luna-1", "{fill}: {output}");
+                assert_eq!(h.auto_launches(), 1);
+            } else {
+                let error = output["error"].as_str().unwrap();
+                assert!(
+                    error.contains("10001") && error.contains("10000"),
+                    "{error}"
+                );
+                assert!(
+                    error.contains("repeated") && error.contains("required checks"),
+                    "{error}"
+                );
+                assert_eq!(h.auto_launches(), 0);
+                assert_eq!(h.agents.len(), 1);
+            }
+        }
+    }
 }
 
 #[test]

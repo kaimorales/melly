@@ -30,6 +30,10 @@ const MAX_COMMANDS: usize = 12;
 const MAX_COMMAND_TEXT: usize = 240;
 const MAX_COMMAND_OUTPUT: usize = 4000;
 const MAX_REVIEW_SUMMARY: usize = 2000;
+// Preserve the original combined ceiling while allowing acceptance details to
+// use space that shorter objective/context/reason fields do not need.
+const MAX_BRIEF_NARRATIVE: usize = 10_000;
+const MAX_EXPECTED_OUTPUT: usize = MAX_BRIEF_NARRATIVE;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -1663,7 +1667,12 @@ impl Brief {
         for (name, value, limit, required) in [
             ("objective", &self.objective, 2000, true),
             ("context", &self.context, 6000, false),
-            ("expected_output", &self.expected_output, 1000, true),
+            (
+                "expected_output",
+                &self.expected_output,
+                MAX_EXPECTED_OUTPUT,
+                true,
+            ),
             ("reason", &self.reason, 1000, true),
         ] {
             if value.chars().count() > limit || (required && value.trim().is_empty()) {
@@ -1672,6 +1681,20 @@ impl Brief {
                     if required { "be nonempty and " } else { "" }
                 ));
             }
+        }
+        let narrative_chars: usize = [
+            &self.objective,
+            &self.context,
+            &self.expected_output,
+            &self.reason,
+        ]
+        .into_iter()
+        .map(|text| text.chars().count())
+        .sum();
+        if narrative_chars > MAX_BRIEF_NARRATIVE {
+            return Err(format!(
+                "Brief objective, context, expected_output, and reason total {narrative_chars} Unicode characters; maximum is {MAX_BRIEF_NARRATIVE}. Remove repeated instructions or split the assignment; do not truncate required checks."
+            ));
         }
         validate_paths("Owned path", &self.paths)?;
         validate_paths("context_paths entry", &self.context_paths)?;
@@ -1850,9 +1873,9 @@ fn dynamic_tools() -> Value {
     let ids = json!({"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3});
     let tools = vec![
         json!({"type":"function","name":"spawn","description":"Assign worthwhile work to Luna. Use edit mode for implementation and include explicit acceptance checks so Luna can edit, test, and iterate independently. Never delegate trivial greetings or the same work twice. Include the evidence and chosen implementation steps in context, behavior to preserve, and concrete acceptance checks. Keep conductor permissions out of the brief. At most 2 worker turns (spawns and revisions) per user turn and 3 active workers total. Read mode cannot edit and can use an empty paths array. Any supplied paths must be relative to the workspace. Eligible owned files are included automatically. Use context_paths for supporting files such as relevant imports and tests. Edit mode requires disjoint owned paths; preserve concurrent edits and configured permissions. Workers cannot delegate. Set wait_for_result=true when ready to wait for this assignment: returns its report and check evidence on completion, or status after 120 seconds. Omit or set false to return the worker ID immediately for parallel work. In functions.exec, use yield_time_ms 60000 for waiting calls.","deferLoading":false,
-            "inputSchema":{"type":"object","additionalProperties":false,"required":["objective","context","expected_output","reason","mode","paths"],"properties":{
+            "inputSchema":{"type":"object","description":format!("The combined objective, context, expected_output, and reason budget is {MAX_BRIEF_NARRATIVE} Unicode characters."),"additionalProperties":false,"required":["objective","context","expected_output","reason","mode","paths"],"properties":{
                 "objective":{"type":"string","minLength":1,"maxLength":2000},"context":{"type":"string","maxLength":6000,"description":"Relevant findings, implementation steps, and behavior to preserve."},
-                "expected_output":{"type":"string","minLength":1,"maxLength":1000,"description":"Expected changes, acceptance checks, and the report to return."},"reason":{"type":"string","minLength":1,"maxLength":1000},
+                "expected_output":{"type":"string","minLength":1,"maxLength":MAX_EXPECTED_OUTPUT,"description":"Expected changes, acceptance checks, and the report to return. Shares the combined narrative budget."},"reason":{"type":"string","minLength":1,"maxLength":1000},
                 "mode":{"type":"string","enum":["read","edit"]},"paths":{"type":"array","maxItems":MAX_PATHS,"items":{"type":"string","maxLength":MAX_PATH_BYTES}},
                 "context_paths":{"type":"array","maxItems":MAX_PATHS,"items":{"type":"string","maxLength":MAX_PATH_BYTES},"description":"Optional supporting workspace-relative files for the source snapshot. These paths do not grant ownership."},
                 "wait_for_result":{"type":"boolean","description":"Wait for this worker's result in the same call; default false. Use true when no other conductor work is pending."}}}}),
