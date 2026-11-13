@@ -95,26 +95,52 @@ fn noninteractive_options(id: &str) -> security_framework::passwords::PasswordOp
     options
 }
 
+#[cfg(target_os = "macos")]
+fn quiet_keychain<T>(operation: impl FnOnce() -> Result<T>) -> Result<T> {
+    use security_framework::os::macos::keychain::SecKeychain;
+    // Legacy SecItemCopyMatching_osx ignores kSecUseAuthenticationUIFail for
+    // some login-Keychain ACLs. Serialize this short process-wide policy guard
+    // so one operation cannot re-enable interaction underneath another.
+    static OPERATIONS: Mutex<()> = Mutex::new(());
+    let _operation = OPERATIONS
+        .lock()
+        .map_err(|_| anyhow!("Secure storage is unavailable"))?;
+    let allowed = SecKeychain::user_interaction_allowed()
+        .map_err(|_| anyhow!("Secure storage is unavailable"))?;
+    let _no_ui = if allowed {
+        Some(
+            SecKeychain::disable_user_interaction()
+                .map_err(|_| anyhow!("Secure storage is unavailable"))?,
+        )
+    } else {
+        None
+    };
+    // The guard restores the prior setting on success, error, or unwind.
+    operation()
+}
+
 impl SecretStore for KeychainStore {
     fn contains(&self, id: &str) -> Result<bool> {
         validate_id(id)?;
         #[cfg(target_os = "macos")]
         {
-            use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
-            let result = ItemSearchOptions::new()
-                .class(ItemClass::generic_password())
-                .service(SERVICE)
-                .account(id)
-                .load_attributes(true)
-                .load_data(false)
-                .limit(Limit::Max(1))
-                .skip_authenticated_items(true)
-                .search();
-            match result {
-                Ok(items) => Ok(!items.is_empty()),
-                Err(e) if e.code() == -25300 || e.code() == -25308 => Ok(false),
-                Err(_) => bail!("macOS Keychain status is unavailable"),
-            }
+            quiet_keychain(|| {
+                use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
+                let result = ItemSearchOptions::new()
+                    .class(ItemClass::generic_password())
+                    .service(SERVICE)
+                    .account(id)
+                    .load_attributes(true)
+                    .load_data(false)
+                    .limit(Limit::Max(1))
+                    .skip_authenticated_items(true)
+                    .search();
+                match result {
+                    Ok(items) => Ok(!items.is_empty()),
+                    Err(e) if e.code() == -25300 || e.code() == -25308 => Ok(false),
+                    Err(_) => bail!("macOS Keychain status is unavailable"),
+                }
+            })
         }
         #[cfg(not(target_os = "macos"))]
         bail!("Melly credentials require macOS Keychain")
@@ -123,15 +149,17 @@ impl SecretStore for KeychainStore {
         validate_id(id)?;
         #[cfg(target_os = "macos")]
         {
-            match security_framework::passwords::generic_password(noninteractive_options(id)) {
-                Ok(value) => String::from_utf8(value)
-                    .map(Some)
-                    .map_err(|_| anyhow!("Stored credential is invalid")),
-                Err(error) if error.code() == -25300 => Ok(None),
-                Err(_) => bail!(
-                    "This saved connection is unavailable. Reconnect the provider in Settings."
-                ),
-            }
+            quiet_keychain(|| {
+                match security_framework::passwords::generic_password(noninteractive_options(id)) {
+                    Ok(value) => String::from_utf8(value)
+                        .map(Some)
+                        .map_err(|_| anyhow!("Stored credential is invalid")),
+                    Err(error) if error.code() == -25300 => Ok(None),
+                    Err(_) => bail!(
+                        "This saved connection is unavailable. Reconnect the provider in Settings."
+                    ),
+                }
+            })
         }
         #[cfg(not(target_os = "macos"))]
         bail!("Melly credentials require macOS Keychain")
@@ -144,14 +172,16 @@ impl SecretStore for KeychainStore {
         }
         #[cfg(target_os = "macos")]
         {
-            security_framework::passwords::set_generic_password_options(
-                value.as_bytes(),
-                noninteractive_options(id),
-            )
-            .map_err(|_| {
-                anyhow!(
-                    "Secure storage is unavailable. Nothing was saved; you can keep using Demo."
+            quiet_keychain(|| {
+                security_framework::passwords::set_generic_password_options(
+                    value.as_bytes(),
+                    noninteractive_options(id),
                 )
+                .map_err(|_| {
+                    anyhow!(
+                        "Secure storage is unavailable. Nothing was saved; you can keep using Demo."
+                    )
+                })
             })
         }
         #[cfg(not(target_os = "macos"))]
@@ -162,13 +192,15 @@ impl SecretStore for KeychainStore {
         validate_id(id)?;
         #[cfg(target_os = "macos")]
         {
-            match security_framework::passwords::delete_generic_password_options(
-                noninteractive_options(id),
-            ) {
-                Ok(()) => Ok(()),
-                Err(error) if error.code() == -25300 => Ok(()),
-                Err(_) => bail!("macOS Keychain could not remove the credential"),
-            }
+            quiet_keychain(
+                || match security_framework::passwords::delete_generic_password_options(
+                    noninteractive_options(id),
+                ) {
+                    Ok(()) => Ok(()),
+                    Err(error) if error.code() == -25300 => Ok(()),
+                    Err(_) => bail!("macOS Keychain could not remove the credential"),
+                },
+            )
         }
         #[cfg(not(target_os = "macos"))]
         bail!("Melly credentials require macOS Keychain")
@@ -178,6 +210,18 @@ impl SecretStore for KeychainStore {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_keychain_policy_is_noninteractive_and_restored_after_error() {
+        use security_framework::os::macos::keychain::SecKeychain;
+        let before = SecKeychain::user_interaction_allowed().unwrap();
+        let result: Result<()> = quiet_keychain(|| {
+            assert!(!SecKeychain::user_interaction_allowed().unwrap());
+            bail!("Synthetic failure")
+        });
+        assert!(result.is_err());
+        assert_eq!(SecKeychain::user_interaction_allowed().unwrap(), before);
+    }
 
     // Opt in only: touches one UUID-named synthetic credential, never real keys.
     // The same no-UI policy is used by every operation, including the update path.
