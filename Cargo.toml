@@ -1,0 +1,13 @@
+[workspace]
+members = ["crates/melly-core"]
+default-members = ["crates/melly-core"]
+resolver = "2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[profile.dev]
+debug = 0
+strip = "none"
