@@ -1,0 +1,325 @@
+diff --git a/codex-rs/core/src/context_manager/mod.rs b/codex-rs/core/src/context_manager/mod.rs
+index 2bd7eb8..1217176 100644
+--- a/codex-rs/core/src/context_manager/mod.rs
++++ b/codex-rs/core/src/context_manager/mod.rs
+@@ -9,3 +9,4 @@ pub(crate) use history::estimate_image_reference_bytes;
+ pub(crate) use history::estimate_item_token_count;
+ pub(crate) use history::is_user_turn_boundary;
+ pub(crate) use image_availability::replace_unresolvable_image_files;
++pub(crate) use normalize::synthetic_output_id;
+diff --git a/codex-rs/core/src/context_manager/normalize.rs b/codex-rs/core/src/context_manager/normalize.rs
+index 387bc8f..52f5b1d 100644
+--- a/codex-rs/core/src/context_manager/normalize.rs
++++ b/codex-rs/core/src/context_manager/normalize.rs
+@@ -159,7 +159,7 @@ pub(crate) fn ensure_call_outputs_present(items: &mut Vec<ResponseItemEnvelope>)
+ /// outputs, so the namespace and name format must remain stable across retries
+ /// and resumes to preserve prompt-cache reuse. Returning `None` when the source
+ /// call has no ID preserves the legacy behavior for older history items.
+-fn synthetic_output_id(prefix: &str, item_id: Option<&str>) -> Option<ResponseItemId> {
++pub(crate) fn synthetic_output_id(prefix: &str, item_id: Option<&str>) -> Option<ResponseItemId> {
+     let source_id = item_id.filter(|id| !id.is_empty())?;
+     let name = format!("{prefix}:{source_id}");
+     Some(ResponseItemId::with_suffix(
+diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
+index 7bd869f..7800468 100644
+--- a/codex-rs/core/src/thread_manager.rs
++++ b/codex-rs/core/src/thread_manager.rs
+@@ -85,6 +85,8 @@ use codex_protocol::error::CodexErr;
+ use codex_protocol::error::Result as CodexResult;
+ use codex_protocol::mcp::ClientMcpExtensions;
+ use codex_protocol::mcp::OPENAI_STANDARD_FORM_INPUT_EXTENSION_ID;
++use codex_protocol::models::FunctionCallOutputPayload;
++use codex_protocol::models::ResponseItem;
+ use codex_protocol::openai_models::ModelPreset;
+ use codex_protocol::protocol::Event;
+ use codex_protocol::protocol::EventMsg;
+@@ -1794,7 +1796,8 @@ impl ThreadManager {
+             &options.config,
+             multi_agent_version,
+         );
+-        options.initial_history = fork_history_from_snapshot(snapshot, history, interrupted_marker);
++        options.initial_history =
++            public_fork_history_from_snapshot(snapshot, history, interrupted_marker);
+         let agent_control = self.agent_control_for_config(&options.config);
+         let mut request =
+             ThreadSpawnRequest::new(options, Arc::clone(&self.state.auth_manager), agent_control);
+@@ -2930,6 +2933,71 @@ fn snapshot_turn_state(history: &InitialHistory) -> SnapshotTurnState {
+     }
+ }
+ 
++fn public_fork_history_from_snapshot(
++    snapshot: ForkSnapshot,
++    history: InitialHistory,
++    interrupted_marker: InterruptedTurnHistoryMarker,
++) -> InitialHistory {
++    if snapshot != ForkSnapshot::Interrupted {
++        return fork_history_from_snapshot(snapshot, history, interrupted_marker);
++    }
++    let state = snapshot_turn_state(&history);
++    if !state.ends_mid_turn {
++        return fork_history_from_snapshot(snapshot, history, interrupted_marker);
++    }
++    let inherited_items = history.get_rollout_items();
++    let inherited_len = inherited_items.len();
++    let active_start = state.active_turn_start_index.unwrap_or_else(|| {
++        truncation::user_message_positions_in_rollout(inherited_items)
++            .last()
++            .copied()
++            .unwrap_or(inherited_len)
++    });
++    let active_items = &inherited_items[active_start..];
++    let mut output_call_ids = active_items
++        .iter()
++        .filter_map(|item| match item {
++            RolloutItem::ResponseItem(envelope) => match &envelope.item {
++                ResponseItem::CustomToolCallOutput { call_id, .. } => Some(call_id.as_str()),
++                _ => None,
++            },
++            _ => None,
++        })
++        .collect::<HashSet<_>>();
++    let pending_outputs = active_items
++        .iter()
++        .filter_map(|item| match item {
++            RolloutItem::ResponseItem(envelope) => match &envelope.item {
++                ResponseItem::CustomToolCall { id, call_id, .. }
++                    if output_call_ids.insert(call_id.as_str()) =>
++                {
++                    Some(RolloutItem::ResponseItem(
++                        ResponseItem::CustomToolCallOutput {
++                            id: crate::context_manager::synthetic_output_id("ctco", id.as_deref()),
++                            call_id: call_id.clone(),
++                            name: None,
++                            output: FunctionCallOutputPayload::from_text("aborted".to_string()),
++                            internal_chat_message_metadata_passthrough: None,
++                        }
++                        .into(),
++                    ))
++                }
++                _ => None,
++            },
++            _ => None,
++        })
++        .collect::<Vec<_>>();
++    let mut fork = fork_history_from_snapshot(snapshot, history, interrupted_marker);
++    if let InitialHistory::Forked(items) = &mut fork {
++        // A live parent's pending tool continues there, but is interrupted in this child.
++        // Append child-only outputs before the interrupt boundary, preserving the copied
++        // prefix (including reference-backed history), IDs, authorization and usage records.
++        // Native-agent forks use their own inherited-envelope normalization instead.
++        items.splice(inherited_len..inherited_len, pending_outputs);
++    }
++    fork
++}
++
+ pub(crate) fn fork_history_from_snapshot(
+     snapshot: ForkSnapshot,
+     history: InitialHistory,
+diff --git a/codex-rs/core/src/thread_manager_tests.rs b/codex-rs/core/src/thread_manager_tests.rs
+index 54e0677..5ea7296 100644
+--- a/codex-rs/core/src/thread_manager_tests.rs
++++ b/codex-rs/core/src/thread_manager_tests.rs
+@@ -3270,6 +3270,203 @@ fn interrupted_fork_snapshot_appends_interrupt_boundary() {
+     );
+ }
+ 
++#[test]
++fn public_interrupted_fork_pairs_pending_custom_calls_without_changing_parent() {
++    use crate::context_manager::ContextManager;
++    use codex_protocol::SessionId;
++    use codex_protocol::models::FunctionCallOutputPayload;
++    use codex_protocol::protocol::TokenUsageRecord;
++
++    let parent_id = ThreadId::new();
++    let custom_call = |suffix: &str| ResponseItem::CustomToolCall {
++        encrypted_content: None,
++        id: Some(ResponseItemId::with_suffix("ctc", suffix)),
++        status: None,
++        call_id: format!("call-{suffix}"),
++        name: "exec".to_string(),
++        namespace: Some("functions".to_string()),
++        input: "await tools.melly_agents_spawn({});".to_string(),
++        internal_chat_message_metadata_passthrough: None,
++    };
++    let completed_output = ResponseItem::CustomToolCallOutput {
++        id: Some(ResponseItemId::with_suffix("ctco", "completed")),
++        call_id: "call-completed".to_string(),
++        name: None,
++        output: FunctionCallOutputPayload::from_text("completed result".to_string()),
++        internal_chat_message_metadata_passthrough: None,
++    };
++    let parent_items = Arc::new(vec![
++        RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
++            turn_attribution: None,
++            turn_id: "parent-turn".to_string(),
++            root_turn_id: None,
++            trace_id: None,
++            started_at: None,
++            model_context_window: None,
++            collaboration_mode_kind: Default::default(),
++        })),
++        RolloutItem::ResponseItem(user_msg("delegate from this live turn").into()),
++        RolloutItem::ResponseItem(custom_call("completed").into()),
++        RolloutItem::ResponseItem(completed_output.clone().into()),
++        RolloutItem::ResponseItem(custom_call("pending").into()),
++        RolloutItem::TokenUsageRecord(TokenUsageRecord {
++            thread_id: parent_id,
++            turn_id: "parent-turn".to_string(),
++            session_id: SessionId::from(parent_id),
++            root_turn_id: "parent-turn".to_string(),
++            response_id: "parent-response".to_string(),
++            usage: TokenUsage {
++                input_tokens: 100,
++                output_tokens: 10,
++                total_tokens: 110,
++                ..Default::default()
++            },
++            turn_token_usage: TokenUsage::default(),
++            thread_token_usage: TokenUsage::default(),
++        }),
++    ]);
++    let original = serde_json::to_value(parent_items.as_ref()).expect("serialize parent");
++    let source = InitialHistory::Resumed(ResumedHistory {
++        history_revision: None,
++        conversation_id: parent_id,
++        history: Arc::clone(&parent_items),
++        rollout_path: None,
++    });
++    let fork = public_fork_history_from_snapshot(
++        ForkSnapshot::Interrupted,
++        source.clone(),
++        InterruptedTurnHistoryMarker::ContextualUser,
++    );
++    let mut context = ContextManager::new();
++    context.replace_annotated(
++        fork.get_rollout_items()
++            .iter()
++            .filter_map(|item| match item {
++                RolloutItem::ResponseItem(envelope) => Some(envelope.clone()),
++                _ => None,
++            })
++            .collect(),
++    );
++    // The previous implementation panics here on the pending code-mode call.
++    context.normalize_history(&[]);
++    let outputs = context
++        .raw_items()
++        .filter_map(|item| match item {
++            ResponseItem::CustomToolCallOutput { call_id, .. } => Some((call_id.as_str(), item)),
++            _ => None,
++        })
++        .collect::<Vec<_>>();
++    assert_eq!(outputs.len(), 2);
++    assert_eq!(outputs[0].1, &completed_output);
++    assert_eq!(outputs[1].0, "call-pending");
++    let mut inherited_call = codex_history::ResponseItemEnvelope::new(custom_call("pending"));
++    inherited_call
++        .metadata
++        .get_or_insert_default()
++        .inherited_user_message = true;
++    let mut native_projection = ContextManager::new();
++    native_projection.replace_annotated(vec![inherited_call]);
++    native_projection.normalize_history(&[]);
++    // Match the established normalization payload and deterministic output identity.
++    assert_eq!(Some(outputs[1].1), native_projection.raw_items().last());
++    let appended = &fork.get_rollout_items()[parent_items.len()];
++    let RolloutItem::ResponseItem(appended) = appended else {
++        panic!("child output suffix")
++    };
++    assert_eq!(&appended.item, outputs[1].1);
++    assert_eq!(
++        serde_json::to_value(&fork.get_rollout_items()[..parent_items.len()]).unwrap(),
++        original
++    );
++    assert_eq!(
++        serde_json::to_value(parent_items.as_ref()).unwrap(),
++        original
++    );
++    assert!(!snapshot_turn_state(&fork).ends_mid_turn);
++    let replayed_fork = public_fork_history_from_snapshot(
++        ForkSnapshot::Interrupted,
++        source.clone(),
++        InterruptedTurnHistoryMarker::ContextualUser,
++    );
++    assert_eq!(
++        serde_json::to_value(&replayed_fork.get_rollout_items()[parent_items.len()]).unwrap(),
++        serde_json::to_value(&fork.get_rollout_items()[parent_items.len()]).unwrap(),
++    );
++    let completed_fork = public_fork_history_from_snapshot(
++        ForkSnapshot::Interrupted,
++        fork.clone(),
++        InterruptedTurnHistoryMarker::ContextualUser,
++    );
++    assert_eq!(
++        serde_json::to_value(completed_fork.get_rollout_items()).unwrap(),
++        serde_json::to_value(fork.get_rollout_items()).unwrap()
++    );
++    let truncated = public_fork_history_from_snapshot(
++        ForkSnapshot::TruncateBeforeNthUserMessage(usize::MAX),
++        source.clone(),
++        InterruptedTurnHistoryMarker::ContextualUser,
++    );
++    let unchanged_truncation = fork_history_from_snapshot(
++        ForkSnapshot::TruncateBeforeNthUserMessage(usize::MAX),
++        source,
++        InterruptedTurnHistoryMarker::ContextualUser,
++    );
++    assert_eq!(
++        serde_json::to_value(truncated.get_rollout_items()).unwrap(),
++        serde_json::to_value(unchanged_truncation.get_rollout_items()).unwrap()
++    );
++}
++
++#[test]
++#[cfg(debug_assertions)]
++#[should_panic(
++    expected = "Custom tool call output is missing for call id: completed-turn-corruption"
++)]
++fn public_interrupted_fork_does_not_repair_completed_turn_corruption() {
++    let history = InitialHistory::Forked(vec![
++        RolloutItem::ResponseItem(user_msg("old turn").into()),
++        RolloutItem::ResponseItem(
++            ResponseItem::CustomToolCall {
++                encrypted_content: None,
++                id: None,
++                status: None,
++                call_id: "completed-turn-corruption".to_string(),
++                name: "exec".to_string(),
++                namespace: Some("functions".to_string()),
++                input: "text('old');".to_string(),
++                internal_chat_message_metadata_passthrough: None,
++            }
++            .into(),
++        ),
++        RolloutItem::EventMsg(EventMsg::TurnAborted(TurnAbortedEvent {
++            root_turn_id: None,
++            turn_id: None,
++            reason: TurnAbortReason::Interrupted,
++            error: None,
++            started_at: None,
++            completed_at: None,
++            duration_ms: None,
++        })),
++        RolloutItem::ResponseItem(user_msg("current live turn").into()),
++    ]);
++    let fork = public_fork_history_from_snapshot(
++        ForkSnapshot::Interrupted,
++        history,
++        InterruptedTurnHistoryMarker::ContextualUser,
++    );
++    let mut context = crate::context_manager::ContextManager::new();
++    context.replace_annotated(
++        fork.get_rollout_items()
++            .iter()
++            .filter_map(|item| match item {
++                RolloutItem::ResponseItem(envelope) => Some(envelope.clone()),
++                _ => None,
++            })
++            .collect(),
++    );
++    context.normalize_history(&[]);
++}
++
+ #[test]
+ fn disabled_interrupted_fork_snapshot_appends_only_interrupt_event() {
+     let committed_history =

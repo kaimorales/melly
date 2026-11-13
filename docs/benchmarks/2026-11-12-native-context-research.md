@@ -12,9 +12,9 @@ Workers share one App Server connection. The observed 61-second outer tool yield
 
 ## Exact Codex source audit
 
-Inspected [Codex rust-v0.167.0](https://github.com/openai/codex/tree/rust-v0.167.0), commit `086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a`, Apache-2.0. No Codex implementation was copied into Melly.
+Inspected [Codex rust-v0.167.0](https://github.com/openai/codex/tree/rust-v0.167.0), commit `086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a`, Apache-2.0. No Codex implementation was added to Melly's Rust crate. Later disposable runtime experiments are preserved separately as [source patches with upstream attribution](../../benchmarks/experiments/codex-0.167.0/README.md); they are not installed in Melly.
 
-- Public `thread/fork` can fork the live conductor's persisted history while its dynamic spawn call is pending. The child receives an interrupted boundary and an aborted result for the unfinished call; the parent remains live.
+- Public `thread/fork` can fork the live conductor's persisted history while its dynamic spawn call is pending; the parent remains live. Later debug-build testing exposed an exception to the initially observed interrupted-call handling: a pending custom/code-mode call could reach normalization without an output and panic. The separate experimental history patch adds a child-only aborted output before that interruption boundary; seven targeted regressions cover the repair without disabling the normalizer assertion.
 - Native V2 agents preserve the full prefix by default, including tool observations. Native child setup also establishes child identity, role instructions, and accounting boundaries. Public fork is not a drop-in equivalent.
 - A fork's `developerInstructions` override alone does not replace inherited developer history. Melly's existing per-turn application context becomes a later developer message and establishes the worker role.
 - Native child permissions inherit the parent's effective permissions. Simply enabling native agents beneath Melly's read-only conductor would produce read-only workers and bypass Melly's current delegation controls.

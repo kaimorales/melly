@@ -1,0 +1,142 @@
+diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
+index 52325c5..32de02b 100644
+--- a/codex-rs/core/src/session/session.rs
++++ b/codex-rs/core/src/session/session.rs
+@@ -961,11 +961,11 @@ impl Session {
+                 .runtime()
+                 .root_thread_instructions_provider(thread_id, instructions.thread_provider);
+         }
+-        // Ephemeral forks reuse cache routing, without sharing storage or lifecycle identity.
++        // Public forks reuse parent cache routing without sharing storage or lifecycle identity.
++        // Native subagents keep their existing inherited session cache route.
+         let fork_cache_key = match &initial_history {
+             InitialHistory::Forked(items)
+-                if config.ephemeral
+-                    && !session_configuration.session_source.is_non_root_agent() =>
++                if !session_configuration.session_source.is_non_root_agent() =>
+             {
+                 items.iter().find_map(|item| match item {
+                     RolloutItem::SessionMeta(meta) => Some(meta.meta.session_id.to_string()),
+diff --git a/codex-rs/core/tests/suite/prompt_cache_key.rs b/codex-rs/core/tests/suite/prompt_cache_key.rs
+index 9a5037d..1294433 100644
+--- a/codex-rs/core/tests/suite/prompt_cache_key.rs
++++ b/codex-rs/core/tests/suite/prompt_cache_key.rs
+@@ -229,24 +229,45 @@ async fn api_key_subagent_inherits_prompt_cache_key_policy(policy: PromptCacheKe
+ 
+ #[tokio::test]
+ async fn ephemeral_fork_shares_cache_routing_but_keeps_session_identity() -> Result<()> {
++    assert_fork_shares_cache_routing_but_keeps_session_identity(true).await
++}
++
++#[tokio::test]
++async fn persistent_fork_shares_cache_routing_but_keeps_persisted_identity_and_usage() -> Result<()>
++{
++    assert_fork_shares_cache_routing_but_keeps_session_identity(false).await
++}
++
++async fn assert_fork_shares_cache_routing_but_keeps_session_identity(
++    ephemeral: bool,
++) -> Result<()> {
+     use codex_core::ForkSnapshot;
++    use codex_history::RolloutItem;
++    use codex_protocol::protocol::TokenUsage;
+     use core_test_support::responses::mount_sse_sequence;
+ 
+     let server = start_mock_server().await;
++    let mut fork_completed = ev_completed("fork");
++    fork_completed["response"]["usage"] = json!({
++        "input_tokens": 128,
++        "input_tokens_details": {"cached_tokens": 96},
++        "output_tokens": 4,
++        "output_tokens_details": {"reasoning_tokens": 2},
++        "total_tokens": 132,
++    });
+     let requests = mount_sse_sequence(
+         &server,
+-        vec![
+-            sse(vec![ev_completed("parent")]),
+-            sse(vec![ev_completed("fork")]),
+-        ],
++        vec![sse(vec![ev_completed("parent")]), sse(vec![fork_completed])],
+     )
+     .await;
+     let mut test = test_codex().build_with_auto_env(&server).await?;
+     test.submit_text_turn("parent").await?;
+     test.codex.flush_rollout().await?;
+     let parent_session = test.session_configured.session_id.to_string();
++    let parent_thread_id = test.session_configured.thread_id;
++    let parent_path = test.codex.rollout_path().expect("parent rollout");
+     let mut config = test.config.clone();
+-    config.ephemeral = true;
++    config.ephemeral = ephemeral;
+     let fork = test
+         .thread_manager
+         .fork_legacy_thread(
+@@ -262,13 +283,15 @@ async fn ephemeral_fork_shares_cache_routing_but_keeps_session_identity() -> Res
+                 ),
+                 ..StartThreadOptions::new(config)
+             },
+-            test.codex.rollout_path().expect("parent rollout"),
++            parent_path.clone(),
+         )
+         .await?;
+     let fork_session = fork.session_configured.session_id.to_string();
+     assert_ne!(fork_session, parent_session);
++    assert_ne!(fork.thread_id, parent_thread_id);
+     test.codex = fork.thread;
+     test.submit_text_turn("side").await?;
++    test.codex.flush_rollout().await?;
+     let requests = requests.requests();
+     let body = requests[1].body_json();
+     let metadata: Value = serde_json::from_str(
+@@ -290,5 +313,50 @@ async fn ephemeral_fork_shares_cache_routing_but_keeps_session_identity() -> Res
+             "tools": requests[0].body_json()["tools"],
+         }),
+     );
++    if ephemeral {
++        assert!(test.codex.rollout_path().is_none());
++    } else {
++        let fork_path = test.codex.rollout_path().expect("persisted fork rollout");
++        assert_ne!(fork_path, parent_path);
++        let items = std::fs::read_to_string(fork_path)?
++            .lines()
++            .map(|line| {
++                let value = serde_json::from_str(line)?;
++                Ok(codex_rollout::decode_rollout_line(value)?.item)
++            })
++            .collect::<Result<Vec<_>>>()?;
++        let meta = items
++            .iter()
++            .find_map(|item| match item {
++                RolloutItem::SessionMeta(meta) => Some(&meta.meta),
++                _ => None,
++            })
++            .expect("persisted fork metadata");
++        assert_eq!(meta.id, fork.thread_id);
++        assert_eq!(meta.session_id.to_string(), fork_session);
++        assert_eq!(meta.forked_from_id, Some(parent_thread_id));
++        let usage = items
++            .iter()
++            .find_map(|item| match item {
++                RolloutItem::TokenUsageRecord(record) if record.response_id == "fork" => {
++                    Some(record)
++                }
++                _ => None,
++            })
++            .expect("persisted fork usage record");
++        assert_eq!(usage.thread_id, fork.thread_id);
++        assert_eq!(usage.session_id.to_string(), fork_session);
++        assert_eq!(
++            usage.usage,
++            TokenUsage {
++                input_tokens: 128,
++                cached_input_tokens: 96,
++                output_tokens: 4,
++                reasoning_output_tokens: 2,
++                total_tokens: 132,
++                ..Default::default()
++            }
++        );
++    }
+     Ok(())
+ }

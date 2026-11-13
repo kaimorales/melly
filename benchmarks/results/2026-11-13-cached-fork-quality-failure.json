@@ -1,0 +1,97 @@
+{
+  "experiment": "Persistent public fork with shared cache routing and pending-custom-call history repair",
+  "date": "2026-11-13",
+  "qualified": false,
+  "comparable": false,
+  "outcome": "Stopped after independently reproduced original-contract failures; stock control not run",
+  "melly_version": "0.9.4-dev.3",
+  "melly_source": "c8281257519533a8479e91796d27ebca70b098c2",
+  "melly_binary_sha256": "95b23e00468e4c5c465f29f2de81fdb3eab658f18f84edabfba242ac900d6b0c",
+  "runtime_source": "086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a",
+  "runtime_profile": "Rust 1.95.0; dev unoptimized, debug=0; two build jobs",
+  "runtime_cli_sha256": "a00f237c77bb26314331061ce6206a182ec930cf2be806fd26ab77b12ef7ce02",
+  "settings": "GPT-6.1 Sol High conductor; GPT-6 Luna High workers; default service tier; two worker assignments per request",
+  "completed_stages": 2,
+  "attempted_stages": 3,
+  "completed_stage_task_seconds": 544.495,
+  "stage_costs": [
+    {
+      "stage": 1,
+      "completed": true,
+      "task_seconds": 389.798,
+      "automated_contract_passed": true,
+      "conductor_calls": 19,
+      "worker_calls": 17,
+      "usage": {
+        "input_tokens": 1496683,
+        "cached_input_tokens": 1409280,
+        "output_tokens": 14054,
+        "reasoning_output_tokens": 6242,
+        "total_tokens": 1510737,
+        "uncached_input_tokens": 87403
+      }
+    },
+    {
+      "stage": 2,
+      "completed": true,
+      "task_seconds": 154.697,
+      "automated_contract_passed": true,
+      "conductor_calls": 8,
+      "worker_calls": 9,
+      "usage": {
+        "input_tokens": 1005810,
+        "cached_input_tokens": 943232,
+        "output_tokens": 5550,
+        "reasoning_output_tokens": 1620,
+        "total_tokens": 1011360,
+        "uncached_input_tokens": 62578
+      }
+    }
+  ],
+  "recorded_usage_including_interrupted_stage": {
+    "input_tokens": 2662163,
+    "cached_input_tokens": 2507264,
+    "output_tokens": 20345,
+    "reasoning_output_tokens": 7862,
+    "total_tokens": 2682508,
+    "uncached_input_tokens": 154899
+  },
+  "recorded_calls": 56,
+  "recorded_conductor_calls": 30,
+  "recorded_worker_calls": 26,
+  "interrupted_stage_recorded_usage": {
+    "input_tokens": 159670,
+    "cached_input_tokens": 154752,
+    "output_tokens": 741,
+    "reasoning_output_tokens": 0,
+    "total_tokens": 160411,
+    "uncached_input_tokens": 4918
+  },
+  "all_recorded_model_effort_settings_valid": true,
+  "quality_audit": {
+    "passed": false,
+    "reasons": [
+      "Chronological ordering fails for submicrosecond timestamps using a valid hour-only ISO offset (+01).",
+      "Malformed deeply nested JSON cursors raise RecursionError instead of the required ValueError on supported Python 3.11.",
+      "Experiment stopped during stage three after independent reproduction; no complete paired comparison."
+    ],
+    "python": "3.11.15",
+    "query_source_sha256": "777a93e307b58df750e01bdcd592be3ac6101bfc603805ee3a74b9195e463788"
+  },
+  "workflow_observations": {
+    "conductor_performed_edits": false,
+    "worker_attempted_recursive_delegation": true,
+    "recursive_attempt_rejected": true,
+    "full_inherited_parent_context_observed": true,
+    "causal_attribution_proven": false
+  },
+  "runtime_panic_observed": false,
+  "installed_runtime_changed": false,
+  "limitations": [
+    "Interrupted requests can consume server-side usage without a final owned usage record; these counters are a recorded lower bound, not complete billing.",
+    "Completed-stage timing excludes the interrupted third stage and must not be compared with a completed three-stage stock session.",
+    "Public forks retain inherited UI/history totals; external owner-record accounting excludes inherited records. Production UI projection and cold-resume cache affinity are not integrated.",
+    "Resume was initiated before stage three but the full resumed task did not complete.",
+    "No stock arm was run after this candidate failed; no savings percentage is calculated."
+  ]
+}
