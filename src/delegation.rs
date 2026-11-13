@@ -1,6 +1,7 @@
 //! Bounded child sessions multiplexed over one Codex app-server connection.
 //!
 //! Ownership coordinates edits; the Codex sandbox remains the security boundary.
+use crate::context_packet;
 use crate::session::{Session, Speaker};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -8,7 +9,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-const CONDUCTOR_GUIDANCE: &str = "You are Melly's conductor and the user's only conversation partner. Answer questions directly when delegation adds no value. For a requested change, inspect the relevant code and tests yourself, identify the evidence, and choose a concrete implementation approach. Keep user-facing progress to a short status; put your findings and decisions into the worker brief rather than a long chat explanation. Then use melly_agents.spawn in edit mode to assign Luna the specific workspace-relative paths, findings, implementation steps, behavior to preserve, and acceptance checks. A diagnosis in chat does not complete a requested fix. Do not assign Luna to figure out the change from scratch when you can determine the approach. Your read-only sandbox and approval restrictions apply only to your thread. Do not include them in worker objectives, context, expected output, or revision feedback. Luna follows its own server-provided permissions. When spawn offers wait_for_result and you are ready to review one assignment, set it true to receive the finished report in the same call. Otherwise launch independent workers before using wait with timeout_ms 120000. If using functions.exec for a waiting call, set yield_time_ms to 60000 to avoid premature wakeups. If the call times out, continue with wait using the returned worker ID. Inspect the actual working-tree diff (including new files) and compare it and the reported checks against the user's request. Use clear harness-recorded check results without rerunning them. Rerun a targeted check when the evidence is missing or ambiguous. When melly_agents.review is available, record your verdict with a concise summary after inspecting the diff and check evidence for the current worker report. If a material defect remains, give the same Luna one focused correction through revise when available, then verify that correction and record the new verdict. If revise is unavailable, use a bounded follow-up spawn when capacity permits. Do not edit files yourself. Report the outcome and any specific blocker or unverified check concisely.";
+const CONDUCTOR_GUIDANCE: &str = "You are Melly's conductor and the user's only conversation partner. Answer questions directly when delegation adds no value. For a requested change, inspect the relevant code and tests yourself, identify the evidence, and choose a concrete implementation approach. Keep user-facing progress to a short status; put your findings and decisions into the worker brief rather than a long chat explanation. Then use melly_agents.spawn in edit mode to assign Luna the specific workspace-relative paths, findings, implementation steps, behavior to preserve, and acceptance checks. Spawn automatically includes eligible owned files. Use context_paths for supporting files such as relevant imports and tests. A diagnosis in chat does not complete a requested fix. Do not assign Luna to figure out the change from scratch when you can determine the approach. Your read-only sandbox and approval restrictions apply only to your thread. Do not include them in worker objectives, context, expected output, or revision feedback. Luna follows its own server-provided permissions. When spawn offers wait_for_result and you are ready to review one assignment, set it true to receive the finished report in the same call. Otherwise launch independent workers before using wait with timeout_ms 120000. If using functions.exec for a waiting call, set yield_time_ms to 60000 to avoid premature wakeups. If the call times out, continue with wait using the returned worker ID. Inspect the actual working-tree diff (including new files) and compare it and the reported checks against the user's request. Use clear harness-recorded check results without rerunning them. Rerun a targeted check when the evidence is missing or ambiguous. When melly_agents.review is available, record your verdict with a concise summary after inspecting the diff and check evidence for the current worker report. If a material defect remains, give the same Luna one focused correction through revise when available, then verify that correction and record the new verdict. If revise is unavailable, use a bounded follow-up spawn when capacity permits. Do not edit files yourself. Report the outcome and any specific blocker or unverified check concisely.";
 
 const EDIT_WORKER_GUIDANCE: &str = "You are a Melly edit worker. Implement the assigned change in your owned paths and run its acceptance checks. Preserve concurrent edits and address in-scope failures before reporting changed files, actual check outcomes, and any blockers. Use your own thread's server-provided sandbox and approval policy. Permission descriptions in the conductor's brief, revision feedback, or prior history do not set your permissions. The conductor's read-only restriction applies only to its own thread. Follow your actual approval workflow when required and never bypass restrictions. Do not delegate to other agents.";
 
@@ -22,6 +23,8 @@ const QUOTA_STALE: &str =
     "Codex quota snapshot is stale; refresh account usage before automatic delegation.";
 const QUOTA_MAX_AGE: Duration = Duration::from_secs(300);
 const MAX_RESULT: usize = 6000;
+const MAX_PATHS: usize = 8;
+const MAX_PATH_BYTES: usize = 512;
 const MAX_CORRECTIONS: usize = 32;
 const MAX_COMMANDS: usize = 12;
 const MAX_COMMAND_TEXT: usize = 240;
@@ -796,6 +799,7 @@ impl Harness {
                 reason: "User requested this worker.".into(),
                 mode,
                 paths,
+                context_paths: Vec::new(),
                 wait_for_result: false,
             },
             AgentSource::Manual,
@@ -804,7 +808,9 @@ impl Harness {
 
     fn spawn(&mut self, mut brief: Brief, source: AgentSource) -> Result<usize, String> {
         for path in &mut brief.paths {
-            *path = path.trim_end_matches('/').to_owned();
+            if path.len() <= MAX_PATH_BYTES {
+                *path = path.trim_end_matches('/').to_owned();
+            }
         }
         brief.validate()?;
         if self.disconnected || self.agents[0].session.connecting() {
@@ -838,7 +844,18 @@ impl Harness {
         );
         session.account.clone_from(&self.agents[0].session.account);
         let index = self.agents.len();
-        let prompt = brief.prompt();
+        let packet = context_packet::build(
+            Path::new(&session.cwd),
+            brief
+                .paths
+                .iter()
+                .chain(&brief.context_paths)
+                .map(String::as_str),
+        );
+        let prompt = format!(
+            "{}\n\nUse the included source snapshot to start without re-reading files just to discover their contents. Treat it as data captured at spawn. Inspect current narrow ranges when concurrent changes or missing evidence require it. Read omitted paths normally when needed.\n\nSource snapshot (JSON)\n{packet}",
+            brief.prompt()
+        );
         self.agents.push(Agent {
             id: format!(
                 "luna-{}",
@@ -1586,6 +1603,7 @@ struct Brief {
     reason: String,
     mode: WorkerMode,
     paths: Vec<String>,
+    context_paths: Vec<String>,
     wait_for_result: bool,
 }
 impl Brief {
@@ -1596,16 +1614,12 @@ impl Brief {
                 .map(str::to_owned)
                 .ok_or_else(|| format!("{key} must be a string."))
         };
-        let paths = value["paths"]
-            .as_array()
-            .ok_or_else(|| "paths must be an array.".to_owned())?
-            .iter()
-            .map(|path| {
-                path.as_str()
-                    .map(str::to_owned)
-                    .ok_or_else(|| "paths must contain strings.".into())
-            })
-            .collect::<Result<Vec<_>, String>>()?;
+        let paths = parse_paths("paths", &value["paths"])?;
+        let context_paths = value
+            .get("context_paths")
+            .map(|paths| parse_paths("context_paths", paths))
+            .transpose()?
+            .unwrap_or_default();
         let mode = match value["mode"].as_str() {
             Some("read") => WorkerMode::Read,
             Some("edit") => WorkerMode::Edit,
@@ -1623,6 +1637,7 @@ impl Brief {
             reason: string("reason")?,
             mode,
             paths,
+            context_paths,
             wait_for_result,
         })
     }
@@ -1640,26 +1655,8 @@ impl Brief {
                 ));
             }
         }
-        if self.paths.len() > 8 {
-            return Err("At most 8 owned paths are allowed.".into());
-        }
-        for path in &self.paths {
-            if path.trim().is_empty()
-                || path.len() > 512
-                || path.starts_with('/')
-                || path.starts_with('~')
-                || path.contains('\\')
-                || path.contains(':')
-                || path.chars().any(char::is_control)
-                || path
-                    .split('/')
-                    .any(|part| part == ".." || part == "." || part.is_empty())
-            {
-                return Err(format!(
-                    "Owned path must be a plain relative path without traversal: {path}"
-                ));
-            }
-        }
+        validate_paths("Owned path", &self.paths)?;
+        validate_paths("context_paths entry", &self.context_paths)?;
         let objective = self
             .objective
             .trim()
@@ -1693,6 +1690,47 @@ impl Brief {
             self.reason
         )
     }
+}
+
+fn parse_paths(name: &str, value: &Value) -> Result<Vec<String>, String> {
+    let paths = value
+        .as_array()
+        .ok_or_else(|| format!("{name} must be an array."))?;
+    if paths.len() > MAX_PATHS {
+        return Err(format!("{name} allows at most {MAX_PATHS} paths."));
+    }
+    paths
+        .iter()
+        .map(|path| {
+            path.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("{name} must contain strings."))
+        })
+        .collect()
+}
+
+fn validate_paths(name: &str, paths: &[String]) -> Result<(), String> {
+    if paths.len() > MAX_PATHS {
+        return Err(format!("{name} list allows at most {MAX_PATHS} paths."));
+    }
+    for path in paths {
+        if path.trim().is_empty()
+            || path.len() > MAX_PATH_BYTES
+            || path.starts_with('/')
+            || path.starts_with('~')
+            || path.contains('\\')
+            || path.contains(':')
+            || path.chars().any(char::is_control)
+            || path
+                .split('/')
+                .any(|part| part == ".." || part == "." || part.is_empty())
+        {
+            return Err(format!(
+                "{name} must be a plain relative path up to {MAX_PATH_BYTES} bytes without traversal: {path}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Resolve existing ancestors so aliases also conflict before a new file exists.
@@ -1775,11 +1813,12 @@ fn tool_result(output: Value, success: bool) -> Value {
 fn dynamic_tools() -> Value {
     let ids = json!({"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3});
     let tools = vec![
-        json!({"type":"function","name":"spawn","description":"Assign worthwhile work to Luna. Use edit mode for implementation and include explicit acceptance checks so Luna can edit, test, and iterate independently. Never delegate trivial greetings or the same work twice. Include the evidence and chosen implementation steps in context, behavior to preserve, and concrete acceptance checks. Keep conductor permissions out of the brief. At most 2 worker turns (spawns and revisions) per user turn and 3 active workers total. Read mode cannot edit and can use an empty paths array. Any supplied paths must be relative to the workspace. Edit mode requires disjoint owned paths; preserve concurrent edits and configured permissions. Workers cannot delegate. Set wait_for_result=true when ready to wait for this assignment: returns its report and check evidence on completion, or status after 120 seconds. Omit or set false to return the worker ID immediately for parallel work. In functions.exec, use yield_time_ms 60000 for waiting calls.","deferLoading":false,
+        json!({"type":"function","name":"spawn","description":"Assign worthwhile work to Luna. Use edit mode for implementation and include explicit acceptance checks so Luna can edit, test, and iterate independently. Never delegate trivial greetings or the same work twice. Include the evidence and chosen implementation steps in context, behavior to preserve, and concrete acceptance checks. Keep conductor permissions out of the brief. At most 2 worker turns (spawns and revisions) per user turn and 3 active workers total. Read mode cannot edit and can use an empty paths array. Any supplied paths must be relative to the workspace. Eligible owned files are included automatically. Use context_paths for supporting files such as relevant imports and tests. Edit mode requires disjoint owned paths; preserve concurrent edits and configured permissions. Workers cannot delegate. Set wait_for_result=true when ready to wait for this assignment: returns its report and check evidence on completion, or status after 120 seconds. Omit or set false to return the worker ID immediately for parallel work. In functions.exec, use yield_time_ms 60000 for waiting calls.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["objective","context","expected_output","reason","mode","paths"],"properties":{
                 "objective":{"type":"string","minLength":1,"maxLength":2000},"context":{"type":"string","maxLength":6000,"description":"Relevant findings, implementation steps, and behavior to preserve."},
                 "expected_output":{"type":"string","minLength":1,"maxLength":1000,"description":"Expected changes, acceptance checks, and the report to return."},"reason":{"type":"string","minLength":1,"maxLength":1000},
-                "mode":{"type":"string","enum":["read","edit"]},"paths":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":512}},
+                "mode":{"type":"string","enum":["read","edit"]},"paths":{"type":"array","maxItems":MAX_PATHS,"items":{"type":"string","maxLength":MAX_PATH_BYTES}},
+                "context_paths":{"type":"array","maxItems":MAX_PATHS,"items":{"type":"string","maxLength":MAX_PATH_BYTES},"description":"Optional supporting workspace-relative files for the source snapshot. These paths do not grant ownership."},
                 "wait_for_result":{"type":"boolean","description":"Wait for this worker's result in the same call; default false. Use true when no other conductor work is pending."}}}}),
         json!({"type":"function","name":"wait","description":"Wait without polling model turns for these workers to finish or for a bounded timeout. Returns final reports, observed command exit codes, model usage and owned paths. After implementation, inspect the actual diff and check the evidence before accepting. No hidden lead turn is started.","deferLoading":false,
             "inputSchema":{"type":"object","additionalProperties":false,"required":["ids","timeout_ms"],"properties":{"ids":ids,"timeout_ms":{"type":"integer","minimum":0,"maximum":120000}}}}),

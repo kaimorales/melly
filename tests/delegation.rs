@@ -1622,3 +1622,340 @@ fn observed_command_output_is_bounded_persisted_and_optional() {
     restored.restore_team(serde_json::from_value(saved).unwrap());
     assert_eq!(restored.agents[worker].handoff, h.agents[worker].handoff);
 }
+
+const SOURCE_SNAPSHOT: &str = "\n\nSource snapshot (JSON)\n";
+
+fn source_packet(prompt: &str) -> (&str, Value) {
+    let (_, packet) = prompt
+        .split_once(SOURCE_SNAPSHOT)
+        .expect("the worker prompt should include a source snapshot");
+    let parsed = serde_json::from_str(packet).expect("source snapshot must be valid JSON");
+    (packet, parsed)
+}
+
+fn spawn_with_sources(h: &mut Harness, id: &str, owned: Value, context: Value) -> Value {
+    let mut brief = spawn_args(owned);
+    brief["mode"] = json!("edit");
+    brief["context_paths"] = context;
+    tool(h, id, "spawn", brief)
+        .into_iter()
+        .find(|r| r["method"] == "thread/start")
+        .expect("worker thread should start")
+}
+
+#[test]
+fn source_packet_reaches_first_worker_turn_and_persists_the_spawn_snapshot() {
+    let workspace = OwnershipWorkspace::new();
+    let project = workspace.0.join("project");
+    let owned = project.join("src/owned.rs");
+    std::fs::write(&owned, "previous source\n").unwrap();
+    std::fs::write(project.join("support.rs"), "supporting source\n").unwrap();
+    let mut h = workspace.harness();
+    start_lead(&mut h);
+    std::fs::write(&owned, "source at spawn\n").unwrap();
+    let start = spawn_with_sources(
+        &mut h,
+        "assign",
+        json!(["src/owned.rs"]),
+        json!(["support.rs"]),
+    );
+    std::fs::write(&owned, "source after spawn\n").unwrap();
+    let turn = connect_worker(&mut h, &start, "worker");
+    let prompt = turn["params"]["input"][0]["text"].as_str().unwrap();
+    assert_eq!(prompt.matches(SOURCE_SNAPSHOT).count(), 1);
+    assert_eq!(
+        source_packet(prompt).1,
+        json!({"files":[
+            {"path":"src/owned.rs","content":"source at spawn\n"},
+            {"path":"support.rs","content":"supporting source\n"}
+        ],"omitted":[]})
+    );
+    assert_eq!(h.agents[1].handoff.prompt.as_deref(), Some(prompt));
+    assert_eq!(h.agents[1].owned_paths, ["src/owned.rs"]);
+    let saved = serde_json::to_string(&h.snapshot().unwrap()).unwrap();
+    let mut resumed = ready(Some(10), true);
+    resumed.restore_team(serde_json::from_str(&saved).unwrap());
+    assert_eq!(resumed.agents[1].handoff.prompt.as_deref(), Some(prompt));
+
+    // The supporting path is available for a different worker to own.
+    let start = spawn_with_sources(
+        &mut h,
+        "edit-support",
+        json!(["support.rs"]),
+        json!(["src/owned.rs"]),
+    );
+    let turn = connect_worker(&mut h, &start, "second");
+    let packet = source_packet(turn["params"]["input"][0]["text"].as_str().unwrap()).1;
+    assert_eq!(packet["files"][1]["content"], "source after spawn\n");
+    assert_eq!(h.agents[2].owned_paths, ["support.rs"]);
+}
+
+#[test]
+fn source_packet_captures_owned_files_for_old_tool_calls_and_manual_workers() {
+    let workspace = OwnershipWorkspace::new();
+    std::fs::write(workspace.0.join("project/src/owned.rs"), "owned source").unwrap();
+    let mut h = workspace.harness();
+    start_lead(&mut h);
+    let mut brief = spawn_args(json!(["src/owned.rs"]));
+    brief["mode"] = json!("edit");
+    let requests = tool(&mut h, "assign", "spawn", brief);
+    let start = requests
+        .iter()
+        .find(|r| r["method"] == "thread/start")
+        .unwrap();
+    let turn = connect_worker(&mut h, start, "worker");
+    let prompt = turn["params"]["input"][0]["text"].as_str().unwrap();
+    assert_eq!(
+        source_packet(prompt).1,
+        json!({"files":[{"path":"src/owned.rs","content":"owned source"}],"omitted":[]})
+    );
+    let manual = h
+        .spawn_manual(
+            "Inspect owned source".into(),
+            WorkerMode::Read,
+            vec!["src/owned.rs".into()],
+        )
+        .unwrap();
+    let manual_prompt = h.agents[manual].handoff.prompt.as_deref().unwrap();
+    assert_eq!(source_packet(manual_prompt).0, source_packet(prompt).0);
+}
+
+#[test]
+fn source_packet_rejects_malformed_context_paths_without_spending_a_launch() {
+    for context_paths in [
+        json!(null),
+        json!("src"),
+        json!([1]),
+        json!(vec!["src"; 9]),
+        json!([""]),
+        json!(["/absolute"]),
+        json!(["~/file"]),
+        json!(["src/../file"]),
+        json!(["src/./file"]),
+        json!(["src//file"]),
+        json!(["src/"]),
+        json!(["src\\file"]),
+        json!(["src/file:1"]),
+        json!(["src/\nfile"]),
+        json!([format!("a{}", "é".repeat(256))]),
+    ] {
+        let mut h = ready(Some(10), false);
+        start_lead(&mut h);
+        let mut brief = spawn_args(json!([]));
+        brief["context_paths"] = context_paths.clone();
+        let requests = tool(&mut h, "assign", "spawn", brief);
+        let reply = reply_output(&requests, "assign");
+        assert!(
+            reply["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("context_paths")),
+            "accepted malformed context_paths {context_paths}: {reply}"
+        );
+        assert_eq!(h.auto_launches(), 0);
+        assert_eq!(h.agents.len(), 1);
+    }
+}
+
+#[test]
+fn source_packet_reports_file_omissions_and_keeps_whole_utf8_at_the_file_limit() {
+    let workspace = OwnershipWorkspace::new();
+    let project = workspace.0.join("project");
+    let whole = "界".repeat(4096);
+    std::fs::write(project.join("src/whole"), &whole).unwrap();
+    std::fs::write(project.join("large"), format!("{whole}x")).unwrap();
+    std::fs::write(project.join("invalid-utf8"), [0xff]).unwrap();
+    std::fs::write(project.join("nul"), b"text\0text").unwrap();
+    std::fs::write(project.join("src/not-requested"), "directory child").unwrap();
+    let mut h = workspace.harness();
+    start_lead(&mut h);
+    let start = spawn_with_sources(
+        &mut h,
+        "assign",
+        json!(["src", "absent"]),
+        json!(["src/whole", "large", "invalid-utf8", "nul", "absent"]),
+    );
+    let turn = connect_worker(&mut h, &start, "worker");
+    let packet = source_packet(turn["params"]["input"][0]["text"].as_str().unwrap()).1;
+    assert_eq!(
+        packet["files"],
+        json!([{"path":"src/whole","content":whole}])
+    );
+    let omitted = packet["omitted"].as_array().unwrap();
+    assert_eq!(
+        omitted.iter().map(|item| &item["path"]).collect::<Vec<_>>(),
+        ["src", "absent", "large", "invalid-utf8", "nul"]
+    );
+    for (item, reason) in omitted.iter().zip([
+        "directory",
+        "missing",
+        "too large",
+        "invalid UTF-8",
+        "contains NUL",
+    ]) {
+        assert_eq!(item["reason"], reason);
+    }
+    assert_eq!(h.agents[1].owned_paths, ["src", "absent"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn source_packet_deduplicates_canonical_aliases_and_omits_non_regular_and_outside_paths() {
+    let workspace = OwnershipWorkspace::new();
+    let project = workspace.0.join("project");
+    std::fs::write(project.join("src/owned"), "only once").unwrap();
+    std::fs::write(workspace.0.join("outside/private"), "outside data").unwrap();
+    std::os::unix::fs::symlink("src/owned", project.join("alias")).unwrap();
+    std::os::unix::fs::symlink("../outside", project.join("escape")).unwrap();
+    let fifo = std::process::Command::new("mkfifo")
+        .arg(project.join("fifo"))
+        .status()
+        .unwrap();
+    assert!(fifo.success());
+    let mut h = workspace.harness();
+    start_lead(&mut h);
+    let start = spawn_with_sources(
+        &mut h,
+        "assign",
+        json!(["src/owned"]),
+        json!(["alias", "src/owned", "escape/private", "fifo"]),
+    );
+    let turn = connect_worker(&mut h, &start, "worker");
+    assert_eq!(
+        source_packet(turn["params"]["input"][0]["text"].as_str().unwrap()).1,
+        json!({"files":[{"path":"src/owned","content":"only once"}],
+            "omitted":[{"path":"escape/private","reason":"outside workspace"},
+                {"path":"fifo","reason":"not a regular file"}]})
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn source_packet_omits_unreadable_supporting_files() {
+    use std::os::unix::fs::PermissionsExt;
+    let workspace = OwnershipWorkspace::new();
+    let unreadable = workspace.0.join("project/unreadable");
+    std::fs::write(&unreadable, "private source").unwrap();
+    std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::File::open(&unreadable).is_ok() {
+        return; // A privileged test runner can read files with mode 000.
+    }
+    let mut h = workspace.harness();
+    start_lead(&mut h);
+    let start = spawn_with_sources(&mut h, "assign", json!(["absent"]), json!(["unreadable"]));
+    let turn = connect_worker(&mut h, &start, "worker");
+    let packet = source_packet(turn["params"]["input"][0]["text"].as_str().unwrap()).1;
+    assert_eq!(packet["files"], json!([]));
+    assert_eq!(
+        packet["omitted"][1],
+        json!({"path":"unreadable","reason":"unreadable"})
+    );
+}
+
+#[test]
+fn source_packet_counts_json_escapes_and_omissions_at_the_packet_limit() {
+    const LIMIT: usize = 32 * 1024;
+    let workspace = OwnershipWorkspace::new();
+    let project = workspace.0.join("project");
+    let escaped = "\"".repeat(12 * 1024);
+    let expected = |filler: &str| {
+        json!({"files":[
+            {"path":"escape-heavy","content":escaped},
+            {"path":"boundary","content":filler}
+        ],"omitted":[{"path":"budget-excluded","reason":"packet budget exceeded"}]})
+    };
+    let filler = "x".repeat(LIMIT - expected("").to_string().len());
+    std::fs::write(project.join("escape-heavy"), &escaped).unwrap();
+    std::fs::write(project.join("boundary"), &filler).unwrap();
+    std::fs::write(project.join("budget-excluded"), "z".repeat(12 * 1024)).unwrap();
+
+    let mut previous = None;
+    for _ in 0..2 {
+        let mut h = workspace.harness();
+        start_lead(&mut h);
+        let start = spawn_with_sources(
+            &mut h,
+            "assign",
+            json!(["escape-heavy", "boundary"]),
+            json!(["budget-excluded"]),
+        );
+        let turn = connect_worker(&mut h, &start, "worker");
+        let (raw, packet) = source_packet(turn["params"]["input"][0]["text"].as_str().unwrap());
+        assert_eq!(packet, expected(&filler));
+        assert_eq!(raw.len(), LIMIT);
+        if let Some(previous) = previous.replace(raw.to_owned()) {
+            assert_eq!(raw, previous);
+        }
+    }
+}
+
+#[test]
+fn source_packet_keeps_omissions_for_all_sixteen_requested_paths() {
+    let workspace = OwnershipWorkspace::new();
+    let project = workspace.0.join("project");
+    let requested: Vec<_> = (0..16)
+        .map(|i| {
+            format!(
+                "{:02}{}/{}/{}",
+                i,
+                "\"".repeat(168),
+                "\"".repeat(170),
+                "\"".repeat(170)
+            )
+        })
+        .collect();
+    assert!(requested.iter().all(|path| path.len() == 512));
+    std::fs::create_dir_all(project.join(std::path::Path::new(&requested[0]).parent().unwrap()))
+        .unwrap();
+    std::fs::write(project.join(&requested[0]), "\"".repeat(12 * 1024)).unwrap();
+    let mut h = workspace.harness();
+    start_lead(&mut h);
+    let start = spawn_with_sources(
+        &mut h,
+        "assign",
+        json!(requested[..8]),
+        json!(requested[8..]),
+    );
+    let turn = connect_worker(&mut h, &start, "worker");
+    let (raw, packet) = source_packet(turn["params"]["input"][0]["text"].as_str().unwrap());
+    assert!(raw.len() <= 32 * 1024);
+    assert_eq!(packet["files"], json!([]));
+    let omitted = packet["omitted"].as_array().unwrap();
+    assert_eq!(omitted.len(), 16);
+    assert_eq!(omitted[0]["reason"], "packet budget exceeded");
+    for (item, requested) in omitted.iter().zip(requested) {
+        assert_eq!(item["path"], requested);
+    }
+}
+
+#[test]
+fn source_packet_is_not_repeated_on_a_worker_revision() {
+    let workspace = OwnershipWorkspace::new();
+    let source = workspace.0.join("project/src/owned");
+    std::fs::write(&source, "original source").unwrap();
+    let mut h = workspace.harness();
+    start_lead(&mut h);
+    let start = spawn_with_sources(&mut h, "assign", json!(["src/owned"]), json!([]));
+    let turn = connect_worker(&mut h, &start, "worker");
+    let original = turn["params"]["input"][0]["text"].as_str().unwrap();
+    assert_eq!(
+        source_packet(original).1["files"][0]["content"],
+        "original source"
+    );
+    finish(&mut h, "worker", "completed");
+    std::fs::write(&source, "updated source").unwrap();
+
+    let requests = tool(
+        &mut h,
+        "revise",
+        "revise",
+        json!({"id":"luna-1","feedback":"Check the empty input."}),
+    );
+    let turn = requests
+        .iter()
+        .find(|r| r["method"] == "turn/start")
+        .unwrap();
+    let revision = turn["params"]["input"][0]["text"].as_str().unwrap();
+    assert!(revision.contains("Check the empty input."));
+    assert!(!revision.contains(SOURCE_SNAPSHOT));
+    assert_eq!(h.agents[1].handoff.prompt.as_deref(), Some(original));
+}
