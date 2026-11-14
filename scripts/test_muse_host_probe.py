@@ -39,12 +39,18 @@ class FakeHost:
 
 class SubscriptionGateTests(unittest.TestCase):
     def test_requires_browser_account_before_refresh_or_inference(self):
-        for account in ("apiKey", "envKey", "loggedOut", "unknown"):
+        for account in ("apiKey", "envKey", "unknown"):
             with self.subTest(account=account):
                 host = FakeHost(account, {"subscriptionActive": True})
                 with self.assertRaisesRegex(RuntimeError, "browser sign-in"):
                     probe.subscription_probe(host, "test-id", infer=True)
                 self.assertEqual(host.calls, ["account/read"])
+
+    def test_inaccessible_login_stops_before_refresh_or_inference(self):
+        host = FakeHost("loggedOut", {"subscriptionActive": True})
+        with self.assertRaisesRegex(RuntimeError, "could not access an existing Muse login"):
+            probe.subscription_probe(host, "test-id", infer=True)
+        self.assertEqual(host.calls, ["account/read"])
 
     def test_inactive_or_unknown_entitlement_never_sends_prompt(self):
         for usage in ({}, {"subscriptionActive": False}, {"subscriptionActive": "true"}):

@@ -1,6 +1,6 @@
 # Muse Code subscription feasibility
 
-Updated 2026-11-13 against official documentation, the published Rust crate, and two verified official macOS hosts. **The Muse provider remains disabled in the desktop app.** Live cloud inference is pending browser sign-in and an active plan.
+Updated 2026-11-14. **The Muse provider remains disabled in the desktop app.** The installed host confirmed an active subscription and returned a live allowance reading. The confined host could not access the same login, so plan-backed inference remains unverified.
 
 ## Experimental plan check
 
@@ -13,7 +13,9 @@ python3 scripts/muse-host-probe.py --muse /path/to/verified-muse --plan-test
 
 `--plan-status` checks the billing route without inference. `--plan-test` sends one fixed synthetic prompt capped at 32 output tokens. Both require the host's effective `accountLogin` lane and a fresh `subscriptionActive: true`. An API key, missing entitlement, or any error stops the probe. On success the probe reports whether the host observed usage after the reply. Usage is reported in whole percentages, so this short test may produce no visible change. A host-reported observation is separate from invoice verification.
 
-The probe uses a fresh workspace and configuration, a cleared environment, contributor mode off, and a host sandbox that blocks home reads and child executables. It permits outbound TCP 443 for the official host to contact Meta. Muse owns the credential lookup. The probe does not read auth files, copy credentials, print account details, or transmit real chat text. The live preflight on this Mac reached the account gate and stopped because the host did not have a browser login. The mock completed and cancelled a stateless request. Four separate mock responses requesting shell, file read, file write, and web search triggered zero tool or session events and zero follow-up model requests.
+The probe uses a fresh workspace and configuration, a cleared environment, contributor mode off, and a host sandbox that blocks home reads and child executables. It permits outbound TCP 443 for the official host to contact Meta. Muse owns the credential lookup. The probe does not read auth files, copy credentials, print account details, or transmit real chat text. The mock completed and cancelled a stateless request. Four separate mock responses requesting shell, file read, file write, and web search triggered zero tool or session events and zero follow-up model requests.
+
+On 2026-11-14, `muse usage --json` returned an allowance. A separate status-only MSP check launched the verified installed binary with normal Muse sign-in access and confirmed both `accountLogin` and `subscriptionActive: true`. No model request ran in that check. With the external sandbox in place, exact Muse-owned file exceptions and native Keychain lookup still left `account/read` at `loggedOut`. A diagnostic `usage/refresh` returned `-32081` (`usageRefreshUnavailable`). The normal probe stopped before inference. No relogin is needed when `muse usage` already shows an allowance. Direct access to the login Keychain database, broad home-directory reads, and removing the sandbox from the inference run are outside this experiment.
 
 Run the billing-gate unit tests with `python3 -B -m unittest discover -s scripts -p test_muse_host_probe.py`.
 

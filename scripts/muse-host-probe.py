@@ -713,7 +713,8 @@ def subscription_probe(host, command_id, *, infer):
         account = host.rpc(identity, "account/read", {})
         require(
             account.get("state") != "loggedOut",
-            "Muse host requires browser sign-in. Run muse login.",
+            "The confined host could not access an existing Muse login. "
+            "Check 'muse usage' to distinguish a missing login from a sandbox handoff failure.",
         )
         require(
             account.get("state") == "accountLogin" and account.get("credentialRequired") is True,
