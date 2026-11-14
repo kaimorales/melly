@@ -77,6 +77,15 @@ test('settings keep Qwen routes separate, show native credential boundary, and c
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
 });
 
+test('Claude setup distinguishes API access from a school or subscription account', async ({ page }) => {
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Configure Claude' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText('Use an Anthropic Console API key. Claude plans and school accounts do not automatically include API access.')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Add key securely' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /sign in|connect.*plan/i })).toHaveCount(0);
+});
+
 test('provider picker shows only connected providers and explicit Demo', async ({ page }) => {
   await page.getByRole('button', { name: 'Choose provider' }).click();
   await expect(page.getByRole('option', { name: /Demo.*Mock/ })).toBeVisible();
