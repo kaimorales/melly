@@ -25,6 +25,7 @@ fn catalog_has_explicit_isolated_billing_routes() {
             "mock",
             "chatgpt",
             "muse",
+            "muse-api",
             "claude",
             "gemini",
             "grok",
@@ -51,14 +52,18 @@ fn catalog_has_explicit_isolated_billing_routes() {
         providers::credential_id(&standard),
         providers::credential_id(&plan)
     );
-    assert!(
-        c.iter()
-            .find(|p| p.id == "muse")
-            .unwrap()
-            .disabled_reason
-            .is_some()
+    let mut muse = connection("muse");
+    assert!(providers::validate_connection(&muse).is_ok());
+    let api = connection("muse-api");
+    assert_eq!(api.base_url, "https://api.meta.ai/v1");
+    assert_ne!(
+        providers::credential_id(&muse),
+        providers::credential_id(&api)
     );
-    assert!(providers::validate_connection(&connection("muse")).is_err());
+    muse.base_url = api.base_url;
+    assert!(providers::validate_connection(&muse).is_err());
+    muse.base_url = "https://example.com/v1".into();
+    assert!(providers::validate_connection(&muse).is_err());
 }
 
 #[test]

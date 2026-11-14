@@ -167,10 +167,22 @@ impl Transport for Fake {
     }
     async fn web_search(
         &self,
-        _: &str,
-        _: &str,
+        query: &str,
+        key: &str,
         _: CancellationToken,
     ) -> anyhow::Result<Vec<Source>> {
+        if self.mode == "muse-api" {
+            assert_eq!(query, "Find a source for my question");
+            assert_eq!(key, "synthetic-search-key");
+            return Ok(vec![Source {
+                id: "web:example".into(),
+                kind: "web".into(),
+                url: Some("https://example.com/source".into()),
+                title: "Synthetic reference".into(),
+                snippet: "Search result text".into(),
+                ..Default::default()
+            }]);
+        }
         if self.mode == "web-failure" {
             anyhow::bail!("Search request limit reached (HTTP 429)");
         }
@@ -530,12 +542,64 @@ async fn disabled_host_and_second_stream_are_rejected() {
     let (e, f, c) = fixture("slow");
     let mut i = input(&c);
     i.provider_id = "muse".into();
+    i.model_id = "host-default".into();
+    i.folder_context = false;
     assert!(e.start(i, Arc::new(|_| {})).is_err());
     assert!(f.calls.lock().unwrap().is_empty());
     e.start(input(&c), Arc::new(|_| {})).unwrap();
     assert!(e.start(input(&c), Arc::new(|_| {})).is_err());
     e.stop(&c);
     finish(&e, &c).await;
+}
+
+#[tokio::test]
+async fn muse_api_search_uses_only_the_typed_query_and_passes_text_without_tools() {
+    let (engine, fake, chat) = fixture("muse-api");
+    let connection = engine.connection("muse-api").unwrap();
+    engine
+        .vault
+        .set(
+            &melly_core::providers::credential_id(&connection),
+            "synthetic-meta-key",
+        )
+        .unwrap();
+    engine
+        .vault
+        .set(melly_core::engine::SEARCH_KEY_ID, "synthetic-search-key")
+        .unwrap();
+    let mut turn = input(&chat);
+    turn.content = "Find a source for my question".into();
+    turn.provider_id = connection.provider_id;
+    turn.model_id = connection.model_id;
+    turn.folder_context = false;
+    turn.web_search = true;
+    let file = melly_core::engine::TextAttachment {
+        name: "sample.txt".into(),
+        text: "Synthetic file payload".into(),
+    };
+    let result = engine
+        .start_with_attachment(turn, Some(&file), Arc::new(|_| {}))
+        .unwrap();
+    finish(&engine, &chat).await;
+    let calls = fake.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    let request = &calls[0];
+    assert!(request.tools.is_empty() && !request.web_search);
+    let user = &request.messages.last().unwrap().content;
+    assert!(user.contains(&file.text) && user.contains("Search result text"));
+    assert!(!user.contains("synthetic-search-key"));
+    let store = engine.store.lock().unwrap();
+    assert_eq!(
+        store.message(&result.id).unwrap().sources[0].id,
+        "web:example"
+    );
+    assert!(
+        !store
+            .context(&chat)
+            .unwrap()
+            .iter()
+            .any(|message| message.content.contains(&file.text))
+    );
 }
 #[tokio::test]
 async fn native_search_cannot_use_separately_billed_fallback_tool() {

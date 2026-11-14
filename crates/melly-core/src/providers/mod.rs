@@ -19,6 +19,12 @@ pub async fn list_models(
 ) -> Result<Vec<ModelInfo>> {
     transport::check_cancel(&cancel)?;
     validate_connection(connection)?;
+    if connection.provider_id == "muse" {
+        return Ok(vec![ModelInfo {
+            id: connection.model_id.clone(),
+            name: "Host default".into(),
+        }]);
+    }
     if connection.provider_id == "mock" {
         return Ok(vec![ModelInfo {
             id: "melly-demo".into(),
@@ -68,6 +74,10 @@ pub async fn stream(
 ) -> Result<()> {
     transport::check_cancel(&cancel)?;
     validate_connection(&request.connection)?;
+    ensure!(
+        request.connection.provider_id != "muse",
+        "Muse requires its isolated plan connection"
+    );
     let observer_cancel = cancel.clone();
     let guarded: ProviderSink = std::sync::Arc::new(move |event| {
         if !observer_cancel.is_cancelled() {
