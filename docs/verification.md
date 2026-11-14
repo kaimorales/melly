@@ -2,6 +2,16 @@
 
 Local verification on 2026-11-13, Apple Silicon macOS. The desktop uses Rust and the system WKWebView. No product release was published. Git checkpoints are pushed to `main` as requested.
 
+## Provider setup and Ollama Cloud follow-up
+
+The current full run passed `npm run check`, `npm test` (**128 Rust tests and 59 Playwright UI tests**), and `npm run build`. One opt-in native Keychain roundtrip remained ignored in the automated suite. The Rust tests cover isolated billing routes, folder boundaries, stream cancellation, Ollama catalog/request shapes and mock tool continuation; they do not prove live provider access.
+
+The native provider key field was exercised in an isolated application profile with a synthetic key: typing, saving and removing it, keyboard navigation, Escape, provider switching and both appearances were checked. The final code was also inspected in that isolated app: the key placeholder is centered, the desktop starts with Connect provider instead of Demo, and Ollama Cloud shows its API-key and credit route in Light and Dark. The synthetic key was removed. No real provider credentials or chats were used for these checks.
+
+The 12.89 MiB production bundle passed `codesign --verify --deep --strict` and was copied to `target/provider-update-20261113b/Melly.app`. The user's previous Melly build was left running; the production bundle itself was not launched against the user's profile. Quit the old app before opening this copy. Its ad-hoc signature may require the normal ChatGPT reconnect, as with prior development builds. No Mac password or Keychain access-rule change is required by this update.
+
+Ollama Cloud uses the documented direct cloud API, not a local runtime. Ollama's current pricing says included plan credits are used before any purchased credits. Account entitlement, billing and inference are still pending a live Ollama key. Muse remains disabled; see [the host verification](muse.md).
+
 ## Provider reliability follow-up
 
 The provider changes through `5cef14a` passed `npm run check` and `npm test`: **122 Rust tests passed**, one optional native Keychain test was ignored, and **50 Playwright UI tests passed**. The tests include Claude mixed and paused searches, bounded continuation and Stop, model discovery, safe HTTP error messages, billing-route isolation and cross-folder denial. They use synthetic data and do not establish live provider access.
@@ -38,7 +48,7 @@ The separate native Keychain check passed (1 test, 0 failures, 0.06 seconds), wi
 - Fragmented SSE, tool-call fragments, rate limits, broken connections, missing terminal events, output limits and cancellation are fixtures. A failed external search produces a visible error and cannot finish as a successful searched reply.
 - Stop preserves partial output, prevents late deltas, and allows another turn. Background streams cannot alter another selected conversation. Retry does not duplicate the user message and is unavailable on older history pages.
 - SQLite persistence, bounded pagination, literal chat search (including `%`, `_`, `!`), exact message citation navigation, renamed sources outside recent history, and crash-interrupted notices have regressions.
-- Startup never decrypts credentials or performs model discovery. A credential vault failure leaves history and Demo usable. Native secret input never passes through React, and HTTP errors omit response bodies and secrets.
+- Startup never decrypts credentials or performs model discovery. A credential vault failure leaves history usable. The mock provider remains available to developer tests; it is hidden in the desktop product. Native secret input never passes through React, and HTTP errors omit response bodies and secrets.
 - ChatGPT fixtures cover app-owned registration, PKCE/state/nonce, loopback callbacks, signed identities, consent scopes, renewal, cancellation, generation races and immutable namespace selection. They do not authorize a real account.
 - Damaged/unreadable ChatGPT selector metadata leaves history and other providers available, preserves the original file on explicit recovery, and rejects a substituted symlink. Orderly Quit drains tracked token renewal/sign-in work independently of stopped chats; queued exchanges are cancelled and new auth work is rejected.
 
