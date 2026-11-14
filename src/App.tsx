@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import { backend, nativeApp } from './backend';
 import { NameDialog, SearchDialog } from './dialogs';
 import { ChatList } from './ChatList';
 import { ChatActions, DeleteChatDialog } from './ChatActions';
 import { MarkdownCodeBlock } from './CodeBlock';
+import { MarkdownInlineCode } from './MathFormula';
+import { normalizeMathDelimiters, remarkMathPresentation } from './math-markdown';
 import { Icon, ProviderIcon } from './icons';
 import { modelLabel, providerName, routeLabel, SettingsView } from './SettingsView';
 import { ModelPicker, ProviderPicker } from './ModelPickers';
@@ -28,6 +31,7 @@ type NameAction = { kind: 'new-folder' | 'rename-folder' | 'rename-chat'; id?: s
 type StreamBuffer = { chatId: string; text: string; sources?: Source[]; activity: string };
 
 function MessageView({ message, activity, theme, highlight, onSource, onRetry, retryEnabled, report }: { message: Message; activity?: string; theme: string; highlight: boolean; onSource: (source: Source) => void; onRetry: () => void; retryEnabled: boolean; report: (text: string) => void }) {
+  const markdown = useMemo(() => message.role === 'assistant' ? normalizeMathDelimiters(message.content) : message.content, [message.content, message.role]);
   const folderSources = message.sources.filter((source) => source.kind === 'chat');
   const webSources = message.sources.filter((source) => source.kind === 'web');
   if (message.role === 'user') return <div id={`message-${message.id}`} className={`message user-message ${highlight ? 'highlighted' : ''}`}>{message.content}</div>;
@@ -41,7 +45,7 @@ function MessageView({ message, activity, theme, highlight, onSource, onRetry, r
       {webSources.length > 0 && <><Icon name="globe" /><span>{webSources.length} web {webSources.length === 1 ? 'source' : 'sources'}</span></>}
     </div>}
     {activity && message.status === 'streaming' && <div className="stream-activity" role="status">{activity}</div>}
-    {message.content ? <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(url) => url.startsWith('melly-source:') ? url : defaultUrlTransform(url)} components={{
+    {message.content ? <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm, remarkMath, remarkMathPresentation]} urlTransform={(url) => url.startsWith('melly-source:') ? url : defaultUrlTransform(url)} components={{
       a: ({ href, children }) => {
         if (href?.startsWith('melly-source:')) {
           const source = message.sources.find((entry) => entry.id === href.slice('melly-source:'.length));
@@ -51,7 +55,8 @@ function MessageView({ message, activity, theme, highlight, onSource, onRetry, r
       },
       img: ({ alt }) => <span className="message-status">[Image{alt ? `: ${alt}` : ''}]</span>,
       pre: MarkdownCodeBlock,
-    }}>{message.content}</ReactMarkdown></div> : message.status === 'streaming' ? <span className="stream-pending" aria-label="Preparing response" /> : null}
+      code: MarkdownInlineCode,
+    }}>{markdown}</ReactMarkdown></div> : message.status === 'streaming' ? <span className="stream-pending" aria-label="Preparing response" /> : null}
     {message.sources.some((source) => !message.content.includes(`melly-source:${source.id}`)) && <div className="source-row">{message.sources.filter((source) => !message.content.includes(`melly-source:${source.id}`)).map((source) => <button key={source.id || `${source.title}-${source.url}`} className="source" aria-label={`Open source ${source.title}`} title={source.snippet || source.title} onClick={() => onSource(source)}><Icon name={source.kind === 'chat' ? 'message' : 'globe'} /><span>{source.title}</span><Icon name={source.kind === 'chat' ? 'right' : 'external'} /></button>)}</div>}
     {message.status !== 'streaming' && <div className="message-tools">
       {message.content && <button className="icon-button" aria-label="Copy response" title="Copy response" onClick={() => { void navigator.clipboard.writeText(message.content).then(() => report('Response copied.')).catch(() => report('Could not copy the response.')); }}><Icon name="copy" /></button>}

@@ -102,6 +102,11 @@ function start(input: SendInput) {
     ? `Your transit project is the strongest example.\n\nYou turned a messy ridership dataset into a clear recommendation. Tell the story around the question, your analysis, and what changed.\n\nKeep it focused on one result and one thing you learned. A short, specific story gives the interviewer something to build on.\n\nThis is a synthetic demo, using only example material from ${folders.find((folder) => folder.id === chat.folderId)?.title}.`
     : `This is a synthetic demo, so no provider has been contacted.\n\n${previous.length > 1 ? `Building on your earlier message, “${previous[previous.length - 2].content.slice(0, 100)}”, ` : ''}Start with one clear question, choose a specific example, and explain what changed. Keep the next step small enough to act on.\n\nConnect a provider in Settings to have a real conversation.`;
   if (/code|python/i.test(content)) answer += '\n\n```python\ndef summarize(items):\n    return [item.strip() for item in items if item.strip()]\n```';
+  if (/demonstrate latex/i.test(content)) answer = String.raw`This is a synthetic math preview. The identity $e^{i\pi}+1=0$ fits inline.
+
+$$
+\int_0^1 x^2\,dx=\frac{1}{3}
+$$`;
   if (/longer|long answer/i.test(content)) answer += '\n\n' + 'For this preview, the reply continues long enough to try stopping a response. Partial text remains in the chat, and retry uses the same user message. '.repeat(4);
   const chunks = answer.match(/.{1,13}|\n/g) || [];
   let cursor = 0;

@@ -1,5 +1,6 @@
 import { isValidElement, memo, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Icon } from './icons';
+import { MathFormula } from './MathFormula';
 import { codeLanguage, highlightCode, MAX_CODE_LENGTH, type SyntaxToken } from './syntax';
 
 const CodeBlock = memo(function CodeBlock({ code, language }: { code: string; language: string }) {
@@ -35,7 +36,8 @@ const CodeBlock = memo(function CodeBlock({ code, language }: { code: string; la
 
 export function MarkdownCodeBlock({ children }: { children?: ReactNode }) {
   const child = Array.isArray(children) ? children[0] : children;
-  if (!isValidElement<{ className?: string; children?: ReactNode }>(child) || typeof child.props.children !== 'string') return <pre>{children}</pre>;
+  if (!isValidElement<{ className?: string; children?: ReactNode; 'data-math-pending'?: boolean | string }>(child) || typeof child.props.children !== 'string') return <pre>{children}</pre>;
+  if (child.props.className?.includes('math-display')) return <MathFormula source={child.props.children.trimEnd()} display pending={child.props['data-math-pending'] === true || child.props['data-math-pending'] === 'true'} />;
   const language = /(?:^|\s)language-([^\s]+)/.exec(child.props.className || '')?.[1] || '';
   return <CodeBlock code={child.props.children} language={language} />;
 }

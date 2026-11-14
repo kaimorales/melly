@@ -10,7 +10,7 @@ On this Mac, open the local build:
 open target/release/bundle/macos/Melly.app
 ```
 
-From a fresh checkout, install Node 22+, stable Rust and Xcode Command Line Tools, then `npm ci`. Project scripts find the installed Rust toolchain without changing your shell.
+From a fresh checkout, install Node 22.12+, stable Rust and Xcode Command Line Tools, then `npm ci`. Project scripts find the installed Rust toolchain without changing your shell.
 
 ```sh
 npm run dev       # native Mac window + frontend hot reload
@@ -34,9 +34,11 @@ The first launch is empty and selects **Demo · Mock**. It makes no network requ
 
 Shortcuts: ⌘N new chat, ⌘K chat search, ⌘, settings. Shift-Enter inserts a newline. The sidebar collapses; long histories load in pages.
 
-Drag chats onto a folder to move them, hover to open a collapsed folder, or drop onto Recent to unfile them. Every chat has an ellipsis/right-click menu for rename, move and confirmed deletion. Fenced code has theme-aware syntax colors, a language label and exact-copy action; its highlighter loads only when needed and runs off the UI thread.
+Drag chats onto a folder to move them, hover to open a collapsed folder, or drop onto Recent to unfile them. Every chat has an ellipsis/right-click menu for rename and confirmed deletion. The header's chat menu retains Move to folder for keyboard access. Fenced code has theme-aware syntax colors, a language label and exact-copy action; its highlighter loads only when needed and runs off the UI thread.
 
-See the [native screenshot walkthrough](docs/demo.md) and [verification record](docs/verification.md). The signed local release is 11.86 MiB; a measured process-to-render launch on this Mac took 569 ms. Warm-cache measurements exclude cloud latency and the OS launch request.
+Replies render inline and display LaTeX with `$…$`, `$$…$$`, `\(...\)` and `\[…\]`. Equations inherit Light/Dark appearance and include accessible MathML. The renderer and fonts load locally only when needed, with bounded work off the UI thread. Code, ordinary prices and the original copied response stay intact; unsupported or incomplete equations remain readable as source. See [math rendering notes](docs/design/math.md).
+
+See the [native screenshot walkthrough](docs/demo.md) and [verification record](docs/verification.md). The signed local release is 12.78 MiB; its latest measured process-to-render launch on this Mac took 533 ms. This single warm-cache observation excludes cloud latency and the OS launch request.
 
 ## Accounts and billing
 

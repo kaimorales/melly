@@ -6,9 +6,9 @@ Local verification on 2026-11-13, Apple Silicon macOS. The desktop uses Rust and
 
 Run `npm run check`, `npm test`, and `npm run build`. `npm run check` checks TypeScript, Rust formatting and Clippy with warnings denied. `npm test` runs Rust plus Playwright browser UI tests. Browser tests use the labeled mock backend and do not prove native IPC or live provider access.
 
-Final automated run: **110 Rust tests passed** (104 core and 6 native login-state tests), **42 Playwright UI tests passed**, zero failures. One optional Keychain test is excluded from the default suite and was run separately below. TypeScript, formatting and Clippy passed. The UI suite includes reopening a pending browser sign-in and retaining its cancel action.
+Final automated run: **110 Rust tests passed** (104 core and 6 native login-state tests), **49 Playwright UI tests passed**, zero failures. One optional Keychain test is excluded from the default suite and was run separately below. TypeScript, formatting and Clippy passed. The UI suite includes reopening a pending browser sign-in and retaining its cancel action.
 
-The release build passed and produced `target/release/bundle/macos/Melly.app` (11.86 MiB); launch with `npm run launch`. This is a local ad-hoc signed build, not a notarized distribution. It requires no Rust, Node or development server at runtime.
+The release build passed and produced `target/release/bundle/macos/Melly.app` (12.78 MiB); launch with `npm run launch`. This is a local ad-hoc signed build, not a notarized distribution. It requires no Rust, Node or development server at runtime.
 
 The initial bundle had only a linker signature and failed strict resource-seal verification. The build now explicitly sets macOS `signingIdentity` to `-`, using [Tauri's documented local ad-hoc signing mode](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing). This signs the complete bundle without a signing certificate, Keychain password or Apple account; it does not claim notarization or permission to publish a release. Verify packaging with `codesign --verify --deep --strict target/release/bundle/macos/Melly.app`.
 
@@ -87,7 +87,7 @@ Provider-independent search without user-supplied keys remains a proposed Melly-
 
 ## Chat organization and syntax colors
 
-The 110-Rust/42-UI run above covers this checkpoint. The complete check, test and release-build commands passed; the final 11.86 MiB app passed strict bundle signature verification. UI coverage includes real pointer dragging, spring-open destinations, removal to Recent, edge scrolling, Escape/blur/outside cancellation, external-drop rejection, failed moves with preserved drafts, active-stream guards, captured-target deletion, deletion errors, keyboard menus and revocation of old folder permission. Rust verifies that deleting a chat removes its messages and both full-text/folder-search entries while preserving its sibling.
+The organization checkpoint passed 110 Rust tests and 42 UI tests. The complete check, test and release-build commands passed; its 11.86 MiB app passed strict bundle signature verification. UI coverage includes real pointer dragging, spring-open destinations, removal to Recent, edge scrolling, Escape/blur/outside cancellation, external-drop rejection, failed moves with preserved drafts, active-stream guards, captured-target deletion, deletion errors, keyboard menus and revocation of old folder permission. Rust verifies that deleting a chat removes its messages and both full-text/folder-search entries while preserving its sibling.
 
 The first HTML5 implementation passed Chromium tests but stalled during native Mac drags. A plain-text pasteboard probe did not fix that observed failure and was discarded. The final `useChatDrag` implementation uses an internal pointer gesture, six-pixel threshold, lightweight pointer-following preview and time-based edge scrolling. It writes no chat data to the system drag clipboard. New regressions verify that it never starts an OS drag and stops scroll work when focus is lost.
 
@@ -98,6 +98,18 @@ A live ChatGPT Python response was inspected with colored keywords, function nam
 Verified application source: `b12be21` (including the native dragging correction `ea46233`). As with earlier ad-hoc rebuilds, final packaging required official ChatGPT reconnect with the same account and plan scopes. The synthetic follow-up completed with `6` on `gpt-5.6-terra`; after ordinary Quit and relaunch of that same build, Retry completed again without another sign-in. No Mac password prompt or credential access-rule change was involved. History and the unfiled chat persisted. Melly was left open in the user's Dark/14-point appearance with the original model selected. The fresh release startup record reported **470 ms** process-to-rendered UI on this warm-cache relaunch; this is a single local observation, not a controlled performance benchmark or a cold-launch claim.
 
 The files/coding/knowledge-graph request remains [a research proposal](research/workspace-and-graph.md). No workspace tab, file tools, Pi/OpenCode runtime or additional OAuth flow was added.
+
+## Simple chat menus and LaTeX
+
+The sidebar's right-click and ellipsis menus now expose only Rename and Delete. Checkpoint `1f3d47a` was tested and pushed separately. Eleven chat-management regressions passed, including the absent folder selector, keyboard focus, active-stream guards and existing drag behavior. The header retains the keyboard-accessible Move to folder alternative. On the final Mac build, right-click visibly exposed exactly the two actions, and Rename changed the synthetic math chat to **LaTeX demo**.
+
+The final full run passed `npm run check`, `npm test` (110 Rust and 49 UI tests), `npm run build`, and strict deep bundle-signature verification. `npm audit --omit=dev` reported zero vulnerabilities. Seven math UI regressions cover the four delimiter forms, both themes, local font loading, MathML, exact copying, code/prices, malformed/unsafe/oversized expressions, isolated macros, unavailable workers, unfinished blocks, wide-equation scrolling and streaming/Stop. An added whitespace case first failed, then passed after explicit `\( … \)` delimiters were exempted from the single-dollar price heuristic.
+
+The native release is 12.78 MiB. Its 262.16 kB KaTeX worker, 30.25 kB stylesheet and bundled fonts load only when math appears; the production startup JavaScript was checked to exclude the renderer. The app uses local assets and keeps backend provider/persistence behavior unchanged. Dependency and font notices ship in `public/licenses/`; the fonts' separate OFL license was checked against their embedded metadata.
+
+A live ChatGPT plan reply on `gpt-5.6-terra` rendered Euler's identity inline, a definite integral and a matrix in the native WKWebView. Both [Light](screenshots/native-math-light.png) and [Dark](screenshots/native-math-dark.png) were visually inspected; the captures contain only the synthetic prompt/reply. The final build needed the established official reconnect flow after its ad-hoc signature changed. The same account/plan permissions were used; credential access rules were not relaxed. After ordinary Quit and relaunch, the saved equations reappeared and a new live follow-up rendered `2+2=4` without signing in again. The app was left open in the user's Light/14-point appearance.
+
+The fresh `debugBuild: false` startup record changed to **533 ms** process-to-rendered UI on that relaunch. This is a single warm-cache observation on this Mac, not a controlled cold-start benchmark. KaTeX handles supported math notation; it does not compile complete LaTeX documents. Invalid or unsupported equations stay readable as source.
 
 ## Live checks still required
 

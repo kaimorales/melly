@@ -146,6 +146,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .markdown table { display: block; border-collapse: collapse; max-width: 100%; overflow-x: auto; margin: 18px 0; font-size: .9em; }
 .markdown th, .markdown td { padding: 9px 12px; border: 1px solid var(--rule); text-align: left; font-weight: 400; }
 .markdown hr { border: 0; border-top: 1px solid var(--rule); margin: 24px 0; }
+.math-expression { color: inherit; }
+.math-inline { display: inline-block; max-width: 100%; vertical-align: baseline; }
+.math-block { display: block; max-width: 100%; margin: 20px 0; padding: 8px 0; overflow-x: auto; overflow-y: hidden; }
+.math-expression .katex-display { margin: 0; }
+.math-source { font: .9em ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .retrieval-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--secondary); font-size: 12px; line-height: 20px; margin: 0 0 14px; }
 .retrieval-line .icon { width: 14px; height: 14px; }
 .retrieval-line .dot { color: var(--muted); margin: 0 1px; }
