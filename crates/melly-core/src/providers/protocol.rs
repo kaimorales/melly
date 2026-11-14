@@ -240,6 +240,22 @@ pub(crate) fn models(provider: &str, value: Value) -> Result<Vec<ModelInfo>> {
         if provider == "chatgpt" && model["visibility"] != "list" {
             continue;
         }
+        // Gemini also lists embedding-only models. Leave unknown capability
+        // metadata visible rather than guessing that a new model cannot chat.
+        if provider == "gemini"
+            && model["supportedGenerationMethods"]
+                .as_array()
+                .is_some_and(|methods| {
+                    !methods.iter().any(|method| {
+                        matches!(
+                            method.as_str(),
+                            Some("generateContent" | "streamGenerateContent")
+                        )
+                    })
+                })
+        {
+            continue;
+        }
         let (id, name) = if provider == "chatgpt" {
             (model["slug"].as_str(), model["display_name"].as_str())
         } else if provider == "gemini" {
@@ -407,5 +423,22 @@ mod tests {
             ["b", "a"]
         );
         assert!(models("chatgpt", json!({"error":{"message":"synthetic"}})).is_err());
+    }
+
+    #[test]
+    fn gemini_catalog_keeps_chat_models_and_omits_explicitly_non_generating_models() {
+        let result = models("gemini", json!({"models":[
+            {"name":"models/chat-example", "displayName":"Chat example", "supportedGenerationMethods":["countTokens", "generateContent"]},
+            {"name":"models/embedding-example", "displayName":"Embedding", "supportedGenerationMethods":["embedContent"]},
+            {"name":"models/unknown-example", "displayName":"Unknown capabilities"}
+        ]})).unwrap();
+        assert_eq!(
+            result
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["chat-example", "unknown-example"]
+        );
+        assert_eq!(result[0].name, "Chat example");
     }
 }

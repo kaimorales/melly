@@ -25,10 +25,7 @@ pub async fn list_models(
             name: "Melly demo · Mock".into(),
         }]);
     }
-    let url = public_url(&format!(
-        "{}/models",
-        catalog::normalized_base(&connection.base_url)
-    ))?;
+    let url = model_list_url(connection)?;
     let request = authenticated(
         network::client()?.get(url),
         &connection.provider_id,
@@ -39,6 +36,25 @@ pub async fn list_models(
         &connection.provider_id,
         transport::read_json(response, &connection.provider_id, &cancel).await?,
     )
+}
+
+fn model_list_url(connection: &Connection) -> Result<url::Url> {
+    let mut url = public_url(&format!(
+        "{}/models",
+        catalog::normalized_base(&connection.base_url)
+    ))?;
+    // Both providers default to small pages; request the documented maximum
+    // once while preserving the existing bounded response and model limits.
+    match connection.provider_id.as_str() {
+        "claude" => {
+            url.query_pairs_mut().append_pair("limit", "1000");
+        }
+        "gemini" => {
+            url.query_pairs_mut().append_pair("pageSize", "1000");
+        }
+        _ => {}
+    }
+    Ok(url)
 }
 
 pub async fn stream(
@@ -131,4 +147,38 @@ pub async fn web_search(query: &str, key: &str, cancel: CancellationToken) -> Re
             )
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_discovery_requests_documented_page_sizes_without_changing_other_routes() {
+        for spec in catalog()
+            .into_iter()
+            .filter(|p| !matches!(p.id.as_str(), "mock" | "muse" | "custom"))
+        {
+            let connection = Connection {
+                provider_id: spec.id.clone(),
+                base_url: spec.base_url.clone(),
+                model_id: spec.default_model,
+            };
+            let url = model_list_url(&connection).unwrap();
+            let expected = match spec.id.as_str() {
+                "claude" => Some(("limit", "1000")),
+                "gemini" => Some(("pageSize", "1000")),
+                _ => None,
+            };
+            let pairs: Vec<_> = url
+                .query_pairs()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect();
+            match expected {
+                Some((key, value)) => assert_eq!(pairs, [(key.to_string(), value.to_string())]),
+                None => assert!(pairs.is_empty(), "unexpected query for {}", spec.id),
+            }
+            assert!(url.as_str().starts_with(&spec.base_url));
+        }
+    }
 }
