@@ -21,7 +21,6 @@ const paths: Record<string, string> = {
   lock: 'M7 10V7a5 5 0 0 1 10 0v3M6 10h12a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1Z',
   tune: 'M3 7h18M3 17h18M7 4v6M16 14v6',
   spark: 'M12 3v18M3 12h18M5.6 5.6l12.8 12.8M5.6 18.4 18.4 5.6',
-  cloud: 'M6.5 19h11a4.5 4.5 0 0 0 .4-8.98A6.1 6.1 0 0 0 6 8.8 5.1 5.1 0 0 0 6.5 19Z',
 };
 
 export function Icon({ name, className = '', style }: { name: string; className?: string; style?: CSSProperties }) {
@@ -36,8 +35,9 @@ export function ProviderIcon({ id, theme, small = false }: { id: string; theme: 
     'qwen-standard': 'qwen.png', 'qwen-token-plan': 'qwen.png', moonshot: `kimi-${theme === 'light' ? 'light' : 'dark'}.svg`,
   };
   const className = small ? 'provider-logo' : 'provider-icon';
+  if (id === 'ollama') return <span className={`${className} provider-ollama`}><img src="/providers/ollama.svg" alt="" /></span>;
   if (file[id]) return <img className={className} src={`/providers/${file[id]}`} alt="" />;
-  if (id === 'custom' || id === 'mock' || id === 'ollama') return <Icon name={id === 'custom' ? 'tune' : id === 'ollama' ? 'cloud' : 'spark'} className={`${className} provider-icon-custom`} />;
+  if (id === 'custom' || id === 'mock') return <Icon name={id === 'custom' ? 'tune' : 'spark'} className={`${className} provider-icon-custom`} />;
   const initials: Record<string, string> = { claude: 'C', gemini: 'G', 'muse-api': 'M', deepseek: 'D', moonshot: 'K' };
   return <span aria-hidden="true" className={`${className} provider-letter`} style={small ? { fontSize: 15 } : undefined}>{id.startsWith('qwen') ? 'Q' : initials[id] || id[0].toUpperCase()}</span>;
 }

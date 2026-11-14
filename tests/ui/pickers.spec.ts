@@ -85,6 +85,8 @@ test('successful ChatGPT sign-in discovers account models without startup discov
   await fixture(page, []);
   expect(await page.evaluate(() => window.__pickerFixture.calls)).toEqual([]);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const browse = page.getByText('Browse providers', { exact: true });
+  await browse.click();
   await page.getByRole('button', { name: 'Configure ChatGPT', exact: true }).click();
   await page.getByRole('button', { name: 'Continue with ChatGPT', exact: true }).click();
   await expect(page.getByText('Sign-in pending', { exact: true })).toBeVisible();
@@ -93,11 +95,24 @@ test('successful ChatGPT sign-in discovers account models without startup discov
   await expect(page.getByText('Fixture model one', { exact: true })).toBeVisible();
   expect(await page.evaluate(() => window.__pickerFixture.calls.map(call => call.providerId))).toEqual(['chatgpt']);
   await page.getByRole('button', { name: 'Close provider settings' }).click();
+  await expect(page.getByRole('button', { name: 'Configure ChatGPT' })).toBeFocused();
+  await browse.click();
+  await expect(page.getByRole('button', { name: 'Configure ChatGPT' })).toBeVisible();
   await page.getByRole('button', { name: 'New Chat', exact: true }).click();
   await page.getByRole('button', { name: 'Choose provider' }).click();
   await page.getByRole('option', { name: /ChatGPT/ }).click();
   await page.getByRole('option', { name: /Fixture model two/ }).click();
   expect(await page.evaluate(() => window.__pickerFixture.calls.length)).toBe(1);
+});
+
+test('a saved Qwen Token Plan keeps the shared provider row visible', async ({ page }) => {
+  await fixture(page, ['qwen-token-plan']);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Configure Claude' })).toBeHidden();
+  const action = page.getByRole('button', { name: 'Configure QwenCloud' });
+  await expect(action).toHaveText('Manage');
+  await action.click();
+  await expect(page.getByRole('button', { name: 'Token Plan', exact: true })).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('changing a custom endpoint requires a separate model discovery result', async ({ page }) => {

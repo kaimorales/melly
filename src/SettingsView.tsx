@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { backend, nativeApp } from './backend';
 import { ApiKeyField, type ApiKeyFieldHandle } from './ApiKeyField';
 import { Dialog } from './dialogs';
@@ -96,18 +96,54 @@ function ProviderDialog({ initialId, data, theme, onClose, refresh }: { initialI
 export function SettingsView({ data, theme, onSettings, refresh, onSeed, report }: { data: Bootstrap; theme: string; onSettings: (settings: Settings) => Promise<void>; refresh: () => Promise<Bootstrap>; onSeed: () => Promise<void>; report: (message: string) => void }) {
   const [providerId, setProviderId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState(data.settings.systemPrompt); const [promptSaved, setPromptSaved] = useState(false);
+  const providerGroup = useRef<HTMLDivElement>(null);
   const update = (patch: Partial<Settings>) => { void onSettings({ ...data.settings, ...patch }).catch((reason) => report(String(reason))); };
   const providers = [...data.providers.filter((provider) => provider.id !== 'mock' && provider.id !== 'qwen-token-plan'), ...data.providers.filter((provider) => !nativeApp && provider.id === 'mock')];
+  const tokenPlanConfigured = data.providers.some((provider) => provider.id === 'qwen-token-plan' && provider.configured);
+  const configured: ReactNode[] = [];
+  const available: ReactNode[] = [];
+
+  for (const provider of providers) {
+    const qwen = provider.id === 'qwen-standard';
+    const isConfigured = provider.configured || (qwen && tokenPlanConfigured);
+    const name = qwen ? 'QwenCloud' : providerName(provider);
+    const route = qwen ? 'Standard API or Token Plan' : provider.id === 'mock' ? 'Synthetic preview' : provider.id === 'moonshot' ? 'General API key' : provider.id === 'ollama' ? 'API key · plan or usage credits' : provider.id === 'custom' ? 'API key · OpenAI-compatible' : routeLabel(provider);
+    const status = qwen && isConfigured ? 'Key saved' : provider.status;
+    const action = provider.disabledReason ? 'Details' : isConfigured ? 'Manage' : provider.id === 'chatgpt' ? 'Connect' : qwen || provider.id === 'custom' ? 'Configure' : 'Add key';
+    const initialId = qwen && !provider.configured && tokenPlanConfigured ? 'qwen-token-plan' : provider.id;
+    const rows = isConfigured ? configured : available;
+    rows.push(<div className="provider-row" key={provider.id}>
+      <ProviderIcon id={provider.id} theme={theme} />
+      <div className="provider-copy">
+        <div className="provider-name">{name}</div>
+        <div className="provider-description">{route}{provider.id !== 'custom' && <><span className="provider-separator">·</span>{status}</>}</div>
+      </div>
+      <button className="provider-action" data-provider-action={provider.id} aria-label={`Configure ${name}`} onClick={() => setProviderId(initialId)}>
+        {action}{(isConfigured || provider.disabledReason) && <Icon name="chevron" />}
+      </button>
+    </div>);
+  }
+
+  const closeProvider = () => {
+    setProviderId(null);
+    const rowId = providerId === 'qwen-token-plan' ? 'qwen-standard' : providerId;
+    // Saving or removing a key can move the row while its dialog is open.
+    requestAnimationFrame(() => {
+      if (document.activeElement !== document.body) return;
+      const rowAction = Array.from(providerGroup.current?.querySelectorAll<HTMLButtonElement>('[data-provider-action]') ?? [])
+        .find((button) => button.dataset.providerAction === rowId);
+      if (rowAction && !rowAction.closest('details:not([open])')) rowAction.focus();
+      else providerGroup.current?.querySelector('summary')?.focus();
+    });
+  };
+
   return <div className="settings-scroll"><div className="settings-content">
-    <section className="settings-section" aria-labelledby="providers-title"><h2 id="providers-title">Providers</h2><div className="provider-group">
-      {providers.map((provider) => {
-        const name = provider.id === 'qwen-standard' ? 'QwenCloud' : providerName(provider);
-        const route = provider.id === 'qwen-standard' ? 'Standard API or Token Plan' : provider.id === 'mock' ? 'Synthetic preview' : provider.id === 'moonshot' ? 'General API key' : provider.id === 'ollama' ? 'API key · plan or usage credits' : provider.id === 'custom' ? 'API key · OpenAI-compatible' : routeLabel(provider);
-        return <div className="provider-row" key={provider.id}>
-          <ProviderIcon id={provider.id} theme={theme} /><div className="provider-copy"><div className="provider-name">{name}</div><div className="provider-description">{route}{provider.id !== 'custom' && <><span className="provider-separator">·</span>{provider.id === 'qwen-standard' ? (data.providers.some((entry) => entry.id.startsWith('qwen') && entry.configured) ? 'Key saved' : 'Not connected') : provider.status}</>}</div></div>
-          <button className={`provider-action ${provider.configured || provider.disabledReason ? 'provider-action-quiet' : ''}`} aria-label={`Configure ${name}`} onClick={() => setProviderId(provider.id)}>{provider.disabledReason ? 'Details' : provider.id === 'chatgpt' && !provider.configured ? 'Connect' : provider.id === 'custom' || provider.id === 'qwen-standard' ? 'Configure' : provider.configured ? 'Manage' : 'Add key'}{(provider.configured || provider.disabledReason) && <Icon name="chevron" />}</button>
-        </div>;
-      })}
+    <section className="settings-section" aria-labelledby="providers-title"><h2 id="providers-title">Providers</h2><div className="provider-group" ref={providerGroup}>
+      {configured}
+      {available.length > 0 && <details className="provider-disclosure">
+        <summary><Icon name="plus" className="provider-disclosure-icon" />Browse providers<Icon name="chevron" className="provider-disclosure-chevron" /></summary>
+        {available}
+      </details>}
     </div></section>
     <section className="settings-section" aria-labelledby="appearance-title"><h2 id="appearance-title">Appearance</h2><div className="settings-group">
       <div className="settings-row"><span className="settings-row-label">Theme</span><div className="theme-options" role="group" aria-label="Theme">{['system', 'light', 'dark'].map((value) => <button key={value} aria-pressed={data.settings.theme === value} onClick={() => update({ theme: value })}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div></div>
@@ -122,5 +158,5 @@ export function SettingsView({ data, theme, onSettings, refresh, onSeed, report 
     </div></section>
     <section className="settings-section" aria-labelledby="search-title"><h2 id="search-title">Web search</h2><div className="settings-group"><div className="settings-row"><div><div className="settings-row-label">External search</div><div className="settings-row-description">{data.searchConfigured ? 'Tavily · search key saved' : 'Tavily · optional for providers without built-in search'}</div></div><div className="search-key-actions">{data.searchConfigured && <button className="button quiet" onClick={() => { void backend.invoke('remove_search_key').then(refresh).then(() => report('Search key removed.')).catch((reason) => report(String(reason))); }}>Remove key</button>}<button className="button" onClick={() => { void backend.invoke<boolean>('enter_search_key').then(async (saved) => { await refresh(); if (saved) report('Search key saved in Keychain.'); }).catch((reason) => report(String(reason))); }}>{data.searchConfigured ? 'Replace key' : 'Add key'}</button></div></div></div><p className="settings-note">Search runs only when you enable it for a message. External search uses its own billing.</p></section>
     {!nativeApp && <section className="settings-section" aria-labelledby="demo-title"><h2 id="demo-title">Try Melly</h2><div className="settings-group"><div className="settings-row"><div><div className="settings-row-label">Example conversations</div><div className="settings-row-description">Synthetic chats, folder references and citations</div></div><button className="button" onClick={() => { void onSeed().catch((reason) => report(String(reason))); }}>Try an example</button></div></div></section>}
-  </div>{providerId && <ProviderDialog key={providerId} initialId={providerId} data={data} theme={theme} onClose={() => setProviderId(null)} refresh={refresh} />}</div>;
+  </div>{providerId && <ProviderDialog key={providerId} initialId={providerId} data={data} theme={theme} onClose={closeProvider} refresh={refresh} />}</div>;
 }

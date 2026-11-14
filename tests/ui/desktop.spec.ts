@@ -62,6 +62,7 @@ test('shows explicit folder permission and opens a cited chat', async ({ page })
 
 test('settings keep Qwen routes separate, show native credential boundary, and change theme', async ({ page }) => {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByText('Browse providers', { exact: true }).click();
   await expect(page.getByText('QwenCloud', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Configure QwenCloud' }).click();
   await page.getByRole('button', { name: 'Token Plan', exact: true }).click();
@@ -79,6 +80,7 @@ test('settings keep Qwen routes separate, show native credential boundary, and c
 
 test('Claude setup uses an API key rather than a subscription sign-in', async ({ page }) => {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByText('Browse providers', { exact: true }).click();
   await page.getByRole('button', { name: 'Configure Claude' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('button', { name: 'API key', exact: true })).toBeVisible();
@@ -109,6 +111,7 @@ test('reopening pending ChatGPT sign-in retains the cancel action', async ({ pag
     };
   });
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByText('Browse providers', { exact: true }).click();
   await page.getByRole('button', { name: 'Configure ChatGPT' }).click();
   await page.getByRole('button', { name: 'Continue with ChatGPT' }).click();
   await expect(page.getByRole('button', { name: 'Cancel sign-in' })).toBeEnabled();

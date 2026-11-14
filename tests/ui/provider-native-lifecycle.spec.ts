@@ -35,6 +35,7 @@ async function nativeFieldFixture(page: Page) {
   });
   await page.goto('/');
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByText('Browse providers', { exact: true }).click();
 }
 
 test('a system theme change updates the existing native field without replacing it', async ({ page }) => {
