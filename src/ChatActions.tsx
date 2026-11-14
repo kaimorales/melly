@@ -13,14 +13,14 @@ export type ChatActionsProps = {
   onClose: () => void;
 };
 
-export function ChatActions({ chat, folders, busy, onRename, onDelete, onMove, onClose }: ChatActionsProps) {
+export function ChatActions({ chat, folders, busy, onRename, onDelete, onMove, onClose, showMove = true }: ChatActionsProps & { showMove?: boolean }) {
   return <>
     <button className="menu-item" role="menuitem" onClick={() => { onClose(); onRename(chat); }}>Rename chat</button>
-    <label className="menu-field">Move to folder
+    {showMove && <label className="menu-field">Move to folder
       <select aria-label="Move to folder" disabled={busy} value={chat.folderId || ''} onChange={(event) => { onClose(); onMove(chat, event.target.value || null); }}>
         <option value="">No folder</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.title}</option>)}
       </select>
-    </label>
+    </label>}
     <button className="menu-item danger" role="menuitem" disabled={busy} title={busy ? 'Stop the response before deleting this chat' : undefined} onClick={() => { onClose(); onDelete(chat); }}>Delete chat</button>
   </>;
 }
@@ -56,7 +56,7 @@ export function ChatActionsMenu({ anchor, point, ...props }: ChatActionsProps & 
     const at = controls.indexOf(document.activeElement as HTMLElement);
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? controls.length - 1 : (at + (event.key === 'ArrowDown' ? 1 : -1) + controls.length) % controls.length;
     event.preventDefault(); controls[next]?.focus();
-  }}><ChatActions {...props} /></div>, document.body);
+  }}><ChatActions {...props} showMove={false} /></div>, document.body);
 }
 
 export function DeleteChatDialog({ chat, busy, onClose, onDelete }: { chat: Chat; busy: boolean; onClose: () => void; onDelete: (chat: Chat) => Promise<void> }) {

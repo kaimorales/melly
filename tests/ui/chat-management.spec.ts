@@ -132,12 +132,20 @@ test('deletion failures remain in the confirmation and keep the chat', async ({ 
   await expect(recent(page).getByRole('button', { name: 'Reading notes', exact: true })).toBeVisible();
 });
 
-test('row menu has a keyboard move alternative and restores focus on Escape', async ({ page }) => {
+test('row actions contain only rename and delete, with keyboard movement in the header', async ({ page }) => {
   const trigger = page.getByRole('button', { name: 'Chat options for Reading notes', exact: true });
   await trigger.focus(); await page.keyboard.press('Enter');
+  await expect(page.getByRole('menuitem')).toHaveText(['Rename chat', 'Delete chat']);
+  await expect(page.getByRole('combobox', { name: 'Move to folder' })).toHaveCount(0);
   await expect(page.getByRole('menuitem', { name: 'Rename chat' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(trigger).toBeFocused();
+  await page.getByRole('button', { name: 'Reading notes', exact: true }).click({ button: 'right' });
+  await expect(page.getByRole('menuitem')).toHaveText(['Rename chat', 'Delete chat']);
+  await expect(page.getByRole('combobox', { name: 'Move to folder' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Reading notes', exact: true }).click();
+  await page.getByRole('button', { name: 'Chat options', exact: true }).focus();
   await page.keyboard.press('Enter');
   await page.getByRole('combobox', { name: 'Move to folder' }).selectOption({ label: 'Writing' });
   await expect(folder(page, 'Writing').getByRole('button', { name: 'Reading notes', exact: true })).toBeVisible();
@@ -150,6 +158,9 @@ test('a generating chat cannot be dragged, moved or deleted', async ({ page }) =
   await expect(page.getByRole('button', { name: 'Interview prep', exact: true })).toHaveAttribute('draggable', 'false');
   await page.getByRole('button', { name: 'Chat options for Interview prep', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'Delete chat', exact: true })).toBeDisabled();
+  await expect(page.getByRole('combobox', { name: 'Move to folder' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Chat options', exact: true }).click();
   await expect(page.getByRole('combobox', { name: 'Move to folder' })).toBeDisabled();
 });
 
