@@ -10,7 +10,8 @@ Each native connection has one immutable base URL. Credentials are keyed by a SH
 | --- | --- | --- | --- |
 | Mock | No network | Synthetic adapter | `melly-demo` |
 | ChatGPT Plan | `https://api.openai.com/v1` | Responses | `gpt-6.1-sol`; replace with account discovery |
-| Meta Muse Code Plan | Disabled | No host started | None |
+| Meta Muse Code Plan (experimental) | Official local host over stdio | Stateless text completion | Host default |
+| Meta Model API (metered) | `https://api.meta.ai/v1` | Responses | `muse-spark-1.3` |
 | Claude API key | `https://api.anthropic.com/v1` | Messages | `claude-sonnet-5-5` |
 | Gemini API key | `https://generativelanguage.googleapis.com/v1beta` | Interactions | `gemini-4-hydrogen` |
 | Grok API key | `https://api.x.ai/v1` | Responses | `grok-4.7` |

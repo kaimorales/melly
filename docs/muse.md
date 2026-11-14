@@ -1,6 +1,12 @@
 # Muse Code subscription feasibility
 
-Updated 2026-11-14. **The Muse provider remains disabled in the desktop app.** The sandboxed probe completed a live text request after a separate browser login. The host confirmed an active plan and reported the account-login credential before and after the request. Its post-request allowance observation did not advance, so a quota deduction remains unverified.
+Updated 2026-11-14. The **experimental Muse Code Plan** row uses a private, temporary login and a pinned local host. The independently selectable **Meta Model API** row uses a metered API key for the official Responses API. The sandboxed probe completed a live text request after a separate browser login. The host confirmed an active plan and reported the account-login credential before and after the request. The allowance observation did not advance, so a quota deduction remains unverified.
+
+In desktop Settings, choose Meta Muse Code, then **Sign in with Meta**. The experiment uses the official Apple Silicon host at `~/.local/bin/muse-bin-1.4.20-R8619.1` and verifies its SHA-256 and SDK handshake. The temporary Muse-owned login lasts until Disconnect or normal app exit. Choose Meta Model API and enter its key to use the separate metered route. [Meta Model API quickstart](https://dev.meta.ai/docs/quickstart)
+
+In either route, the globe uses Melly's configured Tavily connection. Tavily receives the typed query. The attachment button supports one UTF-8 text file up to 24 KiB per message. Melly sends its contents for that turn over the selected provider route. Replies may quote source or attachment text and are saved in chat history. Plan replies arrive whole.
+
+The live Rust adapter test confirmed browser authorization, an active plan, and a text reply from the pinned sandboxed host. The automated tests cover attachment and web search boundaries with synthetic data. Live Meta Model API and Tavily checks require their respective keys.
 
 ## Experimental plan check
 
@@ -105,4 +111,4 @@ Meta describes SDK-driven desktop clients, while its subscription documentation 
 
 Questions for Meta: (1) Does a general-purpose desktop chat app driving the official host through its SDK qualify for Muse Code plan usage? (2) How can a client isolate its host-owned login and verify the effective plan lane before any inference? (3) How can a served session suppress all reminder agents and inherited extensions while retaining streaming and explicitly selected read-only tools? (4) Can `model/complete` guarantee an exact model and stream its result? Do not send these questions automatically.
 
-The experimental probe runs separately from the desktop app. The installed binary and generated inspection files live outside the repository.
+The developer probe can also run separately from the desktop app. The installed binary and generated inspection files live outside the repository.

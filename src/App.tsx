@@ -75,6 +75,8 @@ export default function App() {
   const [items, setItems] = useState<Message[]>([]); const [loading, setLoading] = useState(false);
   const [hasOlder, setHasOlder] = useState(false); const [viewingOlder, setViewingOlder] = useState(false);
   const [draft, setDraft] = useState(''); const [webSearch, setWebSearch] = useState(false); const [manualFolder, setManualFolder] = useState<boolean | null>(null);
+  const [attachment, setAttachment] = useState<{ id: string; name: string } | null>(null);
+  const [pickingAttachment, setPickingAttachment] = useState(false);
   const [running, setRunning] = useState<Set<string>>(new Set()); const [starting, setStarting] = useState(false); const sendingRef = useRef(false);
   const [notice, setNotice] = useState(''); const [sidebar, setSidebar] = useState(window.innerWidth > 600);
   const [moving, setMoving] = useState<Set<string>>(new Set()); const movingIds = useRef(new Set<string>());
@@ -173,6 +175,11 @@ export default function App() {
         }).catch((reason) => setNotice(errorText(reason)));
       });
       if (!mounted.current) connectionListener(); else unlisteners.push(connectionListener);
+      const museListener = await backend.listen<{ status: string }>('muse-update', (update) => {
+        if (update.status === 'disconnected') setAttachment(null);
+        void refresh().catch((reason) => setNotice(errorText(reason)));
+      });
+      if (!mounted.current) museListener(); else unlisteners.push(museListener);
       const initial = await backend.invoke<Bootstrap>('bootstrap');
       if (mounted.current) { setData(initial); setSelectedId(initial.chats[0]?.id || null); }
     };
@@ -233,22 +240,39 @@ export default function App() {
   const activeRun = !!selectedId && running.has(selectedId);
   const explicitFolder = requestsFolderContext(draft);
   const folderContext = !!selectedFolder && !!provider?.tools && (manualFolder === true || (explicitFolder && manualFolder !== false));
-  const webAvailable = !!provider && (provider.id === 'mock' || provider.nativeSearch || (provider.tools && !!data?.searchConfigured));
+  const museRoute = provider?.id === 'muse' || provider?.id === 'muse-api';
+  const webAvailable = !!provider && (provider.id === 'mock' || provider.nativeSearch || ((provider.tools || museRoute) && !!data?.searchConfigured));
   const sendAvailable = !!provider?.configured && !provider.disabledReason;
 
-  const selectChat = (chat: Chat) => {
+  const clearAttachment = () => {
+    if (attachment) void backend.invoke('remove_muse_attachment', { id: attachment.id }).catch(() => {});
+    setAttachment(null);
+  };
+  const pickAttachment = async () => {
+    const chat = selectedRef.current;
+    setPickingAttachment(true);
+    try {
+      const file = await backend.invoke<{ id: string; name: string } | null>('pick_muse_attachment');
+      if (file && chat === selectedRef.current) setAttachment(file);
+      else if (file) await backend.invoke('remove_muse_attachment', { id: file.id });
+    } catch (reason) { setNotice(errorText(reason)); }
+    finally { setPickingAttachment(false); }
+  };
+
+  const selectChat = (chat: Chat, preserveAttachment = false) => {
+    if (!preserveAttachment && chat.id !== selectedRef.current) clearAttachment();
     selectedRef.current = chat.id; setSelectedId(chat.id);
     setData((current) => current && !current.chats.some((entry) => entry.id === chat.id) ? { ...current, chats: [...current.chats, chat] } : current);
     setView('chat'); setHighlight(null); setNotice(''); followBottom.current = true;
     if (window.innerWidth <= 600) setSidebar(false);
   };
-  const createChat = async (folderId: string | null = null) => { const chat = await backend.invoke<Chat>('create_chat', { folderId }); await refresh(); selectChat(chat); setDraft(''); requestAnimationFrame(() => textarea.current?.focus()); return chat; };
+  const createChat = async (folderId: string | null = null, preserveAttachment = false) => { const chat = await backend.invoke<Chat>('create_chat', { folderId }); await refresh(); selectChat(chat, preserveAttachment); setDraft(''); requestAnimationFrame(() => textarea.current?.focus()); return chat; };
   const seed = async () => { const fresh = await backend.invoke<Bootstrap>('demo_seed'); setData(fresh); const chat = fresh.chats.find((entry) => entry.title === 'Interview prep') || fresh.chats[0]; if (chat) selectChat(chat); setWebSearch(true); };
   const saveSettings = async (settings: Settings) => { await backend.invoke('save_settings', { settings }); await refresh(); };
   const chooseProvider = async (next: ProviderView) => {
     if (!data || (!next.configured && next.id !== 'mock') || next.disabledReason) return;
     await saveSettings({ ...data.settings, defaultProvider: next.id, defaultModel: next.connection.modelId || next.defaultModel });
-    setWebSearch(false); setManualFolder(null); setPicker('models');
+    clearAttachment(); setWebSearch(false); setManualFolder(null); setPicker(next.id === 'muse' ? null : 'models');
   };
   const chooseModel = async (modelId: string) => {
     if (!data || !provider || !modelId.trim()) return;
@@ -257,15 +281,15 @@ export default function App() {
     setWebSearch(false); closePicker();
   };
   const send = async (retry = false) => {
-    if (!data || !provider || !sendAvailable || activeRun || sendingRef.current || (retry && (viewingOlder || loading)) || (!retry && !draft.trim())) return;
+    if (!data || !provider || !sendAvailable || activeRun || pickingAttachment || sendingRef.current || (retry && (viewingOlder || loading || !!attachment)) || (!retry && !draft.trim())) return;
     sendingRef.current = true; setStarting(true); setNotice(''); setHighlight(null); followBottom.current = true;
     let chatId = selectedId;
     try {
-      if (!chatId) { const chat = await createChat(); chatId = chat.id; }
+      if (!chatId) { const chat = await createChat(null, true); chatId = chat.id; }
       selectedRef.current = chatId;
       setRunning((current) => new Set(current).add(chatId!));
-      await backend.invoke<Message>('start_chat', { input: { chatId, content: draft.trim(), providerId: provider.id, modelId: model, webSearch: webSearch && webAvailable, folderContext, retry } });
-      if (!retry) setDraft(''); setManualFolder(null); await loadMessages(chatId); await refresh();
+      await backend.invoke<Message>('start_chat', { input: { chatId, content: draft.trim(), providerId: provider.id, modelId: model, webSearch: webSearch && webAvailable, folderContext, retry }, attachmentId: !retry && museRoute ? attachment?.id : undefined });
+      if (!retry) { setDraft(''); clearAttachment(); } setManualFolder(null); await loadMessages(chatId); await refresh();
     } catch (reason) { setNotice(errorText(reason)); if (chatId) setRunning((current) => { const next = new Set(current); next.delete(chatId!); return next; }); }
     finally { sendingRef.current = false; setStarting(false); textarea.current?.focus(); }
   };
@@ -327,7 +351,7 @@ export default function App() {
     removedChatIds.current.add(chat.id);
     setData((current) => current && { ...current, chats: current.chats.filter((entry) => entry.id !== chat.id) });
     if (selectedRef.current === chat.id) {
-      selectedRef.current = null; setSelectedId(null); setItems([]); setDraft(''); setManualFolder(null);
+      clearAttachment(); selectedRef.current = null; setSelectedId(null); setItems([]); setDraft(''); setManualFolder(null);
       setActivities({}); setHighlight(null); setHasOlder(false); setViewingOlder(false); ++messageRequest.current;
     }
     setNotice('Chat deleted.');
@@ -366,20 +390,22 @@ export default function App() {
           {selectedFolder && (folderContext || explicitFolder || manualFolder !== null) && <div className="folder-consent"><button aria-label={`Use other chats in ${selectedFolder.title}`} aria-pressed={folderContext} disabled={!provider?.tools} onClick={() => setManualFolder(!folderContext)}><Icon name={folderContext ? 'check' : 'folder'} />{provider?.tools ? `Use other chats in ${selectedFolder.title}` : 'This provider does not support folder references'}</button></div>}
           {!selectedFolder && explicitFolder && <div className="folder-consent"><Icon name="folder" /><span>Move this chat into a folder to use other chats.</span></div>}
           <form className="composer" onSubmit={(event) => { event.preventDefault(); void send(); }}>
+            {museRoute && attachment && <div className="attachment-draft"><span title={attachment.name}>{attachment.name}</span><button type="button" className="icon-button" aria-label="Remove attachment" disabled={starting} onClick={clearAttachment}><Icon name="close" /></button></div>}
             <textarea ref={textarea} aria-label="Message" rows={1} placeholder="Send a message" value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.key !== 'Enter') return;
               const shouldSend = data.settings.sendBehavior === 'cmd-enter' ? event.metaKey || event.ctrlKey : !event.shiftKey && !event.altKey;
               if (shouldSend) { event.preventDefault(); void send(); }
             }} />
             <div className="composer-controls">
+              {museRoute && nativeApp && <button type="button" className="round-control" aria-label="Attach text file" title="Attach one UTF-8 text file, up to 24 KiB" disabled={starting || activeRun || pickingAttachment} onClick={() => { void pickAttachment(); }}><Icon name="plus" /></button>}
               {selectedFolder && <button type="button" className="round-control" aria-label="Folder context" aria-pressed={folderContext} disabled={!provider?.tools} title={provider?.tools ? `Use other chats in ${selectedFolder.title}` : 'Folder context is unavailable for this provider'} onClick={() => setManualFolder(!folderContext)}><Icon name="folder" /></button>}
-              <button type="button" className="round-control" aria-label="Search the web" aria-pressed={webSearch && webAvailable} aria-disabled={!webAvailable} title={webAvailable ? (provider?.id === 'mock' ? 'Synthetic web search in Demo' : provider?.nativeSearch ? 'Use built-in web search' : 'Use external web search') : 'Set up external search in Settings'} onClick={() => { if (webAvailable) setWebSearch(!webSearch); else setNotice(provider?.tools ? 'Add an external search key in Settings to use web search with this provider.' : 'Web search is not available for this provider.'); }}><Icon name="globe" /></button>
+              <button type="button" className="round-control" aria-label="Search the web" aria-pressed={webSearch && webAvailable} aria-disabled={!webAvailable} title={webAvailable ? (provider?.id === 'mock' ? 'Synthetic web search in Demo' : provider?.nativeSearch ? 'Use built-in web search' : 'Use external web search') : 'Set up external search in Settings'} onClick={() => { if (webAvailable) setWebSearch(!webSearch); else setNotice(provider?.tools || museRoute ? 'Add an external search key in Settings to use web search with this provider.' : 'Web search is not available for this provider.'); }}><Icon name="globe" /></button>
               {provider ? <div className="model-pill" role="group" aria-label="Provider and model">
                 <button ref={providerButton} type="button" className="provider-picker-trigger" aria-label="Choose provider" title={`${providerName(provider)} · choose provider`} aria-expanded={picker === 'providers'} aria-haspopup="listbox" onClick={() => setPicker(picker === 'providers' ? null : 'providers')}><ProviderIcon id={provider.id} theme={theme} small /></button>
                 <span className="provider-divider" aria-hidden="true" />
-                <button ref={modelButton} type="button" className="model-picker-trigger" aria-label="Choose model" title="Choose model" aria-expanded={picker === 'models'} aria-haspopup="listbox" onClick={() => setPicker(picker === 'models' ? null : 'models')}><span className="model-name">{modelLabel(provider, model)}</span><span className="divider" /><span className="route">{routeLabel(provider)}</span><Icon name="down" /></button>
+                {provider.id === 'muse' ? <span className="model-picker-trigger"><span className="model-name">Host default</span><span className="divider" /><span className="route">Plan</span></span> : <button ref={modelButton} type="button" className="model-picker-trigger" aria-label="Choose model" title="Choose model" aria-expanded={picker === 'models'} aria-haspopup="listbox" onClick={() => setPicker(picker === 'models' ? null : 'models')}><span className="model-name">{modelLabel(provider, model)}</span><span className="divider" /><span className="route">{routeLabel(provider)}</span><Icon name="down" /></button>}
               </div> : <button ref={providerButton} type="button" className="button" onClick={() => { if (connectedProviders.length) setPicker('providers'); else setView('settings'); }}>{connectedProviders.length ? 'Choose provider' : 'Connect provider'}</button>}
-              {activeRun ? <button type="button" className="round-control stop" aria-label="Stop response" title="Stop response" onClick={() => { if (selectedId) void backend.invoke('stop_chat', { chatId: selectedId }).catch((reason) => setNotice(errorText(reason))); }}><span className="stop-square" /></button> : <button type="submit" className="round-control send" aria-label="Send message" disabled={!draft.trim() || starting || !sendAvailable}><Icon name="up" /></button>}
+              {activeRun ? <button type="button" className="round-control stop" aria-label="Stop response" title="Stop response" onClick={() => { if (selectedId) void backend.invoke('stop_chat', { chatId: selectedId }).catch((reason) => setNotice(errorText(reason))); }}><span className="stop-square" /></button> : <button type="submit" className="round-control send" aria-label="Send message" disabled={!draft.trim() || starting || pickingAttachment || !sendAvailable}><Icon name="up" /></button>}
             </div>
           </form>
           {!sendAvailable && provider && <p className="composer-note">{providerName(provider)} is not connected. <button onClick={() => setView('settings')}>Open Settings</button></p>}

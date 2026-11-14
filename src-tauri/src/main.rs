@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod inline_secret;
 mod login_state;
+mod muse_ui;
 mod secure_input;
 use melly_core::{
     auth,
@@ -18,6 +19,8 @@ struct AppState {
     engine: Arc<Engine>,
     login: Mutex<login_state::LoginState>,
     plan_namespaces: Mutex<AuthNamespaces>,
+    muse_login: Mutex<login_state::LoginState>,
+    muse_attachment: Mutex<muse_ui::DraftAttachment>,
     started: std::time::Instant,
     startup_recorded: std::sync::atomic::AtomicBool,
     shutdown_requested: std::sync::atomic::AtomicBool,
@@ -60,6 +63,11 @@ async fn bootstrap(s: State<'_, AppState>) -> Reply<Bootstrap> {
             provider.configured = false;
             provider.status = reason.into();
         }
+    }
+    if s.muse_login.lock().unwrap().is_pending()
+        && let Some(provider) = bootstrap.providers.iter_mut().find(|p| p.spec.id == "muse")
+    {
+        provider.status = "Sign-in pending".into();
     }
     Ok(bootstrap)
 }
@@ -233,6 +241,9 @@ async fn close_provider_key_field(window: tauri::WebviewWindow, generation: u64)
 }
 #[tauri::command]
 async fn remove_provider_key(s: State<'_, AppState>, provider_id: String) -> Reply<()> {
+    if provider_id == "muse" {
+        return Err("Muse Code Plan uses browser sign-in".into());
+    }
     let c = s.engine.connection(&provider_id).map_err(error)?;
     s.engine
         .vault
@@ -346,15 +357,27 @@ async fn start_chat(
     app: tauri::AppHandle,
     s: State<'_, AppState>,
     input: SendInput,
+    attachment_id: Option<String>,
 ) -> Reply<Message> {
-    s.engine
-        .start(
+    let mut draft = s.muse_attachment.lock().unwrap();
+    let attachment = attachment_id
+        .as_deref()
+        .map(|id| draft.get(id))
+        .transpose()?;
+    let result = s
+        .engine
+        .start_with_attachment(
             input,
+            attachment,
             Arc::new(move |update| {
                 let _ = app.emit("chat-stream", update);
             }),
         )
-        .map_err(error)
+        .map_err(error)?;
+    if let Some(id) = attachment_id {
+        draft.remove(&id);
+    }
+    Ok(result)
 }
 #[tauri::command]
 async fn stop_chat(s: State<'_, AppState>, chat_id: String) -> Reply<()> {
@@ -401,6 +424,8 @@ fn main() {
                 engine,
                 login: Mutex::new(login_state::LoginState::default()),
                 plan_namespaces: Mutex::new(namespaces),
+                muse_login: Mutex::new(login_state::LoginState::default()),
+                muse_attachment: Mutex::new(muse_ui::DraftAttachment::default()),
                 started,
                 startup_recorded: std::sync::atomic::AtomicBool::new(false),
                 shutdown_requested: std::sync::atomic::AtomicBool::new(false),
@@ -437,6 +462,10 @@ fn main() {
             remove_search_key,
             connect_chatgpt,
             disconnect_chatgpt,
+            muse_ui::connect_muse,
+            muse_ui::disconnect_muse,
+            muse_ui::pick_muse_attachment,
+            muse_ui::remove_muse_attachment,
             models,
             start_chat,
             stop_chat,
@@ -464,6 +493,8 @@ fn main() {
             }
             auth::begin_shutdown();
             state.login.lock().unwrap().cancel();
+            state.muse_login.lock().unwrap().cancel();
+            state.engine.muse.disconnect();
             state.engine.stop_all();
             let engine = state.engine.clone();
             let app = app.clone();

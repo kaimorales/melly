@@ -1,6 +1,6 @@
 # Architecture
 
-Melly is a native Tauri Mac application. Rust is the trust boundary and owns all expensive/stateful work; the system WKWebView renders a React view. There is no Node server in the shipped application, local inference runtime, model download manager, coding host or agent shell.
+Melly is a native Tauri Mac application. Rust is the trust boundary and owns all expensive/stateful work. The system WKWebView renders a React view. The experimental Muse Code Plan connection starts an isolated official Muse host for text completion over stdio. Model inference runs in the cloud.
 
 `melly-core` is independent of the desktop shell so storage, tool scope, network protocols and cancellation can be tested quickly without launching a window. `models.rs` defines serializable data; `storage.rs` owns SQLite WAL, FTS5 and transactions; `engine.rs` owns turn execution, bounded context, read-only tool dispatch and persistence. The provider modules normalize SSE into typed events; credentials/auth use Keychain only. The Tauri shell exposes the minimal command contract in contracts.md.
 
@@ -14,4 +14,6 @@ The desktop exposes only real provider connections. If the saved selection was t
 
 Folder tools accept a query only, never an authorization scope. Rust derives the folder from the active chat and returns at most five bounded snippets from other chats in that folder. The model sees references with source IDs, not whole transcripts. Tool results are explicitly untrusted, and the only actions are local search and a fixed read-only web search API. Web citation navigation is separate and validates public HTTPS URLs.
 
-The browser preview has a clearly labeled synthetic in-memory/mock backend for UI tests. The native app always calls Rust; preview tests do not substitute for core/native integration evidence. Live provider coverage is recorded separately from fixtures.
+For either Muse route, Rust runs the optional Tavily search first with the typed message as the query. It passes bounded source text and any selected UTF-8 attachment to the chosen provider as untrusted reference data. Draft attachment bytes are kept in Rust memory and omitted from the transcript. A provider reply can quote the shared text, and the reply is saved with the chat. The Muse Plan host uses a disposable, host-owned login profile for the life of the connection. The explicitly selected Meta API route uses the regular Keychain credential store.
+
+The browser preview has a clearly labeled synthetic in-memory/mock backend for UI tests. The native app always calls Rust. Live provider coverage is recorded separately from fixtures.

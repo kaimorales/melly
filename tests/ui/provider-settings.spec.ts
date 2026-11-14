@@ -61,3 +61,16 @@ test('Ollama Cloud setup identifies its key and credit billing', async ({ page }
   await expect(dialog.getByRole('button', { name: 'API key' })).toBeVisible();
   await expect(dialog.getByRole('textbox', { name: 'Base URL' })).toHaveCount(0);
 });
+
+test('Muse Plan and Meta Model API have separate setup and billing', async ({ page }) => {
+  await page.getByRole('button', { name: 'Configure Meta Muse Code' }).click();
+  const plan = page.getByRole('dialog', { name: 'Meta Muse Code' });
+  await expect(plan.getByText('Experimental · Plan')).toBeVisible();
+  await expect(plan.getByRole('button', { name: 'API key' })).toHaveCount(0);
+  await plan.getByRole('button', { name: 'Close provider settings' }).click();
+  await page.getByRole('button', { name: 'Configure Meta Model API' }).click();
+  const api = page.getByRole('dialog', { name: 'Meta Model API' });
+  await expect(api.getByText('API key · Metered')).toBeVisible();
+  await expect(api.getByRole('button', { name: 'API key', exact: true })).toBeVisible();
+  await expect(api.getByRole('textbox', { name: 'Model' })).toHaveValue('muse-spark-1.3');
+});
