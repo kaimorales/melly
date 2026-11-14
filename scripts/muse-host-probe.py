@@ -78,7 +78,13 @@ def uuid7():
 def profile(root, executable, port):
     # The test host can read system files and its disposable root, but not the
     # user's home or mounted volumes. It can write only inside the test root,
-    # execute only itself, and connect only to this fixture's loopback port.
+    # execute only itself, and use the selected probe's network policy.
+    network = (
+        f'(allow network-outbound (remote ip "localhost:{port}"))'
+        if port is not None
+        else '(allow network-outbound (remote tcp "*:443"))\n'
+        '(deny network-outbound (remote ip "localhost:*"))'
+    )
     return f"""(version 1)
       (allow default)
       (deny file-read* file-write* (subpath "/Users"))
@@ -93,7 +99,7 @@ def profile(root, executable, port):
       (allow process-exec (literal "{executable}"))
       (deny network-outbound)
       (deny network-inbound)
-      (allow network-outbound (remote ip "localhost:{port}"))"""
+      {network}"""
 
 
 def verify_sandbox(root, port):
@@ -131,16 +137,17 @@ def verify_sandbox(root, port):
             "Sandbox did not block outside temporary files.",
         )
     require(check("/usr/bin/true").returncode != 0, "Sandbox did not block child executables.")
-    require(
-        check('exec 3<>/dev/tcp/127.0.0.1/"$1"', str(port)).returncode == 0,
-        "Sandbox did not allow the fake endpoint.",
-    )
+    if port is not None:
+        require(
+            check('exec 3<>/dev/tcp/127.0.0.1/"$1"', str(port)).returncode == 0,
+            "Sandbox did not allow the fake endpoint.",
+        )
     denied = check(": >/dev/tcp/192.0.2.1/9")
     require(
         denied.returncode != 0 and "Operation not permitted" in denied.stderr,
         "Sandbox did not deny outside network access with EPERM.",
     )
-    record("sandbox", home_reads="blocked", child_exec="blocked", outside_network="blocked")
+    record("sandbox", home_reads="blocked", child_exec="blocked", non_https_egress="blocked")
 
 
 def sse(value):
@@ -156,20 +163,6 @@ def response_frame(identity, status, **extra):
         "output": [],
         **extra,
     }
-
-
-def nested_tool_names(value):
-    if isinstance(value, dict):
-        names = [value["name"]] if isinstance(value.get("name"), str) else []
-        return names + [
-            name
-            for key, child in value.items()
-            if key != "name"
-            for name in nested_tool_names(child)
-        ]
-    if isinstance(value, list):
-        return [name for child in value for name in nested_tool_names(child)]
-    return []
 
 
 class FixtureServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -255,7 +248,7 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
                 fixture.attacks_sent.add(target[0])
             fixture.requests.append(
                 {
-                    "tools": nested_tool_names(payload.get("tools") or []),
+                    "tools": payload.get("tools") or [],
                     "attack": target[0] if attack else None,
                 }
             )
@@ -324,38 +317,43 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
 class Host:
     def __init__(self, root, binary, fixture, name, expected):
         self.expected = expected
+        self.synthetic = fixture is not None
         self.root = root / name
         for part in ("config/muse", "data", "cache", "tmp", "workspace"):
             (self.root / part).mkdir(parents=True, mode=0o700)
         config = self.root / "config/muse"
-        port = fixture.server_address[1]
-        (config / "settings.json").write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "provider": "meta",
-                    "model": MODEL,
-                    "endpoint_transport": {
-                        "base_url": f"http://127.0.0.1:{port}",
-                        "auth": "bearer",
-                    },
-                }
-            )
-        )
-        (config / "auth.json").write_text(
-            json.dumps({"schema_version": 1, "providers": {"meta": {"api_key": FAKE_KEY}}})
-        )
-        os.chmod(config / "settings.json", 0o600)
-        os.chmod(config / "auth.json", 0o600)
         env = {
             "PATH": "/usr/bin:/bin",
             "XDG_CONFIG_HOME": str(self.root / "config"),
             "XDG_DATA_HOME": str(self.root / "data"),
             "XDG_CACHE_HOME": str(self.root / "cache"),
             "TMPDIR": str(self.root / "tmp") + "/",
-            "TBH_CREDENTIAL_BACKEND": "file",
             "TBH_DISABLE_TELEMETRY": "1",
         }
+        port = None
+        model_args = []
+        if fixture is not None:
+            port = fixture.server_address[1]
+            (config / "settings.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "provider": "meta",
+                        "model": MODEL,
+                        "endpoint_transport": {
+                            "base_url": f"http://127.0.0.1:{port}",
+                            "auth": "bearer",
+                        },
+                    }
+                )
+            )
+            (config / "auth.json").write_text(
+                json.dumps({"schema_version": 1, "providers": {"meta": {"api_key": FAKE_KEY}}})
+            )
+            os.chmod(config / "settings.json", 0o600)
+            os.chmod(config / "auth.json", 0o600)
+            env["TBH_CREDENTIAL_BACKEND"] = "file"
+            model_args = ["--model", MODEL]
         args = [
             "/usr/bin/sandbox-exec",
             "-p",
@@ -364,8 +362,7 @@ class Host:
             "serve",
             "--provider",
             "meta",
-            "--model",
-            MODEL,
+            *model_args,
             "--preset",
             "empty",
             "--no-session-log",
@@ -383,19 +380,15 @@ class Host:
             env=env,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             text=True,
             bufsize=1,
             start_new_session=True,
         )
         self.lines = queue.Queue()
         self.events = []
-        self.stderr = []
         threading.Thread(
             target=self._read, args=(self.process.stdout, self.lines.put), daemon=True
-        ).start()
-        threading.Thread(
-            target=self._read, args=(self.process.stderr, self.stderr.append), daemon=True
         ).start()
 
     @staticmethod
@@ -420,6 +413,13 @@ class Host:
                     raise RuntimeError(f"Host exited with code {self.process.returncode}.")
                 continue
             message = json.loads(line)
+            method = message.get("method", "")
+            if not self.synthetic:
+                require(
+                    not method.startswith(("session/", "turn/", "item/"))
+                    and not (method and "id" in message),
+                    "Unexpected session, tool event, or host request.",
+                )
             self.events.append(message)
             if predicate(message):
                 return message
@@ -437,7 +437,7 @@ class Host:
             1,
             "initialize",
             {
-                "clientInfo": {"name": "melly_synthetic_probe", "version": "1.0"},
+                "clientInfo": {"name": "melly_muse_probe", "version": "1.0"},
                 "capabilities": {"experimentalApi": True, "userInputDialogs": False},
             },
         )
@@ -458,10 +458,11 @@ class Host:
         except ValueError as error:
             raise RuntimeError("Host data root is not isolated.") from error
         self.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
-        require(
-            self.rpc(2, "account/read", {}).get("state") == "apiKey",
-            "Host did not use the dummy API-key lane.",
-        )
+        if self.synthetic:
+            require(
+                self.rpc(2, "account/read", {}).get("state") == "apiKey",
+                "Host did not use the dummy API-key lane.",
+            )
 
     def start_session(self):
         result = self.rpc(
@@ -641,6 +642,42 @@ def completion_probe(host, fixture):
     require(done.get("outcome") == "cancelled", "Stateless cancellation did not settle cancelled.")
     record("model_cancel", outcome="cancelled", elapsed_ms=round((time.monotonic() - start) * 1000))
 
+    for index, target in enumerate(ATTACKS, start=10):
+        fixture.attack_target = target
+        command = uuid7()
+        before_requests = len(fixture.requests)
+        before_events = len(host.events)
+        host.rpc(
+            index,
+            "model/complete",
+            {
+                "commandId": command,
+                "messages": [{"role": "user", "text": target[1]}],
+                "maxTokens": 32,
+            },
+        )
+        host.wait_for(
+            lambda msg: msg.get("method") == "model/completed"
+            and msg.get("params", {}).get("commandId") == command
+        )
+        require(
+            fixture.requests[before_requests:] == [{"tools": [], "attack": target[0]}],
+            "Stateless completion advertised tools or made extra model requests.",
+        )
+        require(
+            not any(
+                event.get("method", "").startswith(("session/", "turn/", "item/"))
+                or ("method" in event and "id" in event)
+                for event in host.events[before_events:]
+            ),
+            "Stateless completion produced session or tool events.",
+        )
+    require(
+        not (host.root / "workspace/synthetic-write.txt").exists(),
+        "Stateless completion wrote a synthetic file.",
+    )
+    record("model_completion_forced_actions", executed=0, tested=len(ATTACKS))
+
 
 def stop_probe(host, fixture):
     session = host.start_session()
@@ -671,17 +708,78 @@ def stop_probe(host, fixture):
     )
 
 
+def subscription_probe(host, command_id, *, infer):
+    def check_account(identity):
+        account = host.rpc(identity, "account/read", {})
+        require(
+            account.get("state") != "loggedOut",
+            "Muse host requires browser sign-in. Run muse login.",
+        )
+        require(
+            account.get("state") == "accountLogin" and account.get("credentialRequired") is True,
+            "Muse host did not confirm browser sign-in. API-key and unknown routes are blocked.",
+        )
+
+    check_account(2)
+    plan = host.rpc(3, "usage/refresh", {})
+    require(plan.get("subscriptionActive") is True, "Host did not confirm an active Muse Code plan.")
+    record("subscription", active=True, usage_meter=isinstance(plan.get("usage"), dict))
+    if not infer:
+        return False
+
+    check_account(4)
+    ack = host.rpc(
+        5,
+        "model/complete",
+        {
+            "commandId": command_id,
+            "messages": [{"role": "user", "text": "Reply with exactly MELLY_PROBE_OK"}],
+            "maxTokens": 32,
+        },
+    )
+    require(
+        ack.get("status") == "accepted" and ack.get("commandId") == command_id,
+        "Host did not acknowledge the test completion.",
+    )
+    done = host.wait_for(
+        lambda msg: msg.get("method") == "model/completed"
+        and msg.get("params", {}).get("commandId") == command_id,
+        50,
+    )["params"]
+    require(done.get("outcome") == "completed", "The stateless Muse completion failed.")
+    require(done.get("text", "").strip() == "MELLY_PROBE_OK", "Unexpected test reply.")
+    check_account(6)
+
+    # A small request may not change whole-percentage meter readings. Treat
+    # a fresh host observation as evidence, without claiming a billing receipt.
+    before = plan.get("usage") or {}
+    after = host.rpc(7, "usage/read", {}).get("usage") or {}
+    before_ms = before.get("observedAtMs", 0)
+    after_ms = after.get("observedAtMs", 0)
+    record(
+        "subscription_completion",
+        outcome="completed",
+        post_request_usage_observed=after_ms > before_ms,
+    )
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--muse", required=True, type=Path, help="Path to a pinned official Muse host"
     )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--plan-status", action="store_true", help="Read plan status from Meta")
+    mode.add_argument("--plan-test", action="store_true", help="Send one synthetic prompt on an active plan")
     args = parser.parse_args()
     require(sys.platform == "darwin", "This probe requires macOS sandbox-exec.")
     require(args.muse.is_file(), "Host is missing.")
     original_hash = sha256(args.muse)
     expected = PINNED_HOSTS.get(original_hash)
     require(expected is not None, "Host does not match a pinned official SHA-256.")
+    if args.plan_status or args.plan_test:
+        require(expected[0] == "1.4.20", "Plan checks require the pinned 1.4.20 host.")
     with tempfile.TemporaryDirectory(prefix="melly-muse-probe-", dir="/private/tmp") as temporary:
         root = Path(temporary).resolve()
         binary = root / "muse"
@@ -689,6 +787,15 @@ def main():
         shutil.copyfile(args.muse, binary)
         os.chmod(binary, 0o700)
         require(sha256(binary) == original_hash, "Copied host checksum mismatch.")
+        if args.plan_status or args.plan_test:
+            verify_sandbox(root, None)
+            host = Host(root, binary, None, "plan", expected)
+            try:
+                host.initialize()
+                subscription_probe(host, uuid7(), infer=args.plan_test)
+            finally:
+                host.close()
+            return
         for index, (name, test) in enumerate(
             (("session", session_probe), ("complete", completion_probe), ("stop", stop_probe))
         ):

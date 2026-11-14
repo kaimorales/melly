@@ -1,6 +1,21 @@
 # Muse Code subscription feasibility
 
-Updated 2026-11-13 against official documentation, the published Rust crate, and two verified official macOS hosts. **The Muse provider remains disabled.** No Meta sign-in, subscription purchase, credential import, or live cloud inference was performed. A saved account or installed host would not establish subscription entitlement.
+Updated 2026-11-13 against official documentation, the published Rust crate, and two verified official macOS hosts. **The Muse provider remains disabled in the desktop app.** Live cloud inference is pending browser sign-in and an active plan.
+
+## Experimental plan check
+
+[Helicon](https://github.com/HarjjotSinghh/helicon#architecture) uses the installed Muse host and the user's existing `muse login`. Melly's opt-in developer probe uses the same handoff over stdio with the pinned 1.4.20 host. The probe only uses `model/complete` for inference. It opens no coding session.
+
+```sh
+python3 scripts/muse-host-probe.py --muse /path/to/verified-muse --plan-status
+python3 scripts/muse-host-probe.py --muse /path/to/verified-muse --plan-test
+```
+
+`--plan-status` checks the billing route without inference. `--plan-test` sends one fixed synthetic prompt capped at 32 output tokens. Both require the host's effective `accountLogin` lane and a fresh `subscriptionActive: true`. An API key, missing entitlement, or any error stops the probe. On success the probe reports whether the host observed usage after the reply. Usage is reported in whole percentages, so this short test may produce no visible change. A host-reported observation is separate from invoice verification.
+
+The probe uses a fresh workspace and configuration, a cleared environment, contributor mode off, and a host sandbox that blocks home reads and child executables. It permits outbound TCP 443 for the official host to contact Meta. Muse owns the credential lookup. The probe does not read auth files, copy credentials, print account details, or transmit real chat text. The live preflight on this Mac reached the account gate and stopped because the host did not have a browser login. The mock completed and cancelled a stateless request. Four separate mock responses requesting shell, file read, file write, and web search triggered zero tool or session events and zero follow-up model requests.
+
+Run the billing-gate unit tests with `python3 -B -m unittest discover -s scripts -p test_muse_host_probe.py`.
 
 ## Installed host and protocol evidence
 
