@@ -17,6 +17,8 @@ The binary is confined to Melly's support directory; no shell startup file, PATH
 
 Offline schema export and an `echo`-provider MSP initialization succeeded. The handshake confirmed the version, fingerprints, isolated `museHome`, ephemeral sessions, and available sandbox. Only initialization and settings-schema queries were sent; no MSP session, login, or model request was started. The actual host's `SessionConfig` has no `allowedBuiltInTools` member and tolerates unknown keys, so sending that member would not prove removal. [Host operations](https://meta-models.github.io/muse-code-sdk/next/guides/host-operations/), [Session configuration](https://meta-models.github.io/muse-code-sdk/next/generated/msp/types/sessionconfig/)
 
+On recheck, the current published experimental schema describes `allowedBuiltInTools`, but says the host refuses that option until its enforcement is complete. That future interface is not evidence that the installed host enforces it today. The `echo` execution below proves synthetic input can be processed; it does not simulate a model requesting an action or prove that extensions and action tools are absent. Do not buy a subscription solely to test this integration until those limits and host credential isolation can be demonstrated. [Experimental session configuration](https://meta-models.github.io/muse-code-sdk/next/generated/msp/types/sessionconfig/)
+
 Offline verification commands, all exiting successfully:
 
 ```sh
