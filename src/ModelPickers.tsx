@@ -50,15 +50,15 @@ export function ModelPicker({ provider, selected, close, choose }: { provider: P
   return <div className="menu model-menu" ref={ref} onKeyDown={keydown}>
     <div className="picker-heading"><span>{providerName(provider)}</span><span>{routeLabel(provider)}</span></div>
     <div className="picker-toolbar"><span className="menu-label">Models</span><button className="text-action" disabled={catalog.status === 'loading'} onClick={() => { void discoverModels(provider, true).catch(() => {}); }}>Refresh models</button></div>
-    {!provider.configured && provider.id !== 'mock' && <div className="picker-status">Connect {providerName(provider)} in Settings to discover models.</div>}
+    {!provider.configured && provider.id !== 'mock' && <div className="picker-status">Connect {providerName(provider)} in Settings.</div>}
     {catalog.status === 'loading' && <div className="picker-status" role="status">Loading models…</div>}
     {catalog.status === 'error' && <div className="picker-error" role="alert">{catalog.error}</div>}
-    {catalog.status === 'ready' && !catalog.models.length && <div className="picker-status">This provider returned no models. You can enter a model ID.</div>}
+    {catalog.status === 'ready' && !catalog.models.length && <div className="picker-status">No models found.</div>}
     <div role="listbox" aria-label="Models">
-      {configured && !configuredListed && <button role="option" aria-selected={true} disabled={busy} className="model-option" onClick={() => { void select(configured); }}><span className="model-option-copy"><span>{provider.id === 'mock' ? modelLabel(provider, configured) : configured}</span><small>{provider.id === 'mock' ? 'Synthetic demo' : 'Configured model ID · access checked when you send'}</small></span><Icon name="check" /></button>}
+      {configured && !configuredListed && <button role="option" aria-selected={true} disabled={busy} className="model-option" onClick={() => { void select(configured); }}><span className="model-option-copy"><span>{provider.id === 'mock' ? modelLabel(provider, configured) : configured}</span></span><Icon name="check" /></button>}
       {catalog.models.map((model) => <button role="option" aria-selected={model.id === selected} disabled={busy} className="model-option" key={model.id} onClick={() => { void select(model.id); }}><span className="model-option-copy"><span>{model.name || model.id}</span>{model.name && model.name !== model.id && <small>{model.id}</small>}</span>{model.id === selected && <Icon name="check" />}</button>)}
     </div>
     {error && <div className="picker-error" role="alert">{error}</div>}
-    {manual ? <form className="manual-model" onSubmit={(event) => { event.preventDefault(); if (modelId.trim()) void select(modelId.trim()); }}><label>Model ID<input ref={input} value={modelId} maxLength={200} placeholder="Enter an exact model ID" spellCheck={false} onChange={(event) => setModelId(event.target.value)} /></label><p>The provider checks access when you send.</p><button className="button" disabled={!modelId.trim() || busy}>Use model</button></form> : provider.id !== 'mock' && <button className="menu-footer" onClick={() => setManual(true)}>Enter model ID</button>}
+    {manual ? <form className="manual-model" onSubmit={(event) => { event.preventDefault(); if (modelId.trim()) void select(modelId.trim()); }}><label>Model ID<input ref={input} value={modelId} maxLength={200} placeholder="Enter a model ID" spellCheck={false} onChange={(event) => setModelId(event.target.value)} /></label><button className="button" disabled={!modelId.trim() || busy}>Use model</button></form> : provider.id !== 'mock' && <button className="menu-footer" onClick={() => setManual(true)}>Enter model ID</button>}
   </div>;
 }

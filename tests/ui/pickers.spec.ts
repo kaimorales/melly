@@ -71,13 +71,14 @@ test('discovery errors preserve the configured model and allow an explicit model
   await page.getByRole('button', { name: 'Choose provider' }).click();
   await page.getByRole('option', { name: /Claude/ }).click();
   await expect(page.getByRole('alert')).toContainText('Synthetic discovery unavailable');
-  await expect(page.getByRole('option', { name: /Configured model ID/ })).toBeVisible();
+  await expect(page.getByRole('option', { name: 'claude-sonnet-5-5', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Enter model ID', exact: true }).click();
+  await expect(page.getByText('The provider checks access when you send.')).toHaveCount(0);
   await page.getByRole('textbox', { name: 'Model ID', exact: true }).fill('my-explicit-model');
   await page.getByRole('button', { name: 'Use model', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Choose model', exact: true })).toContainText('my-explicit-model');
   await page.getByRole('button', { name: 'Choose model', exact: true }).click();
-  await expect(page.getByRole('option', { name: /my-explicit-model.*Configured model ID/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('option', { name: 'my-explicit-model', exact: true })).toHaveAttribute('aria-selected', 'true');
 });
 
 test('successful ChatGPT sign-in discovers account models without startup discovery', async ({ page }) => {
