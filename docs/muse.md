@@ -4,7 +4,11 @@ Updated 2026-11-14. **The Muse provider remains disabled in the desktop app.** T
 
 ## Experimental plan check
 
-[Helicon](https://github.com/HarjjotSinghh/helicon#architecture) uses the installed Muse host and the user's existing `muse login`. Melly's opt-in developer probe uses the same handoff over stdio with the pinned 1.4.20 host. The probe only uses `model/complete` for inference. It opens no coding session.
+Helicon's default macOS connection launches the installed `muse serve` in the project directory and connects over stdio. Its launch code leaves the default environment inherited, including any `META_API_KEY`. Its sign-in indicator checks for that variable or reads the Muse auth file to see whether any provider is recorded. Muse handles the actual authentication. Helicon also requests the `userShell` capability. [Host launch](https://github.com/HarjjotSinghh/helicon/blob/45da468cbdcf8a433f8d9d5c202fd34c8260ea1f/packages/server/src/server.ts#L3405-L3431), [Sign-in indicator](https://github.com/HarjjotSinghh/helicon/blob/45da468cbdcf8a433f8d9d5c202fd34c8260ea1f/packages/daemon/src/wsl.ts#L231-L260), [SDK connection](https://github.com/HarjjotSinghh/helicon/blob/45da468cbdcf8a433f8d9d5c202fd34c8260ea1f/packages/daemon/src/mspHost.ts#L66-L86)
+
+Helicon's named profiles use Aonia. Its macOS profile flow redirects Muse's config and data roots and selects a file-backed credential store for a separate browser login. It cannot hand off the existing Keychain login to the confined Muse host. [Aonia profile design](https://github.com/HarjjotSinghh/aonia#how-it-works)
+
+Melly's opt-in developer probe uses stdio with the pinned 1.4.20 host and sends a fixed test prompt through `model/complete` only after confirming the plan. The Helicon-style login lookup was also tested with a disposable workspace, a cleared environment, exact Muse-owned file exceptions, and Keychain metadata access. The official host still reported signed out. The test verified that the login Keychain database could not be opened for reading and stopped before sending the prompt.
 
 ```sh
 python3 scripts/muse-host-probe.py --muse /path/to/verified-muse --plan-status
