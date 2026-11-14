@@ -137,7 +137,7 @@ ChatGPT has now completed live plan replies, folder-tool continuation and native
 | Claude, Gemini, Grok, OpenRouter, DeepSeek, Moonshot, Ollama Cloud, Custom | A key for the configured endpoint, live model/inference/tool behavior and account-specific billing/error/cancellation checks. Custom is text-only. Ollama's credit use must be checked on the user's actual account. |
 | QwenCloud | Independently verify Standard API and Token Plan credentials, Singapore region, entitlement and billing. No cross-route fallback exists. |
 | External web search | Tavily key and real results/error checks. Other provider-native search routes still need live model/auth verification. A shared Melly search service is proposed only. |
-| Meta Muse Code | Disabled. The actual official host was inspected, but safe chat-only constraints and a compatible SDK/host pairing are unverified. See [precise evidence and blockers](muse.md). This requires a supported integration contract, not a Mac password. |
+| Meta Muse Code | Disabled. Matching 1.4.20 host and Rust SDK releases now exist; isolated fake-provider checks rejected several action tools, but reminder agents, host-owned login isolation and live subscription billing still need resolution. See [precise evidence and blockers](muse.md). This requires a supported integration contract, not a Mac password. |
 
 Saved credentials mean configuration, not live verification. No API key or token from another application was imported. Provider artwork identifies integrations, not endorsements; [asset terms](research/provider-artwork.md) record remaining distribution permissions. The local build is not a claim of permission to publish a branded product release.
 
