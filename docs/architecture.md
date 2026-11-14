@@ -10,6 +10,8 @@ The provider HTTP client is reused across turns, keeping origin-scoped connectio
 
 Each connection has one provider identity and one endpoint/billing route. Endpoint changes cannot reuse another connection's key. Subscription errors remain on that route. Provider keys are entered in a native secure field embedded in settings; the search key uses a native secure dialog. Neither passes through JavaScript. OAuth belongs to this app; it does not read other applications' credentials or ChatGPT history.
 
+The desktop exposes only real provider connections. If the saved selection was the internal mock or is no longer connected, it asks the user to choose or connect a provider; it does not select a paid route automatically. The mock and synthetic examples remain available in the browser preview and automated tests.
+
 Folder tools accept a query only, never an authorization scope. Rust derives the folder from the active chat and returns at most five bounded snippets from other chats in that folder. The model sees references with source IDs, not whole transcripts. Tool results are explicitly untrusted, and the only actions are local search and a fixed read-only web search API. Web citation navigation is separate and validates public HTTPS URLs.
 
 The browser preview has a clearly labeled synthetic in-memory/mock backend for UI tests. The native app always calls Rust; preview tests do not substitute for core/native integration evidence. Live provider coverage is recorded separately from fixtures.

@@ -226,8 +226,10 @@ export default function App() {
 
   const selectedChat = data?.chats.find((chat) => chat.id === selectedId);
   const selectedFolder = data?.folders.find((folder) => folder.id === selectedChat?.folderId);
-  const provider = data?.providers.find((entry) => entry.id === data.settings.defaultProvider) || data?.providers[0];
-  const model = data?.settings.defaultModel || provider?.connection.modelId || '';
+  const visibleProviders = data?.providers.filter((entry) => !nativeApp || entry.id !== 'mock') || [];
+  const connectedProviders = visibleProviders.filter((entry) => entry.configured && !entry.disabledReason);
+  const provider = visibleProviders.find((entry) => entry.id === data?.settings.defaultProvider && (!nativeApp || (entry.configured && !entry.disabledReason))) || (!nativeApp ? visibleProviders[0] : undefined);
+  const model = provider && data?.settings.defaultProvider === provider.id ? data.settings.defaultModel || provider.connection.modelId : provider?.connection.modelId || '';
   const activeRun = !!selectedId && running.has(selectedId);
   const explicitFolder = requestsFolderContext(draft);
   const folderContext = !!selectedFolder && !!provider?.tools && (manualFolder === true || (explicitFolder && manualFolder !== false));
@@ -331,7 +333,7 @@ export default function App() {
     setNotice('Chat deleted.');
   };
   if (bootError) return <div className="loading-state"><div role="alert">{bootError}<br /><button className="text-action" onClick={() => window.location.reload()}>Try again</button></div></div>;
-  if (!data || !provider) return <div className="loading-state">Opening Melly…</div>;
+  if (!data) return <div className="loading-state">Opening Melly…</div>;
 
   return <div className={`app ${nativeApp ? 'native' : 'browser-preview'} ${sidebar ? '' : 'sidebar-hidden'}`} style={{ '--message-font': `${data.settings.fontSize}px` } as CSSProperties}>
     {sidebar && <aside className="sidebar" aria-label="Chats">
@@ -354,14 +356,14 @@ export default function App() {
       {notice && <div className="notice" role="alert"><span>{notice}</span><button className="icon-button" aria-label="Dismiss notification" onClick={() => setNotice('')}><Icon name="close" className="small" /></button></div>}
       {view === 'settings' ? <SettingsView data={data} theme={theme} onSettings={saveSettings} refresh={refresh} onSeed={seed} report={setNotice} /> : <>
         <div className="conversation-scroll" ref={scroll} onScroll={() => { const element = scroll.current; if (element) followBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 100; }}>
-          {!items.length && !loading ? <div className="empty-state"><h1>{selectedFolder ? `A new thought in ${selectedFolder.title}` : 'What’s on your mind?'}</h1><p>{provider.id === 'mock' ? 'Try a synthetic conversation, or connect a provider in Settings.' : `Start a conversation with ${providerName(provider)}.`}</p>{provider.id === 'mock' && <button className="text-action" onClick={() => { void seed().catch((reason) => setNotice(errorText(reason))); }}>Try an example</button>}</div> : <div className={`transcript ${hasOlder || viewingOlder ? 'has-older' : ''}`} aria-label="Conversation">
+          {!items.length && !loading ? <div className="empty-state"><h1>{selectedFolder ? `A new thought in ${selectedFolder.title}` : 'What’s on your mind?'}</h1>{!nativeApp && provider?.id === 'mock' && <><p>Try a synthetic conversation, or connect a provider in Settings.</p><button className="text-action" onClick={() => { void seed().catch((reason) => setNotice(errorText(reason))); }}>Try an example</button></>}</div> : <div className={`transcript ${hasOlder || viewingOlder ? 'has-older' : ''}`} aria-label="Conversation">
             {hasOlder && <button className="load-older" disabled={loading} onClick={() => { void older(); }}>{loading ? 'Loading…' : 'Load older messages'}</button>}
             {viewingOlder && <button className="load-older" onClick={() => { if (selectedId) { setHighlight(null); followBottom.current = true; void loadMessages(selectedId); } }}>Back to latest messages</button>}
             {items.map((message, index) => <MessageView key={message.id} message={message} theme={theme} activity={activities[message.id]} highlight={highlight === message.id} onSource={(value) => { void source(value).catch((reason) => setNotice(errorText(reason))); }} onRetry={() => { void send(true); }} retryEnabled={index === items.length - 1 && !viewingOlder && !loading && !activeRun && !starting} report={setNotice} />)}
           </div>}
         </div>
         <div className="composer-area" data-menu-root>
-          {selectedFolder && (folderContext || explicitFolder || manualFolder !== null) && <div className="folder-consent"><button aria-label={`Use other chats in ${selectedFolder.title}`} aria-pressed={folderContext} disabled={!provider.tools} onClick={() => setManualFolder(!folderContext)}><Icon name={folderContext ? 'check' : 'folder'} />{provider.tools ? `Use other chats in ${selectedFolder.title}` : 'This provider does not support folder references'}</button></div>}
+          {selectedFolder && (folderContext || explicitFolder || manualFolder !== null) && <div className="folder-consent"><button aria-label={`Use other chats in ${selectedFolder.title}`} aria-pressed={folderContext} disabled={!provider?.tools} onClick={() => setManualFolder(!folderContext)}><Icon name={folderContext ? 'check' : 'folder'} />{provider?.tools ? `Use other chats in ${selectedFolder.title}` : 'This provider does not support folder references'}</button></div>}
           {!selectedFolder && explicitFolder && <div className="folder-consent"><Icon name="folder" /><span>Move this chat into a folder to use other chats.</span></div>}
           <form className="composer" onSubmit={(event) => { event.preventDefault(); void send(); }}>
             <textarea ref={textarea} aria-label="Message" rows={1} placeholder="Send a message" value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => {
@@ -370,19 +372,19 @@ export default function App() {
               if (shouldSend) { event.preventDefault(); void send(); }
             }} />
             <div className="composer-controls">
-              {selectedFolder && <button type="button" className="round-control" aria-label="Folder context" aria-pressed={folderContext} disabled={!provider.tools} title={provider.tools ? `Use other chats in ${selectedFolder.title}` : 'Folder context is unavailable for this provider'} onClick={() => setManualFolder(!folderContext)}><Icon name="folder" /></button>}
-              <button type="button" className="round-control" aria-label="Search the web" aria-pressed={webSearch && webAvailable} aria-disabled={!webAvailable} title={webAvailable ? (provider.id === 'mock' ? 'Synthetic web search in Demo' : provider.nativeSearch ? 'Use built-in web search' : 'Use external web search') : 'Set up external search in Settings'} onClick={() => { if (webAvailable) setWebSearch(!webSearch); else setNotice(provider.tools ? 'Add an external search key in Settings to use web search with this provider.' : 'Web search is not available for this provider.'); }}><Icon name="globe" /></button>
-              <div className="model-pill" role="group" aria-label="Provider and model">
+              {selectedFolder && <button type="button" className="round-control" aria-label="Folder context" aria-pressed={folderContext} disabled={!provider?.tools} title={provider?.tools ? `Use other chats in ${selectedFolder.title}` : 'Folder context is unavailable for this provider'} onClick={() => setManualFolder(!folderContext)}><Icon name="folder" /></button>}
+              <button type="button" className="round-control" aria-label="Search the web" aria-pressed={webSearch && webAvailable} aria-disabled={!webAvailable} title={webAvailable ? (provider?.id === 'mock' ? 'Synthetic web search in Demo' : provider?.nativeSearch ? 'Use built-in web search' : 'Use external web search') : 'Set up external search in Settings'} onClick={() => { if (webAvailable) setWebSearch(!webSearch); else setNotice(provider?.tools ? 'Add an external search key in Settings to use web search with this provider.' : 'Web search is not available for this provider.'); }}><Icon name="globe" /></button>
+              {provider ? <div className="model-pill" role="group" aria-label="Provider and model">
                 <button ref={providerButton} type="button" className="provider-picker-trigger" aria-label="Choose provider" title={`${providerName(provider)} · choose provider`} aria-expanded={picker === 'providers'} aria-haspopup="listbox" onClick={() => setPicker(picker === 'providers' ? null : 'providers')}><ProviderIcon id={provider.id} theme={theme} small /></button>
                 <span className="provider-divider" aria-hidden="true" />
                 <button ref={modelButton} type="button" className="model-picker-trigger" aria-label="Choose model" title="Choose model" aria-expanded={picker === 'models'} aria-haspopup="listbox" onClick={() => setPicker(picker === 'models' ? null : 'models')}><span className="model-name">{modelLabel(provider, model)}</span><span className="divider" /><span className="route">{routeLabel(provider)}</span><Icon name="down" /></button>
-              </div>
+              </div> : <button ref={providerButton} type="button" className="button" onClick={() => { if (connectedProviders.length) setPicker('providers'); else setView('settings'); }}>{connectedProviders.length ? 'Choose provider' : 'Connect provider'}</button>}
               {activeRun ? <button type="button" className="round-control stop" aria-label="Stop response" title="Stop response" onClick={() => { if (selectedId) void backend.invoke('stop_chat', { chatId: selectedId }).catch((reason) => setNotice(errorText(reason))); }}><span className="stop-square" /></button> : <button type="submit" className="round-control send" aria-label="Send message" disabled={!draft.trim() || starting || !sendAvailable}><Icon name="up" /></button>}
             </div>
           </form>
-          {!sendAvailable && <p className="composer-note">{providerName(provider)} is not connected. <button onClick={() => setView('settings')}>Open Settings</button></p>}
-          {picker === 'providers' && <ProviderPicker providers={data.providers} selected={provider.id} theme={theme} close={closePicker} choose={chooseProvider} settings={() => { setPicker(null); setView('settings'); }} />}
-          {picker === 'models' && <ModelPicker key={provider.id} provider={provider} selected={model} close={closePicker} choose={chooseModel} />}
+          {!sendAvailable && provider && <p className="composer-note">{providerName(provider)} is not connected. <button onClick={() => setView('settings')}>Open Settings</button></p>}
+          {picker === 'providers' && <ProviderPicker providers={visibleProviders} selected={provider?.id || ''} theme={theme} close={closePicker} choose={chooseProvider} settings={() => { setPicker(null); setView('settings'); }} />}
+          {picker === 'models' && provider && <ModelPicker key={provider.id} provider={provider} selected={model} close={closePicker} choose={chooseModel} />}
         </div>
       </>}
     </main>
