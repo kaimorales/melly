@@ -19,6 +19,7 @@ Each native connection has one immutable base URL. Credentials are keyed by a SH
 | QwenCloud Standard API key | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | Chat Completions | `qwen3.8-flash` |
 | QwenCloud Token Plan | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | Chat Completions | `auto` |
 | Kimi / Moonshot API key | `https://api.moonshot.ai/v1` | Chat Completions | `kimi-k3.1-pro` |
+| Ollama Cloud API key | `https://ollama.com/v1` | Chat Completions | `gemma4:31b` |
 | Custom compatible | Explicit public HTTPS base | Chat Completions | User-entered ID |
 
 Both Qwen entries use **Singapore** endpoints. Standard API and Token Plan are different billing identities and require their matching, region-specific credentials. There is no Coding Plan or Kimi Code host integration. Standard's documented shared domain remains supported; workspace-specific domains can be used only as an explicitly separate Custom connection. The Token Plan endpoint is documented for compatible interactive AI tools; account eligibility and acceptance of this client remain unverified. [Official Token Plan setup](https://www.alibabacloud.com/help/en/model-studio/token-plan-personal-quick-start), [Team setup and billing separation](https://www.alibabacloud.com/help/en/model-studio/token-plan-team-quickstart), [Generic integration guide](https://www.alibabacloud.com/help/en/model-studio/more-tools).
@@ -26,6 +27,8 @@ Both Qwen entries use **Singapore** endpoints. Standard API and Token Plan are d
 Claude in Melly requires a Claude Console API key. A school account or Claude subscription does not automatically grant this app API access; ask the organization's administrator about Console access and billing. Anthropic documents API credits for eligible Max, Ultra and Team plans, subject to linking a Console organization. Those credits are distinct from chat usage limits; school eligibility has not been verified. [Get an API key](https://platform.claude.com/docs/en/get-api-key), [API credits for subscribers](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers).
 
 DeepSeek uses the documented general API base and `deepseek-flash`. Moonshot uses its general API with the documented current Kimi model, independently of Kimi's coding product. [DeepSeek quickstart](https://api-docs.deepseek.com/quick_start/agent_integrations/), [Kimi quickstart](https://platform.kimi.ai/docs/get-your-api-key).
+
+Ollama Cloud uses a key created in the user's Ollama account and runs remotely, without an Ollama installation or local inference. Ollama says included plan credits are used first and purchased credits can follow; actual entitlement and billing depend on the account, so Melly labels this as an API-key and credits route rather than promising unlimited subscription use. There is no automatic fallback to another provider. The hosted catalog is `https://ollama.com/api/tags`; entries explicitly lacking completion support are hidden. [Cloud access](https://docs.ollama.com/api/openai-compatibility), [Account pricing](https://ollama.com/pricing).
 
 ## Native behavior
 

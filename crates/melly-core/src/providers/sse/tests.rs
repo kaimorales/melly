@@ -60,6 +60,55 @@ fn compatible_preserves_utf8_multiline_sse_and_argument_fragments() {
 }
 
 #[test]
+fn ollama_cloud_fixture_streams_and_continues_a_folder_tool_call() {
+    let spec = crate::providers::catalog()
+        .into_iter()
+        .find(|provider| provider.id == "ollama")
+        .unwrap();
+    let mut request = crate::models::ProviderRequest {
+        connection: crate::models::Connection {
+            provider_id: spec.id,
+            base_url: spec.base_url,
+            model_id: spec.default_model,
+        },
+        system_prompt: "Synthetic".into(),
+        messages: vec![crate::models::WireMessage::text(
+            "user",
+            "Look in my other chats",
+        )],
+        tools: vec![json!({"name":"search_folder","parameters":{"type":"object"}})],
+        web_search: false,
+    };
+    let (_, _, protocol) = super::super::protocol::request(&request).unwrap();
+    let (result, events) = parse(
+        protocol,
+        include_bytes!("../../../../../tests/fixtures/providers/compatible.sse"),
+        1,
+    );
+    result.unwrap();
+    let calls = calls(&events);
+    assert_eq!(calls[0].name, "search_folder");
+    request.messages.push(crate::models::WireMessage {
+        role: "assistant".into(),
+        content: String::new(),
+        tool_call_id: None,
+        tool_calls: calls,
+        claude_continuation: None,
+    });
+    request.messages.push(crate::models::WireMessage {
+        role: "tool".into(),
+        content: "{\"sources\":[]}".into(),
+        tool_call_id: Some("call_demo".into()),
+        tool_calls: vec![],
+        claude_continuation: None,
+    });
+    let (url, body, _) = super::super::protocol::request(&request).unwrap();
+    assert_eq!(url.as_str(), "https://ollama.com/v1/chat/completions");
+    assert_eq!(body["messages"][2]["tool_calls"][0]["id"], "call_demo");
+    assert_eq!(body["messages"][3]["tool_call_id"], "call_demo");
+}
+
+#[test]
 fn broken_or_error_stream_never_completes_or_dispatches_partial_tools() {
     let bytes = include_bytes!("../../../../../tests/fixtures/providers/compatible.sse");
     let without_done = &bytes[..bytes

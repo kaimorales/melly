@@ -127,6 +127,17 @@ pub fn catalog() -> Vec<ProviderSpec> {
             None,
         ),
         (
+            "ollama",
+            "Ollama Cloud",
+            "API key · plan or usage credits",
+            "https://ollama.com/v1",
+            "gemma4:31b",
+            "chat-completions",
+            false,
+            true,
+            None,
+        ),
+        (
             "custom",
             "Custom compatible",
             "API key · Selected endpoint (unverified)",

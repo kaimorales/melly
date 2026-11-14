@@ -24,6 +24,7 @@ const rows: Array<[string, string, string, string, string, string, boolean, bool
   ['qwen-standard', 'QwenCloud · Standard API', 'Standard API · Singapore · metered', 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', 'qwen3.8-flash', 'chat-completions', false, true, null],
   ['qwen-token-plan', 'QwenCloud · Token Plan', 'Token Plan · Singapore', 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1', 'auto', 'chat-completions', false, true, null],
   ['moonshot', 'Kimi / Moonshot', 'Moonshot general API', 'https://api.moonshot.ai/v1', 'kimi-k3.1-pro', 'chat-completions', false, true, null],
+  ['ollama', 'Ollama Cloud', 'API key · plan or usage credits', 'https://ollama.com/v1', 'gemma4:31b', 'chat-completions', false, true, null],
   ['custom', 'Custom compatible', 'Selected endpoint · unverified', '', '', 'chat-completions', false, false, null],
 ];
 const providers: ProviderView[] = rows.map(([id, name, billingRoute, baseUrl, defaultModel, protocol, nativeSearch, tools, disabledReason]) => ({

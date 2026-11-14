@@ -39,6 +39,9 @@ pub async fn list_models(
 }
 
 fn model_list_url(connection: &Connection) -> Result<url::Url> {
+    if connection.provider_id == "ollama" {
+        return public_url("https://ollama.com/api/tags");
+    }
     let mut url = public_url(&format!(
         "{}/models",
         catalog::normalized_base(&connection.base_url)
@@ -154,6 +157,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ollama_cloud_model_discovery_uses_the_documented_catalog() {
+        let spec = catalog()
+            .into_iter()
+            .find(|spec| spec.id == "ollama")
+            .expect("Ollama Cloud provider");
+        let connection = Connection {
+            provider_id: spec.id,
+            base_url: spec.base_url,
+            model_id: spec.default_model,
+        };
+        assert_eq!(
+            model_list_url(&connection).unwrap().as_str(),
+            "https://ollama.com/api/tags"
+        );
+    }
+
+    #[test]
     fn model_discovery_requests_documented_page_sizes_without_changing_other_routes() {
         for spec in catalog()
             .into_iter()
@@ -178,7 +198,11 @@ mod tests {
                 Some((key, value)) => assert_eq!(pairs, [(key.to_string(), value.to_string())]),
                 None => assert!(pairs.is_empty(), "unexpected query for {}", spec.id),
             }
-            assert!(url.as_str().starts_with(&spec.base_url));
+            if spec.id == "ollama" {
+                assert_eq!(url.as_str(), "https://ollama.com/api/tags");
+            } else {
+                assert!(url.as_str().starts_with(&spec.base_url));
+            }
         }
     }
 }

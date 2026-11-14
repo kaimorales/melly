@@ -3,7 +3,7 @@
 Rust types in crates/melly-core/src/models.rs are the source of truth. JSON uses camelCase. Rust modules use snake_case.
 
 ## Provider ownership contract
-`providers::catalog() -> Vec<ProviderSpec>` includes mock, chatgpt, muse (disabled), claude, gemini, grok, openrouter, deepseek, qwen-standard, qwen-token-plan, moonshot, custom. Qwen routes distinct immutable entries; UI groups both beneath QwenCloud. No OAuth except ChatGPT; no coding hosts.
+`providers::catalog() -> Vec<ProviderSpec>` includes mock, chatgpt, muse (disabled), claude, gemini, grok, openrouter, deepseek, qwen-standard, qwen-token-plan, moonshot, ollama, custom. Qwen routes distinct immutable entries; UI groups both beneath QwenCloud. Ollama means its cloud API only. No OAuth except ChatGPT; no coding hosts.
 `providers::validate_connection(&Connection) -> anyhow::Result<()>` validates fixed endpoints or public HTTPS custom. `providers::credential_id(&Connection) -> String` binds each secret to provider AND exact normalized base URL.
 `providers::list_models(connection: &Connection, credential: Option<&str>, cancel: CancellationToken) -> Result<Vec<ModelInfo>>`.
 `providers::stream(request: ProviderRequest, credential: Option<String>, sink: ProviderSink, cancel: CancellationToken) -> Result<()>`. Never Debug/log credentials. Done required for complete. Preserve tool-call IDs and arguments across streaming fragments. Native search citations become Sources; compatible providers use explicit external search tool if configured. Return sanitized errors with provider/status, not raw response/request bodies.

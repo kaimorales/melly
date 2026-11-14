@@ -33,6 +33,7 @@ fn catalog_has_explicit_isolated_billing_routes() {
             "qwen-standard",
             "qwen-token-plan",
             "moonshot",
+            "ollama",
             "custom"
         ]
     );
@@ -58,6 +59,22 @@ fn catalog_has_explicit_isolated_billing_routes() {
             .is_some()
     );
     assert!(providers::validate_connection(&connection("muse")).is_err());
+}
+
+#[test]
+fn ollama_cloud_is_a_fixed_key_route_not_a_local_runtime_or_plan_fallback() {
+    let provider = providers::catalog()
+        .into_iter()
+        .find(|entry| entry.id == "ollama")
+        .expect("Ollama Cloud provider");
+    let mut connection = connection("ollama");
+    assert_eq!(connection.base_url, "https://ollama.com/v1");
+    assert_eq!(provider.protocol, "chat-completions");
+    assert!(provider.billing_route.contains("API key"));
+    assert!(!provider.native_search);
+    providers::validate_connection(&connection).unwrap();
+    connection.base_url = "http://localhost:11434/v1".into();
+    assert!(providers::validate_connection(&connection).is_err());
 }
 
 #[test]

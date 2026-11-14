@@ -51,3 +51,13 @@ test('Qwen keeps its routes and Custom keeps its editable endpoint', async ({ pa
   await expect(page.getByRole('textbox', { name: 'Base URL' })).toBeEditable();
   await expect(page.getByRole('button', { name: 'API key', exact: true })).toBeVisible();
 });
+
+test('Ollama Cloud setup identifies its key and credit billing', async ({ page }) => {
+  await page.getByRole('button', { name: 'Configure Ollama Cloud' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Ollama Cloud' });
+  await expect(dialog.getByText('API key · plan or usage credits')).toBeVisible();
+  await expect(dialog.getByText('Plan credits first; purchased credits can follow.')).toBeVisible();
+  await expect(dialog.getByRole('textbox', { name: 'Model' })).toHaveValue('gemma4:31b');
+  await expect(dialog.getByRole('button', { name: 'API key' })).toBeVisible();
+  await expect(dialog.getByRole('textbox', { name: 'Base URL' })).toHaveCount(0);
+});

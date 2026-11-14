@@ -124,7 +124,7 @@ ChatGPT has now completed live plan replies, folder-tool continuation and native
 | Connection | Remaining live verification |
 | --- | --- |
 | ChatGPT Plan | Expiry/renewal, remote revocation, entitlement and usage-limit failure cases, and other account/model combinations. Native search was verified only on the tested account with `gpt-6.1-sol`. No ChatGPT history or memory is imported. |
-| Claude, Gemini, Grok, OpenRouter, DeepSeek, Moonshot, Custom | A key for the configured endpoint, live model/inference/tool behavior and account-specific billing/error/cancellation checks. Custom is text-only. |
+| Claude, Gemini, Grok, OpenRouter, DeepSeek, Moonshot, Ollama Cloud, Custom | A key for the configured endpoint, live model/inference/tool behavior and account-specific billing/error/cancellation checks. Custom is text-only. Ollama's credit use must be checked on the user's actual account. |
 | QwenCloud | Independently verify Standard API and Token Plan credentials, Singapore region, entitlement and billing. No cross-route fallback exists. |
 | External web search | Tavily key and real results/error checks. Other provider-native search routes still need live model/auth verification. A shared Melly search service is proposed only. |
 | Meta Muse Code | Disabled. The actual official host was inspected, but safe chat-only constraints and a compatible SDK/host pairing are unverified. See [precise evidence and blockers](muse.md). This requires a supported integration contract, not a Mac password. |

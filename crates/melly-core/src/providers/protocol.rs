@@ -229,7 +229,7 @@ fn interaction_history(messages: &[WireMessage]) -> Result<Vec<Value>> {
 }
 
 pub(crate) fn models(provider: &str, value: Value) -> Result<Vec<ModelInfo>> {
-    let key = if matches!(provider, "chatgpt" | "gemini") {
+    let key = if matches!(provider, "chatgpt" | "gemini" | "ollama") {
         "models"
     } else {
         "data"
@@ -258,6 +258,17 @@ pub(crate) fn models(provider: &str, value: Value) -> Result<Vec<ModelInfo>> {
         {
             continue;
         }
+        if provider == "ollama"
+            && model["capabilities"]
+                .as_array()
+                .is_some_and(|capabilities| {
+                    !capabilities
+                        .iter()
+                        .any(|capability| capability == "completion")
+                })
+        {
+            continue;
+        }
         let (id, name) = if provider == "chatgpt" {
             (model["slug"].as_str(), model["display_name"].as_str())
         } else if provider == "gemini" {
@@ -267,6 +278,8 @@ pub(crate) fn models(provider: &str, value: Value) -> Result<Vec<ModelInfo>> {
                     .map(|s| s.strip_prefix("models/").unwrap_or(s)),
                 model["displayName"].as_str(),
             )
+        } else if provider == "ollama" {
+            (model["name"].as_str(), model["name"].as_str())
         } else {
             (
                 model["id"].as_str(),
@@ -359,6 +372,31 @@ mod tests {
         assert_eq!(body["store"], false);
         assert_eq!(body["input"][0]["type"], "user_input");
         assert_eq!(body["system_instruction"], "Synthetic system");
+    }
+    #[test]
+    fn ollama_cloud_uses_compatible_streaming_and_filters_non_chat_models() {
+        let mut input = input("ollama");
+        input.tools.push(json!({"type":"function","function":{"name":"search_folder","parameters":{"type":"object"}}}));
+        let (url, body, _) = request(&input).unwrap();
+        assert_eq!(url.as_str(), "https://ollama.com/v1/chat/completions");
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["tools"][0]["function"]["name"], "search_folder");
+        let result = models(
+            "ollama",
+            json!({"models":[
+                {"name":"gemma4:31b","capabilities":["completion","tools"]},
+                {"name":"clef:27b","capabilities":["decision"]},
+                {"name":"future-model"}
+            ]}),
+        )
+        .unwrap();
+        assert_eq!(
+            result
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["gemma4:31b", "future-model"]
+        );
     }
     #[test]
     fn claude_paused_search_replays_original_blocks_in_order() {
