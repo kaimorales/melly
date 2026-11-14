@@ -127,6 +127,22 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .markdown code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .84em; background: var(--panel); padding: 2px 5px; border-radius: 4px; }
 .markdown pre { max-width: 100%; overflow-x: auto; background: var(--panel); border-radius: 12px; padding: 18px; font-size: 14px; line-height: 1.6; }
 .markdown pre code { background: none; padding: 0; font-size: inherit; }
+.code-block { --syntax-keyword: #c9a8fa; --syntax-string: #a7cd8a; --syntax-number: #e9bb86; --syntax-function: #96c9f4; --syntax-comment: #a0a0a0; --syntax-type: #82d3cb; background: var(--panel); border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; margin: 18px 0; }
+:root[data-theme='light'] .code-block { --syntax-keyword: #7632a6; --syntax-string: #356620; --syntax-number: #8c4c13; --syntax-function: #165e98; --syntax-comment: #666; --syntax-type: #08675e; }
+.code-header { display: flex; align-items: center; justify-content: space-between; padding: 9px 14px 7px 18px; font-size: 11px; line-height: 18px; color: var(--secondary); user-select: none; }
+.copy-code { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px; border-radius: 5px; font-size: 11px; }
+.copy-code:hover { background: var(--hover); color: var(--ink); }
+.copy-code .icon { width: 13px; height: 13px; }
+.markdown .code-block pre { margin: 0; padding: 8px 18px 18px; border-radius: 0; background: transparent; white-space: pre; overflow-wrap: normal; tab-size: 4; }
+.code-block .hljs-keyword, .code-block .hljs-selector-tag, .code-block .hljs-literal, .code-block .hljs-meta { color: var(--syntax-keyword); }
+.code-block .hljs-string, .code-block .hljs-regexp, .code-block .hljs-addition, .code-block .hljs-template-tag { color: var(--syntax-string); }
+.code-block .hljs-number, .code-block .hljs-attribute, .code-block .hljs-symbol, .code-block .hljs-bullet { color: var(--syntax-number); }
+.code-block .hljs-title, .code-block .hljs-selector-class, .code-block .hljs-selector-id { color: var(--syntax-function); }
+.code-block .hljs-type, .code-block .hljs-built_in, .code-block .hljs-name, .code-block .hljs-attr { color: var(--syntax-type); }
+.code-block .hljs-comment, .code-block .hljs-quote { color: var(--syntax-comment); }
+.code-block .hljs-deletion { color: var(--danger); }
+.code-block .hljs-emphasis { font-style: italic; }
+.code-block .hljs-strong { font-weight: 600; }
 .markdown table { display: block; border-collapse: collapse; max-width: 100%; overflow-x: auto; margin: 18px 0; font-size: .9em; }
 .markdown th, .markdown td { padding: 9px 12px; border: 1px solid var(--rule); text-align: left; font-weight: 400; }
 .markdown hr { border: 0; border-top: 1px solid var(--rule); margin: 24px 0; }

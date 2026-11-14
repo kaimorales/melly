@@ -5,6 +5,7 @@ import { backend, nativeApp } from './backend';
 import { NameDialog, SearchDialog } from './dialogs';
 import { ChatList } from './ChatList';
 import { ChatActions, DeleteChatDialog } from './ChatActions';
+import { MarkdownCodeBlock } from './CodeBlock';
 import { Icon, ProviderIcon } from './icons';
 import { modelLabel, providerName, routeLabel, SettingsView } from './SettingsView';
 import { ModelPicker, ProviderPicker } from './ModelPickers';
@@ -49,6 +50,7 @@ function MessageView({ message, activity, theme, highlight, onSource, onRetry, r
         return <a href={href} onClick={(event) => { event.preventDefault(); if (href) onSource({ id: '', kind: 'web', title: String(children), url: href, chatId: null, messageId: null, snippet: '' }); }}>{children}</a>;
       },
       img: ({ alt }) => <span className="message-status">[Image{alt ? `: ${alt}` : ''}]</span>,
+      pre: MarkdownCodeBlock,
     }}>{message.content}</ReactMarkdown></div> : message.status === 'streaming' ? <span className="stream-pending" aria-label="Preparing response" /> : null}
     {message.sources.some((source) => !message.content.includes(`melly-source:${source.id}`)) && <div className="source-row">{message.sources.filter((source) => !message.content.includes(`melly-source:${source.id}`)).map((source) => <button key={source.id || `${source.title}-${source.url}`} className="source" aria-label={`Open source ${source.title}`} title={source.snippet || source.title} onClick={() => onSource(source)}><Icon name={source.kind === 'chat' ? 'message' : 'globe'} /><span>{source.title}</span><Icon name={source.kind === 'chat' ? 'right' : 'external'} /></button>)}</div>}
     {message.status !== 'streaming' && <div className="message-tools">
