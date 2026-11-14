@@ -2,6 +2,12 @@
 
 Local verification on 2026-11-13, Apple Silicon macOS. The desktop uses Rust and the system WKWebView. No product release was published. Git checkpoints are pushed to `main` as requested.
 
+## Provider reliability follow-up
+
+The provider changes through `5cef14a` passed `npm run check` and `npm test`: **122 Rust tests passed**, one optional native Keychain test was ignored, and **50 Playwright UI tests passed**. The tests include Claude mixed and paused searches, bounded continuation and Stop, model discovery, safe HTTP error messages, billing-route isolation and cross-folder denial. They use synthetic data and do not establish live provider access.
+
+An isolated `npm run build` produced a 12.78 MiB ad-hoc-signed macOS bundle. `codesign --verify --deep --strict` passed on the copy at `target/provider-update/Melly.app`. The previous Melly app was running, so this updated bundle was not launched or tested natively in this follow-up. Quit the old app before launching the updated copy. As observed in earlier builds, changing an ad-hoc signature can require an official ChatGPT reconnect; no Keychain policy was changed. Live tests for Claude and the other API-key routes remain pending suitable credentials and account permission.
+
 ## Reproducible checks
 
 Run `npm run check`, `npm test`, and `npm run build`. `npm run check` checks TypeScript, Rust formatting and Clippy with warnings denied. `npm test` runs Rust plus Playwright browser UI tests. Browser tests use the labeled mock backend and do not prove native IPC or live provider access.

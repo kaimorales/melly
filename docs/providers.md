@@ -23,6 +23,8 @@ Each native connection has one immutable base URL. Credentials are keyed by a SH
 
 Both Qwen entries use **Singapore** endpoints. Standard API and Token Plan are different billing identities and require their matching, region-specific credentials. There is no Coding Plan or Kimi Code host integration. Standard's documented shared domain remains supported; workspace-specific domains can be used only as an explicitly separate Custom connection. The Token Plan endpoint is documented for compatible interactive AI tools; account eligibility and acceptance of this client remain unverified. [Official Token Plan setup](https://www.alibabacloud.com/help/en/model-studio/token-plan-personal-quick-start), [Team setup and billing separation](https://www.alibabacloud.com/help/en/model-studio/token-plan-team-quickstart), [Generic integration guide](https://www.alibabacloud.com/help/en/model-studio/more-tools).
 
+Claude in Melly requires a Claude Console API key. A school account or Claude subscription does not automatically grant this app API access; ask the organization's administrator about Console access and billing. Anthropic documents API credits for eligible Max, Ultra and Team plans, subject to linking a Console organization. Those credits are distinct from chat usage limits; school eligibility has not been verified. [Get an API key](https://platform.claude.com/docs/en/get-api-key), [API credits for subscribers](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers).
+
 DeepSeek uses the documented general API base and `deepseek-flash`. Moonshot uses its general API with the documented current Kimi model, independently of Kimi's coding product. [DeepSeek quickstart](https://api-docs.deepseek.com/quick_start/agent_integrations/), [Kimi quickstart](https://platform.kimi.ai/docs/get-your-api-key).
 
 ## Native behavior
@@ -54,7 +56,7 @@ For a human-operable native Stop demonstration, send **“Demonstrate streaming 
 - Errors include provider and HTTP status when available. Raw HTTP bodies, redirect locations, key values, and provider-supplied error messages are not exposed or logged.
 - SSE lines/events and complete streams are bounded at 1 MiB and 8 MiB. JSON responses and serialized requests are bounded at 2 MiB. Native step indices, tool counts, citations, query length and snippets are bounded. Truncated, invalid, incomplete, or explicitly failed streams never emit Done.
 - The live ChatGPT plan endpoint was observed returning valid SSE without Content-Type. Only this fixed Responses route accepts an absent header, after bounded framing validation. Explicit incompatible types and other providers retain the normal SSE media-type requirement; the same decoder, completion and cancellation checks apply.
-- Client tool calls are dispatched only after a successful protocol terminal event and validated argument JSON. IDs and fragments are preserved. Native continuation metadata exists only on ephemeral `ToolCall.provider_data`; the engine must not persist or expose it.
+- Client tool calls are dispatched only after a successful protocol terminal event and validated argument JSON. IDs and fragments are preserved. Native continuation metadata is ephemeral (`ToolCall.provider_data` or a Claude paused-search continuation); the engine must not persist or expose it.
 
 ## Evidence and remaining live checks
 
