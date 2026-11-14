@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import Mock, patch
 
 
 spec = importlib.util.spec_from_file_location(
@@ -79,6 +80,31 @@ class SubscriptionGateTests(unittest.TestCase):
                 "usage/read",
             ],
         )
+
+
+class IsolatedLoginTests(unittest.TestCase):
+    def test_browser_login_rejects_an_unrecognized_destination(self):
+        host = Mock()
+        host.rpc.side_effect = [
+            {"state": "loggedOut"},
+            {"verificationUrl": "https://auth.meta.com.example.org/device", "userCode": "ABCD-1234"},
+        ]
+        with patch.object(probe.subprocess, "run") as open_browser:
+            with self.assertRaisesRegex(RuntimeError, "unrecognized browser approval destination"):
+                probe.login_in_browser(host)
+        open_browser.assert_not_called()
+
+    def test_fresh_host_requests_only_device_login(self):
+        host = Mock()
+        host.rpc.side_effect = [
+            {"state": "loggedOut"},
+            {"verificationUrl": "https://auth.meta.com/device?user_code=ABCD-1234", "userCode": "ABCD-1234"},
+        ]
+        host.wait_for.return_value = {"params": {"outcome": "granted"}}
+        with patch.object(probe.subprocess, "run", return_value=Mock(returncode=0)) as open_browser:
+            probe.login_in_browser(host)
+        host.rpc.assert_called_with(21, "account/loginStart", {"type": "deviceCode"})
+        open_browser.assert_called_once()
 
 
 if __name__ == "__main__":

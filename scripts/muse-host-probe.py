@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import shutil
 import signal
 import socketserver
@@ -22,6 +23,7 @@ import tempfile
 import threading
 import time
 import uuid
+from urllib.parse import parse_qs, urlsplit
 
 PINNED_HOSTS = {
     "3f6da0d865ceb97dfe3002372ff1551b6a187dccc740866456a546510b1412e7": (
@@ -83,7 +85,8 @@ def profile(root, executable, port):
         f'(allow network-outbound (remote ip "localhost:{port}"))'
         if port is not None
         else '(allow network-outbound (remote tcp "*:443"))\n'
-        '(deny network-outbound (remote ip "localhost:*"))'
+        '(deny network-outbound (remote ip "localhost:*"))\n'
+        '(allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))'
     )
     return f"""(version 1)
       (allow default)
@@ -315,7 +318,7 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
 
 
 class Host:
-    def __init__(self, root, binary, fixture, name, expected):
+    def __init__(self, root, binary, fixture, name, expected, *, isolated_login=False):
         self.expected = expected
         self.synthetic = fixture is not None
         self.root = root / name
@@ -330,6 +333,10 @@ class Host:
             "TMPDIR": str(self.root / "tmp") + "/",
             "TBH_DISABLE_TELEMETRY": "1",
         }
+        if isolated_login:
+            # Muse owns the credential in this disposable directory. Its macOS
+            # Keychain item is shared with the normal CLI login.
+            env["TBH_CREDENTIAL_BACKEND"] = "file"
         port = None
         model_args = []
         if fixture is not None:
@@ -734,8 +741,8 @@ def subscription_probe(host, command_id, *, infer):
         "model/complete",
         {
             "commandId": command_id,
-            "messages": [{"role": "user", "text": "Reply with exactly MELLY_PROBE_OK"}],
-            "maxTokens": 32,
+            "messages": [{"role": "user", "text": "Reply with one word: Hello"}],
+            "maxTokens": 256,
         },
     )
     require(
@@ -748,7 +755,6 @@ def subscription_probe(host, command_id, *, infer):
         50,
     )["params"]
     require(done.get("outcome") == "completed", "The stateless Muse completion failed.")
-    require(done.get("text", "").strip() == "MELLY_PROBE_OK", "Unexpected test reply.")
     check_account(6)
 
     # A small request may not change whole-percentage meter readings. Treat
@@ -757,12 +763,68 @@ def subscription_probe(host, command_id, *, infer):
     after = host.rpc(7, "usage/read", {}).get("usage") or {}
     before_ms = before.get("observedAtMs", 0)
     after_ms = after.get("observedAtMs", 0)
+    reply_received = bool((done.get("text") or "").strip())
     record(
         "subscription_completion",
         outcome="completed",
+        reply_received=reply_received,
         post_request_usage_observed=after_ms > before_ms,
     )
+    require(reply_received, "Muse completed without returning text.")
     return True
+
+
+def login_in_browser(host):
+    require(
+        host.rpc(20, "account/read", {}).get("state") == "loggedOut",
+        "Fresh Muse profile unexpectedly had a credential.",
+    )
+    login = host.rpc(21, "account/loginStart", {"type": "deviceCode"})
+    url = login.get("verificationUrl", "")
+    code = login.get("userCode", "")
+    target = urlsplit(url)
+    require(
+        target.scheme == "https"
+        and target.username is None
+        and target.password is None
+        and target.port in (None, 443)
+        and target.hostname in {
+            "auth.meta.com", "dev.meta.ai", "meta.com", "work.meta.com", "www.facebook.com", "www.meta.com"
+        },
+        "Muse returned an unrecognized browser approval destination.",
+    )
+    require(
+        re.fullmatch(r"[A-Z0-9-]{4,20}", code, re.ASCII | re.IGNORECASE),
+        "Muse returned an invalid approval code.",
+    )
+    # The launch and optional code dialog run in the parent process. Muse
+    # itself cannot start a browser, shell, or other executable.
+    opened = subprocess.run(["/usr/bin/open", url], capture_output=True, timeout=10)
+    require(opened.returncode == 0, "Could not open the Meta approval page.")
+    print("Approve the Muse login in your browser to continue.", flush=True)
+    dialog = None
+    try:
+        if not any(code in values for values in parse_qs(target.query).values()):
+            dialog = subprocess.Popen(
+                ["/usr/bin/osascript", "-"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            dialog.stdin.write(
+                f'display dialog "Enter this code on the Meta page: {code}" '
+                'with title "Melly Muse test" buttons {"OK"} giving up after 240\n'
+            )
+            dialog.stdin.close()
+        done = host.wait_for(lambda frame: frame.get("method") == "account/loginCompleted", 250)
+        require(done.get("params", {}).get("outcome") == "granted", "Meta did not grant the login.")
+        record("isolated_login", outcome="granted")
+    finally:
+        if dialog is not None:
+            if dialog.poll() is None:
+                dialog.terminate()
+            dialog.wait(timeout=3)
 
 
 def main():
@@ -773,14 +835,20 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--plan-status", action="store_true", help="Read plan status from Meta")
     mode.add_argument("--plan-test", action="store_true", help="Send one synthetic prompt on an active plan")
+    mode.add_argument(
+        "--plan-login-test", action="store_true",
+        help="Approve a temporary browser login and test one prompt on an active plan",
+    )
     args = parser.parse_args()
     require(sys.platform == "darwin", "This probe requires macOS sandbox-exec.")
     require(args.muse.is_file(), "Host is missing.")
     original_hash = sha256(args.muse)
     expected = PINNED_HOSTS.get(original_hash)
     require(expected is not None, "Host does not match a pinned official SHA-256.")
-    if args.plan_status or args.plan_test:
+    if args.plan_status or args.plan_test or args.plan_login_test:
         require(expected[0] == "1.4.20", "Plan checks require the pinned 1.4.20 host.")
+    if args.plan_login_test:
+        os.umask(0o077)
     with tempfile.TemporaryDirectory(prefix="melly-muse-probe-", dir="/private/tmp") as temporary:
         root = Path(temporary).resolve()
         binary = root / "muse"
@@ -788,12 +856,14 @@ def main():
         shutil.copyfile(args.muse, binary)
         os.chmod(binary, 0o700)
         require(sha256(binary) == original_hash, "Copied host checksum mismatch.")
-        if args.plan_status or args.plan_test:
+        if args.plan_status or args.plan_test or args.plan_login_test:
             verify_sandbox(root, None)
-            host = Host(root, binary, None, "plan", expected)
+            host = Host(root, binary, None, "plan", expected, isolated_login=args.plan_login_test)
             try:
                 host.initialize()
-                subscription_probe(host, uuid7(), infer=args.plan_test)
+                if args.plan_login_test:
+                    login_in_browser(host)
+                subscription_probe(host, uuid7(), infer=args.plan_test or args.plan_login_test)
             finally:
                 host.close()
             return
@@ -827,6 +897,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except subprocess.TimeoutExpired:
+        print("Muse probe failed: a local browser operation timed out.", file=sys.stderr)
+        sys.exit(1)
     except (OSError, RuntimeError, ValueError) as error:
         print(f"Muse probe failed: {error}", file=sys.stderr)
         sys.exit(1)

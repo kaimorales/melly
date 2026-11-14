@@ -1,6 +1,6 @@
 # Muse Code subscription feasibility
 
-Updated 2026-11-14. **The Muse provider remains disabled in the desktop app.** The installed host confirmed an active subscription and returned a live allowance reading. The confined host could not access the same login, so plan-backed inference remains unverified.
+Updated 2026-11-14. **The Muse provider remains disabled in the desktop app.** The sandboxed probe completed a live text request after a separate browser login. The host confirmed an active plan and reported the account-login credential before and after the request. Its post-request allowance observation did not advance, so a quota deduction remains unverified.
 
 ## Experimental plan check
 
@@ -13,11 +13,12 @@ Melly's opt-in developer probe uses stdio with the pinned 1.4.20 host and sends 
 ```sh
 python3 scripts/muse-host-probe.py --muse /path/to/verified-muse --plan-status
 python3 scripts/muse-host-probe.py --muse /path/to/verified-muse --plan-test
+python3 scripts/muse-host-probe.py --muse /path/to/verified-muse --plan-login-test
 ```
 
-`--plan-status` checks the billing route without inference. `--plan-test` sends one fixed synthetic prompt capped at 32 output tokens. Both require the host's effective `accountLogin` lane and a fresh `subscriptionActive: true`. An API key, missing entitlement, or any error stops the probe. On success the probe reports whether the host observed usage after the reply. Usage is reported in whole percentages, so this short test may produce no visible change. A host-reported observation is separate from invoice verification.
+`--plan-status` checks the billing route without inference. `--plan-test` sends one fixed synthetic prompt capped at 256 output tokens. `--plan-login-test` first opens Meta's official approval page for a fresh browser login in the sandbox. The host writes its credential into a private temporary profile, which is removed after the test. This storage mode is for the one-time developer probe. The browser flow uses the existing subscription account and has no purchase step. All three modes require the host's effective `accountLogin` lane and a fresh `subscriptionActive: true`. An API key, missing entitlement, or any error stops the probe. On success the probe reports whether the host observed usage after the reply. A host-reported observation is separate from invoice verification.
 
-The probe uses a fresh workspace and configuration, a cleared environment, contributor mode off, and a host sandbox that blocks home reads and child executables. It permits outbound TCP 443 for the official host to contact Meta. Muse owns the credential lookup. The probe does not read auth files, copy credentials, print account details, or transmit real chat text. The mock completed and cancelled a stateless request. Four separate mock responses requesting shell, file read, file write, and web search triggered zero tool or session events and zero follow-up model requests.
+The probe uses a fresh workspace and configuration, a cleared environment, contributor mode off, and a host sandbox that blocks home reads and child executables. It permits outbound TCP 443 and access to the macOS DNS resolver socket for the official host. Muse owns the credential lookup. The probe does not read auth files, copy credentials, print account details, or transmit real chat text. The mock completed and cancelled a stateless request. Four separate mock responses requesting shell, file read, file write, and web search triggered zero tool or session events and zero follow-up model requests.
 
 On 2026-11-14, `muse usage --json` returned an allowance. A separate status-only MSP check launched the verified installed binary with normal Muse sign-in access and confirmed both `accountLogin` and `subscriptionActive: true`. No model request ran in that check. With the external sandbox in place, exact Muse-owned file exceptions and native Keychain lookup still left `account/read` at `loggedOut`. A diagnostic `usage/refresh` returned `-32081` (`usageRefreshUnavailable`). The normal probe stopped before inference. No relogin is needed when `muse usage` already shows an allowance. Direct access to the login Keychain database, broad home-directory reads, and removing the sandbox from the inference run are outside this experiment.
 
@@ -77,7 +78,7 @@ MELLY_INSPECTION="$HOME/Library/Application Support/Melly/muse/inspection"
 | --- | --- | --- |
 | Official Rust SDK + `muse serve` | The 1.4.20 SDK and host are now available; the empty preset prevented the four synthetic main-session tool calls above. | Reminder child agents still ran. Full extension suppression, isolated host-owned login, effective plan billing, streamed live replies and use of an explicitly scoped Melly folder tool remain unverified. |
 | Pinned `muse exec --json` | The actual help exposes empty preset, reminder/web-tool/input disabling, foreign-personal-context exclusion, no session log, and model-step limits. | It does not accept a piped conversation. `/dev/stdin` fails the regular-file check, no positional prompt is rejected, and `-` is a literal prompt. Melly will not pass chat history through process arguments or ordinary prompt files. |
-| Stable `model/complete` | The host completed and cancelled synthetic, tool-free requests without a session or reminder events. | It is not streaming, permits at most 32 messages and 1,024 output tokens, cannot select a model per call, and does not resolve the host-auth or plan-billing checks. It is not a substitute for full chat capability. |
+| Stable `model/complete` | The host completed and cancelled synthetic, tool-free mock requests without session or reminder events. The live test completed under an active-plan login in a temporary profile. | Replies arrive whole, with at most 32 input messages and 1,024 output tokens. The host chooses the model. The live test did not observe a quota deduction. |
 
 The Rust SDK warns on fingerprint mismatches rather than refusing them. A future integration must apply its own strict version/schema check and must not treat unknown configuration keys, a system prompt, an empty workspace, or a deny-all approval callback as proof of absent tools. [Compatibility contract](https://meta-models.github.io/muse-code-sdk/next/compatibility/), [Official Rust crate](https://crates.io/crates/muse-code-sdk/1.4.20), [Empty-preset release notes](https://dev.meta.ai/docs/muse-code/changelog), [Completion contract](https://meta-models.github.io/muse-code-sdk/next/generated/msp/methods/model-complete/)
 
@@ -104,4 +105,4 @@ Meta describes SDK-driven desktop clients, while its subscription documentation 
 
 Questions for Meta: (1) Does a general-purpose desktop chat app driving the official host through its SDK qualify for Muse Code plan usage? (2) How can a client isolate its host-owned login and verify the effective plan lane before any inference? (3) How can a served session suppress all reminder agents and inherited extensions while retaining streaming and explicitly selected read-only tools? (4) Can `model/complete` guarantee an exact model and stream its result? Do not send these questions automatically.
 
-No production Muse adapter, SDK dependency, shared contract change, or enabled-provider claim was added. The installed binary and generated inspection files are outside the repository and are not bundled with Melly. Live plan access remains unverified.
+The experimental probe runs separately from the desktop app. The installed binary and generated inspection files live outside the repository.
