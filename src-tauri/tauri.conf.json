@@ -2,6 +2,6 @@
   "$schema":"https://schema.tauri.app/config/2",
   "productName":"Melly", "version":"1.0.0", "identifier":"com.melly.desktop",
   "build":{"beforeDevCommand":"npm run web","devUrl":"http://127.0.0.1:1420","beforeBuildCommand":"npm run build:web","frontendDist":"../dist"},
-  "app":{"windows":[{"label":"main","title":"Melly","width":1200,"height":820,"minWidth":760,"minHeight":560,"titleBarStyle":"Overlay","hiddenTitle":true,"trafficLightPosition":{"x":18,"y":21},"backgroundColor":"#171717"}],"security":{"csp":"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data:; font-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'"}},
+  "app":{"windows":[{"label":"main","title":"Melly","width":1200,"height":820,"minWidth":760,"minHeight":560,"dragDropEnabled":false,"titleBarStyle":"Overlay","hiddenTitle":true,"trafficLightPosition":{"x":18,"y":21},"backgroundColor":"#171717"}],"security":{"csp":"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data:; font-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'"}},
   "bundle":{"active":true,"targets":["app"],"category":"Productivity","shortDescription":"Quiet, fast cloud conversations.","macOS":{"minimumSystemVersion":"12.0","signingIdentity":"-"},"icon":["icons/32x32.png","icons/128x128.png","icons/128x128@2x.png","icons/icon.icns"]}
 }

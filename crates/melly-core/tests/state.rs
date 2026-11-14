@@ -55,6 +55,38 @@ fn unfiled_chat_has_no_implicit_global_memory() {
     let c = db.create_chat(None).unwrap();
     assert!(db.search_folder(&c.id, "anything", 5).is_err());
 }
+
+#[test]
+fn deleting_a_chat_removes_messages_and_both_search_results() {
+    let db = Store::memory().unwrap();
+    let folder = db.create_folder("Synthetic research").unwrap();
+    let reader = db.create_chat(Some(&folder.id)).unwrap();
+    let source = db.create_chat(Some(&folder.id)).unwrap();
+    db.rename_chat(&source.id, "Transit notes").unwrap();
+    let message = db
+        .insert_message(
+            &source.id,
+            "user",
+            "Transit forecast improved by 18%",
+            "complete",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(db.search_folder(&reader.id, "Transit", 5).unwrap().len(), 1);
+    assert_eq!(db.search_chats("Transit").unwrap().len(), 1);
+    db.delete_chat(&source.id).unwrap();
+    assert!(db.chat(&source.id).is_err());
+    assert!(db.message(&message.id).is_err());
+    assert!(
+        db.search_folder(&reader.id, "Transit", 5)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(db.search_chats("Transit").unwrap().is_empty());
+    assert!(db.chat(&reader.id).is_ok());
+}
 #[test]
 fn search_is_literal_bounded_and_sources_open_exact_messages() {
     let db = Store::memory().unwrap();

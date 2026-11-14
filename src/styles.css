@@ -78,6 +78,21 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .recent-row { width: 100%; height: 36px; padding: 0 10px; display: flex; align-items: center; color: var(--secondary); border-radius: 7px; text-align: left; }
 .sidebar-empty { color: var(--muted); font-size: 12px; margin: 0 10px; }
 .sidebar-foot { margin-top: auto; padding: 14px 20px; font-size: 10px; line-height: 16px; color: var(--muted); }
+.chat-row-wrap { position: relative; border-radius: 7px; }
+.chat-row-wrap.nested { margin-left: 16px; }
+.chat-row-wrap .chat-row { margin-left: 0; width: 100%; }
+.chat-row-wrap .chat-row, .chat-row-wrap .recent-row { padding-right: 29px; user-select: none; -webkit-user-select: none; }
+.chat-row-options { position: absolute; top: 2px; right: 1px; width: 26px; height: 28px; opacity: 0; }
+.chat-row-wrap:hover .chat-row-options, .chat-row-wrap:focus-within .chat-row-options, .chat-row-wrap.menu-open .chat-row-options { opacity: 1; }
+.chat-row-wrap.dragging { opacity: .4; }
+.chat-row-wrap, .folder, .recent-group { transition: background-color 140ms ease-out, opacity 140ms ease-out; }
+.folder-wrap[data-drop-active='true'] > .folder { background: var(--selected); box-shadow: inset 0 0 0 1px var(--focus); color: var(--ink); }
+.recent-group { border-radius: 8px; padding-bottom: 8px; min-height: 68px; }
+.recent-group[data-drop-active='true'] { background: var(--selected); box-shadow: inset 0 0 0 1px var(--focus); }
+.recent-group .section-label { padding-top: 9px; }
+.drop-hint { font-size: 10px; color: var(--secondary); }
+.is-dragging .chat-row-options, .is-dragging .folder-options { visibility: hidden; }
+.sidebar-chat-menu { position: fixed; min-width: 212px; max-height: calc(100vh - 16px); overflow-y: auto; }
 .main { flex: 1; position: relative; min-width: 0; height: 100%; display: flex; flex-direction: column; }
 .main-header { height: 52px; flex: 0 0 52px; display: flex; align-items: center; gap: 10px; padding: 0 24px; user-select: none; }
 .native.sidebar-hidden .main-header { padding-left: 84px; }

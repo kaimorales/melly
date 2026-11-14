@@ -2,7 +2,9 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { backend, nativeApp } from './backend';
-import { Dialog, NameDialog, SearchDialog } from './dialogs';
+import { NameDialog, SearchDialog } from './dialogs';
+import { ChatList } from './ChatList';
+import { ChatActions, DeleteChatDialog } from './ChatActions';
 import { Icon, ProviderIcon } from './icons';
 import { modelLabel, providerName, routeLabel, SettingsView } from './SettingsView';
 import { ModelPicker, ProviderPicker } from './ModelPickers';
@@ -68,9 +70,10 @@ export default function App() {
   const [draft, setDraft] = useState(''); const [webSearch, setWebSearch] = useState(false); const [manualFolder, setManualFolder] = useState<boolean | null>(null);
   const [running, setRunning] = useState<Set<string>>(new Set()); const [starting, setStarting] = useState(false); const sendingRef = useRef(false);
   const [notice, setNotice] = useState(''); const [sidebar, setSidebar] = useState(window.innerWidth > 600);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [chatMenu, setChatMenu] = useState(false); const [folderMenu, setFolderMenu] = useState<string | null>(null); const [picker, setPicker] = useState<'providers' | 'models' | null>(null);
-  const [searchOpen, setSearchOpen] = useState(false); const [nameAction, setNameAction] = useState<NameAction | null>(null); const [deleteOpen, setDeleteOpen] = useState(false);
+  const [moving, setMoving] = useState<Set<string>>(new Set()); const movingIds = useRef(new Set<string>());
+  const removedChatIds = useRef(new Set<string>());
+  const [chatMenu, setChatMenu] = useState(false); const [picker, setPicker] = useState<'providers' | 'models' | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false); const [nameAction, setNameAction] = useState<NameAction | null>(null); const [deleteTarget, setDeleteTarget] = useState<Chat | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null); const jump = useRef<{ chatId: string; messageId: string } | null>(null);
   const [systemDark, setSystemDark] = useState(window.matchMedia('(prefers-color-scheme: dark)').matches);
   const [activities, setActivities] = useState<Record<string, string>>({});
@@ -83,6 +86,7 @@ export default function App() {
 
   const refresh = useCallback(async () => {
     const fresh = await backend.invoke<Bootstrap>('bootstrap');
+    fresh.chats = fresh.chats.filter((chat) => !removedChatIds.current.has(chat.id));
     if (mounted.current) setData((current) => {
       const selected = current?.chats.find((chat) => chat.id === selectedRef.current);
       return selected && !fresh.chats.some((chat) => chat.id === selected.id) ? { ...fresh, chats: [...fresh.chats, selected] } : fresh;
@@ -204,10 +208,13 @@ export default function App() {
   useLayoutEffect(() => { if (textarea.current) { textarea.current.style.height = '24px'; textarea.current.style.height = `${Math.min(180, textarea.current.scrollHeight)}px`; } }, [draft]);
   const closePicker = () => { setPicker(null); (picker === 'providers' ? providerButton : modelButton).current?.focus(); };
   useEffect(() => {
-    const outside = (event: MouseEvent) => { if (!(event.target as Element).closest('[data-menu-root]')) { setChatMenu(false); setFolderMenu(null); setPicker(null); } };
-    const escape = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') { setChatMenu(false); setFolderMenu(null); if (picker) closePicker(); } };
-    document.addEventListener('mousedown', outside); document.addEventListener('keydown', escape);
-    return () => { document.removeEventListener('mousedown', outside); document.removeEventListener('keydown', escape); };
+    const outside = (event: MouseEvent) => { if (!(event.target as Element).closest('[data-menu-root]')) { setChatMenu(false); setPicker(null); } };
+    // File/URL drops must never navigate the webview. Only ChatList handles an
+    // authenticated in-app chat drag; dropping elsewhere is a harmless cancel.
+    const preventDropNavigation = (event: DragEvent) => event.preventDefault();
+    const escape = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') { setChatMenu(false); if (picker) closePicker(); } };
+    document.addEventListener('mousedown', outside); document.addEventListener('keydown', escape); document.addEventListener('drop', preventDropNavigation);
+    return () => { document.removeEventListener('mousedown', outside); document.removeEventListener('keydown', escape); document.removeEventListener('drop', preventDropNavigation); };
   }, [picker]);
 
   const selectedChat = data?.chats.find((chat) => chat.id === selectedId);
@@ -226,7 +233,7 @@ export default function App() {
     setView('chat'); setHighlight(null); setNotice(''); followBottom.current = true;
     if (window.innerWidth <= 600) setSidebar(false);
   };
-  const createChat = async (folderId: string | null = null) => { const chat = await backend.invoke<Chat>('create_chat', { folderId }); await refresh(); selectChat(chat); setDraft(''); setFolderMenu(null); requestAnimationFrame(() => textarea.current?.focus()); return chat; };
+  const createChat = async (folderId: string | null = null) => { const chat = await backend.invoke<Chat>('create_chat', { folderId }); await refresh(); selectChat(chat); setDraft(''); requestAnimationFrame(() => textarea.current?.focus()); return chat; };
   const seed = async () => { const fresh = await backend.invoke<Bootstrap>('demo_seed'); setData(fresh); const chat = fresh.chats.find((entry) => entry.title === 'Interview prep') || fresh.chats[0]; if (chat) selectChat(chat); setWebSearch(true); };
   const saveSettings = async (settings: Settings) => { await backend.invoke('save_settings', { settings }); await refresh(); };
   const chooseProvider = async (next: ProviderView) => {
@@ -293,6 +300,29 @@ export default function App() {
     else await backend.invoke('rename_chat', { chatId: nameAction.id, title: name });
     await refresh();
   };
+  const moveChat = async (chat: Chat, folderId: string | null) => {
+    if (chat.folderId === folderId || running.has(chat.id) || movingIds.current.has(chat.id)) return;
+    movingIds.current.add(chat.id); setMoving(new Set(movingIds.current));
+    try {
+      await backend.invoke('move_chat', { chatId: chat.id, folderId });
+      setData((current) => current && { ...current, chats: current.chats.map((entry) => entry.id === chat.id ? { ...entry, folderId } : entry) });
+      // A permission granted for the previous folder never follows a move.
+      if (selectedRef.current === chat.id) setManualFolder(false);
+      setNotice(`Moved “${chat.title}” to ${data?.folders.find((folder) => folder.id === folderId)?.title || 'Recent'}.`);
+      await refresh();
+    } catch (reason) { setNotice(errorText(reason)); }
+    finally { movingIds.current.delete(chat.id); setMoving(new Set(movingIds.current)); }
+  };
+  const deleteChat = async (chat: Chat) => {
+    await backend.invoke('delete_chat', { chatId: chat.id });
+    removedChatIds.current.add(chat.id);
+    setData((current) => current && { ...current, chats: current.chats.filter((entry) => entry.id !== chat.id) });
+    if (selectedRef.current === chat.id) {
+      selectedRef.current = null; setSelectedId(null); setItems([]); setDraft(''); setManualFolder(null);
+      setActivities({}); setHighlight(null); setHasOlder(false); setViewingOlder(false); ++messageRequest.current;
+    }
+    setNotice('Chat deleted.');
+  };
   if (bootError) return <div className="loading-state"><div role="alert">{bootError}<br /><button className="text-action" onClick={() => window.location.reload()}>Try again</button></div></div>;
   if (!data || !provider) return <div className="loading-state">Opening Melly…</div>;
 
@@ -300,17 +330,10 @@ export default function App() {
     {sidebar && <aside className="sidebar" aria-label="Chats">
       <div className="chrome" data-tauri-drag-region><span className="preview-brand" data-tauri-drag-region>Melly</span><button className="icon-button" aria-label="Hide sidebar" onClick={() => setSidebar(false)}><Icon name="sidebar" /></button></div>
       <nav className="nav" aria-label="Main"><button className="nav-row" onClick={() => { void createChat().catch((reason) => setNotice(errorText(reason))); }}><Icon name="edit" />New Chat</button><button className={`nav-row ${view === 'settings' ? 'selected' : ''}`} onClick={() => { setView('settings'); setNotice(''); }}><Icon name="settings" />Settings</button>{view === 'chat' && <button className="nav-row chat-search" onClick={() => setSearchOpen(true)}><Icon name="search" />Search chats</button>}</nav>
-      {view === 'chat' && <div className="sidebar-list"><div className="section-label"><span>Folders</span><button className="icon-button" aria-label="New folder" title="New folder" onClick={() => setNameAction({ kind: 'new-folder' })}><Icon name="plus" className="small" /></button></div>
-        {!data.folders.length && <p className="sidebar-empty">Keep related chats together.</p>}
-        {data.folders.map((folder) => <div className="folder-wrap" key={folder.id} data-menu-root>
-          <button className="folder" aria-expanded={!collapsed.has(folder.id)} onClick={() => setCollapsed((current) => { const next = new Set(current); if (next.has(folder.id)) next.delete(folder.id); else next.add(folder.id); return next; })}><Icon name={collapsed.has(folder.id) ? 'chevron' : 'down'} className="chevron" /><Icon name="folder" className="folder-icon" /><span>{folder.title}</span></button>
-          <button className="icon-button folder-options" aria-label={`Folder options for ${folder.title}`} onClick={() => setFolderMenu(folderMenu === folder.id ? null : folder.id)}><Icon name="more" className="small" /></button>
-          {folderMenu === folder.id && <div className="menu folder-menu" role="menu"><button role="menuitem" className="menu-item" onClick={() => { void createChat(folder.id).catch((reason) => setNotice(errorText(reason))); }}>New chat in folder</button><button role="menuitem" className="menu-item" onClick={() => { setNameAction({ kind: 'rename-folder', id: folder.id, title: folder.title }); setFolderMenu(null); }}>Rename folder</button></div>}
-          {!collapsed.has(folder.id) && data.chats.filter((chat) => chat.folderId === folder.id).map((chat) => <button className={`chat-row ${chat.id === selectedId ? 'selected' : ''}`} key={chat.id} onClick={() => selectChat(chat)} title={chat.title}><span>{chat.title}</span>{running.has(chat.id) && <span className="sr-only">Responding</span>}</button>)}
-        </div>)}
-        <div className="section-label">Recent</div>{data.chats.filter((chat) => !chat.folderId).map((chat) => <button key={chat.id} className={`recent-row ${chat.id === selectedId ? 'selected' : ''}`} onClick={() => selectChat(chat)} title={chat.title}><span>{chat.title}</span></button>)}
-        {!data.chats.some((chat) => !chat.folderId) && <p className="sidebar-empty">Your recent chats appear here.</p>}
-      </div>}
+      {view === 'chat' && <ChatList chats={data.chats} folders={data.folders} selectedId={selectedId} busy={new Set([...running, ...moving])}
+        onSelect={selectChat} onMove={moveChat} onDelete={setDeleteTarget} onRename={(chat) => setNameAction({ kind: 'rename-chat', id: chat.id, title: chat.title })}
+        onNewChat={(folderId) => { void createChat(folderId).catch((reason) => setNotice(errorText(reason))); }} onNewFolder={() => setNameAction({ kind: 'new-folder' })}
+        onRenameFolder={(folder) => setNameAction({ kind: 'rename-folder', id: folder.id, title: folder.title })} />}
       {!nativeApp && <div className="sidebar-foot">Browser preview · Mock</div>}
     </aside>}
     <main className="main">
@@ -319,7 +342,7 @@ export default function App() {
         {view === 'settings' && <button className="icon-button" aria-label="Back to chat" title="Back to chat" onClick={() => { setView('chat'); setNotice(''); }}><Icon name="right" style={{ transform: 'rotate(180deg)' }} /></button>}
         {view === 'settings' ? <h1 data-tauri-drag-region>Settings</h1> : selectedChat ? <div className="chat-heading" data-tauri-drag-region><span className="chat-title" data-tauri-drag-region>{selectedChat.title}</span><span className="chat-location" data-tauri-drag-region>{selectedFolder?.title || 'No folder'}</span></div> : <span />}
         {!sidebar && !nativeApp && <span className="preview-badge">Browser preview · Mock</span>}
-        {view === 'chat' && selectedChat && <div className="chat-menu-button" data-menu-root><button className="icon-button" aria-label="Chat options" aria-expanded={chatMenu} onClick={() => setChatMenu(!chatMenu)}><Icon name="more" /></button>{chatMenu && <div className="menu chat-menu" role="menu"><button className="menu-item" role="menuitem" onClick={() => { setNameAction({ kind: 'rename-chat', id: selectedChat.id, title: selectedChat.title }); setChatMenu(false); }}>Rename chat</button><label className="menu-field">Move to folder<select aria-label="Move to folder" disabled={activeRun} value={selectedChat.folderId || ''} onChange={(event) => { void backend.invoke('move_chat', { chatId: selectedChat.id, folderId: event.target.value || null }).then(refresh).then(() => { setChatMenu(false); setManualFolder(null); }).catch((reason) => setNotice(errorText(reason))); }}><option value="">No folder</option>{data.folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.title}</option>)}</select></label><button className="menu-item danger" role="menuitem" disabled={activeRun} title={activeRun ? "Stop the response before deleting this chat" : undefined} onClick={() => { setDeleteOpen(true); setChatMenu(false); }}>Delete chat</button></div>}</div>}
+        {view === 'chat' && selectedChat && <div className="chat-menu-button" data-menu-root><button className="icon-button" aria-label="Chat options" aria-expanded={chatMenu} onClick={() => setChatMenu(!chatMenu)}><Icon name="more" /></button>{chatMenu && <div className="menu chat-menu" role="menu"><ChatActions chat={selectedChat} folders={data.folders} busy={activeRun || moving.has(selectedChat.id)} onRename={(chat) => setNameAction({ kind: 'rename-chat', id: chat.id, title: chat.title })} onDelete={setDeleteTarget} onMove={moveChat} onClose={() => setChatMenu(false)} /></div>}</div>}
       </header>
       {notice && <div className="notice" role="alert"><span>{notice}</span><button className="icon-button" aria-label="Dismiss notification" onClick={() => setNotice('')}><Icon name="close" className="small" /></button></div>}
       {view === 'settings' ? <SettingsView data={data} theme={theme} onSettings={saveSettings} refresh={refresh} onSeed={seed} report={setNotice} /> : <>
@@ -358,6 +381,6 @@ export default function App() {
     </main>
     {searchOpen && <SearchDialog folders={data.folders} onClose={() => setSearchOpen(false)} onSelect={selectChat} />}
     {nameAction && <NameDialog title={nameAction.kind === 'new-folder' ? 'New folder' : nameAction.kind === 'rename-folder' ? 'Rename folder' : 'Rename chat'} initial={nameAction.title} action={nameAction.kind === 'new-folder' ? 'Create' : 'Save'} onClose={() => setNameAction(null)} onSave={nameSave} />}
-    {deleteOpen && selectedChat && <Dialog title="Delete this chat?" onClose={() => setDeleteOpen(false)}><p>“{selectedChat.title}” and its messages will be removed.</p><div className="dialog-actions"><button className="button quiet" onClick={() => setDeleteOpen(false)}>Cancel</button><button className="button danger" onClick={() => { void backend.invoke('delete_chat', { chatId: selectedChat.id }).then(async () => { selectedRef.current = null; setSelectedId(null); setDeleteOpen(false); setItems([]); await refresh(); }).catch((reason) => setNotice(errorText(reason))); }}>Delete chat</button></div></Dialog>}
+    {deleteTarget && <DeleteChatDialog chat={deleteTarget} busy={running.has(deleteTarget.id) || moving.has(deleteTarget.id)} onClose={() => setDeleteTarget(null)} onDelete={deleteChat} />}
   </div>;
 }

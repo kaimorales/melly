@@ -131,12 +131,12 @@ export const mockBackend: Backend = {
       case 'create_chat': result = copy(newChat(args.folderId as string | null)); break;
       case 'rename_chat': findChat(args.chatId as string).title = String(args.title).trim(); break;
       case 'delete_chat': {
-        const chatId = args.chatId as string; const run = runs.get(chatId); if (run) clearTimeout(run.timer); runs.delete(chatId);
+        const chatId = args.chatId as string; if (runs.has(chatId)) throw new Error('Stop this reply before deleting the chat');
         const at = chats.findIndex((chat) => chat.id === chatId); if (at >= 0) chats.splice(at, 1);
         for (let i = messages.length - 1; i >= 0; i--) if (messages[i].chatId === chatId) messages.splice(i, 1);
         break;
       }
-      case 'move_chat': { const folderId = args.folderId as string | null; if (folderId && !folders.some((folder) => folder.id === folderId)) throw new Error('Folder not found.'); findChat(args.chatId as string).folderId = folderId; break; }
+      case 'move_chat': { if (runs.has(args.chatId as string)) throw new Error('Stop this reply before moving the chat'); const folderId = args.folderId as string | null; if (folderId && !folders.some((folder) => folder.id === folderId)) throw new Error('Folder not found.'); findChat(args.chatId as string).folderId = folderId; break; }
       case 'create_folder': { const folder = { id: id(), title: String(args.title).trim() }; if (!folder.title) throw new Error('Enter a folder name.'); folders.push(folder); result = copy(folder); break; }
       case 'rename_folder': { const folder = folders.find((entry) => entry.id === args.folderId); if (!folder) throw new Error('Folder not found.'); folder.title = String(args.title).trim(); break; }
       case 'messages': result = copy(messages.filter((message) => message.chatId === args.chatId && (args.before == null || message.createdAt < Number(args.before))).slice(-60)); break;

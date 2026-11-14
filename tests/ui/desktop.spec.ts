@@ -35,7 +35,7 @@ test('manages folders and chat titles and searches chats', async ({ page }) => {
   await page.getByRole('button', { name: 'Create', exact: true }).click();
   await page.getByRole('button', { name: 'Folder options for Research' }).click();
   await page.getByRole('menuitem', { name: 'New chat in folder' }).click();
-  await page.getByRole('button', { name: 'Chat options' }).click();
+  await page.getByRole('button', { name: 'Chat options', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Rename chat' }).click();
   await page.getByRole('textbox', { name: 'Name' }).fill('Reading notes');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
@@ -44,7 +44,7 @@ test('manages folders and chat titles and searches chats', async ({ page }) => {
   await page.getByRole('textbox', { name: 'Search chats' }).fill('Reading');
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Reading notes', exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: 'Chat options' }).click();
+  await page.getByRole('button', { name: 'Chat options', exact: true }).click();
   await page.getByLabel('Move to folder').selectOption('');
   await expect(page.locator('.chat-location')).toHaveText('No folder');
 });
@@ -309,7 +309,7 @@ test('an empty crash-interrupted reply displays a recovery notice', async ({ pag
 test('deleting the selected chat removes it from the recent list', async ({ page }) => {
   await page.getByRole('button', { name: 'New Chat', exact: true }).click();
   await expect(page.locator('.chat-title')).toHaveText('New chat');
-  await page.getByRole('button', { name: 'Chat options' }).click();
+  await page.getByRole('button', { name: 'Chat options', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Delete chat' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Delete chat' }).click();
   await expect(page.locator('.sidebar .recent-row')).toHaveCount(0);
