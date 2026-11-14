@@ -106,6 +106,106 @@ fn anthropic_content_blocks_and_terminal_are_native() {
     assert!(result.is_err());
 }
 
+fn anthropic_mixed_tools(server_first: bool, malformed: bool) -> Vec<u8> {
+    let (server_index, client_index) = if server_first { (0, 1) } else { (1, 0) };
+    let mut server = vec![
+        json!({"type":"content_block_start","index":server_index,"content_block":{"type":"server_tool_use","id":"srvtoolu_demo","name":"web_search","input":{}}}),
+        json!({"type":"content_block_delta","index":server_index,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"current "}}),
+    ];
+    if !malformed {
+        server.push(json!({"type":"content_block_delta","index":server_index,"delta":{"type":"input_json_delta","partial_json":"forecast\"}"}}));
+    }
+    server.push(json!({"type":"content_block_stop","index":server_index}));
+    let client = vec![
+        json!({"type":"content_block_start","index":client_index,"content_block":{"type":"tool_use","id":"toolu_demo","name":"search_folder","input":{}}}),
+        json!({"type":"content_block_delta","index":client_index,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"interview\"}"}}),
+        json!({"type":"content_block_stop","index":client_index}),
+    ];
+    let mut frames = if server_first {
+        [server, client].concat()
+    } else {
+        [client, server].concat()
+    };
+    frames.extend([
+        json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}}),
+        json!({"type":"message_stop"}),
+    ]);
+    frames
+        .iter()
+        .map(|frame| format!("data: {frame}\n\n"))
+        .collect::<String>()
+        .into_bytes()
+}
+
+#[test]
+fn anthropic_mixed_search_preserves_server_arguments_for_continuation() {
+    for server_first in [true, false] {
+        for width in [1, 7, 64] {
+            let (result, events) = parse(
+                Protocol::Messages,
+                &anthropic_mixed_tools(server_first, false),
+                width,
+            );
+            result.unwrap();
+            let calls = calls(&events);
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].name, "search_folder");
+            let spec = crate::providers::catalog()
+                .into_iter()
+                .find(|p| p.id == "claude")
+                .unwrap();
+            let request = crate::models::ProviderRequest {
+                connection: crate::models::Connection {
+                    provider_id: spec.id,
+                    base_url: spec.base_url,
+                    model_id: spec.default_model,
+                },
+                system_prompt: "Synthetic".into(),
+                messages: vec![
+                    crate::models::WireMessage::text("user", "Synthetic question"),
+                    crate::models::WireMessage {
+                        role: "assistant".into(),
+                        content: String::new(),
+                        tool_call_id: None,
+                        tool_calls: calls,
+                    },
+                    crate::models::WireMessage {
+                        role: "tool".into(),
+                        content: "{\"sources\":[]}".into(),
+                        tool_call_id: Some("toolu_demo".into()),
+                        tool_calls: vec![],
+                    },
+                ],
+                tools: vec![json!({"name":"search_folder","parameters":{"type":"object"}})],
+                web_search: true,
+            };
+            let (_, body, _) = super::super::protocol::request(&request).unwrap();
+            let blocks = body["messages"][1]["content"].as_array().unwrap();
+            let web = blocks
+                .iter()
+                .find(|block| block["type"] == "server_tool_use")
+                .unwrap();
+            assert_eq!(web["input"], json!({"query":"current forecast"}));
+            assert_eq!(
+                body["messages"][2]["content"][0]["tool_use_id"],
+                "toolu_demo"
+            );
+        }
+    }
+}
+
+#[test]
+fn malformed_anthropic_server_tool_arguments_never_dispatch_client_tools() {
+    let (result, events) = parse(Protocol::Messages, &anthropic_mixed_tools(true, true), 1);
+    assert!(result.is_err());
+    assert!(calls(&events).is_empty());
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, ProviderEvent::Done))
+    );
+}
+
 #[test]
 fn gemini_interactions_preserve_native_continuation_steps() {
     let bytes = include_bytes!("../../../../../tests/fixtures/providers/interactions.sse");

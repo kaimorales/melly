@@ -93,6 +93,7 @@ pub(crate) struct Decoder {
     bytes: usize,
     calls: BTreeMap<usize, CallParts>,
     native: BTreeMap<usize, Value>,
+    server_inputs: BTreeMap<usize, String>,
     reasoning: String,
     reasoning_details: BTreeMap<usize, Value>,
     sources: HashSet<String>,
@@ -108,6 +109,7 @@ impl Decoder {
             bytes: 0,
             calls: BTreeMap::new(),
             native: BTreeMap::new(),
+            server_inputs: BTreeMap::new(),
             reasoning: String::new(),
             reasoning_details: BTreeMap::new(),
             sources: HashSet::new(),
@@ -330,7 +332,11 @@ impl Decoder {
                 let index = index(value, "index")?;
                 let block = &value["content_block"];
                 ensure!(block.is_object(), "Invalid content block");
-                if block["type"] == "server_tool_use" && block["name"] == "web_search" {
+                if block["type"] == "server_tool_use" {
+                    ensure!(
+                        block["name"] == "web_search",
+                        "Unsupported provider server tool"
+                    );
                     sink(ProviderEvent::Activity("Searching the web".into()));
                 }
                 ensure!(
@@ -370,8 +376,18 @@ impl Decoder {
                         }
                     }
                     "input_json_delta" => {
+                        let partial = delta["partial_json"]
+                            .as_str()
+                            .ok_or_else(|| anyhow::anyhow!("Invalid streamed tool arguments"))?;
                         if let Some(call) = self.calls.get_mut(&index) {
-                            append(&mut call.arguments, &delta["partial_json"]);
+                            call.arguments.push_str(partial);
+                        } else if block["type"] == "server_tool_use" {
+                            self.server_inputs
+                                .entry(index)
+                                .or_default()
+                                .push_str(partial);
+                        } else {
+                            bail!("Invalid streamed tool arguments");
                         }
                     }
                     "thinking_delta" => {
@@ -509,6 +525,19 @@ impl Decoder {
         Ok(())
     }
     fn complete(&mut self, sink: &ProviderSink) -> Result<()> {
+        for (index, input) in &self.server_inputs {
+            let args: Value = serde_json::from_str(input).map_err(|_| {
+                anyhow::anyhow!("{} sent invalid server tool arguments", self.provider)
+            })?;
+            ensure!(
+                args.is_object(),
+                "{} sent invalid server tool arguments",
+                self.provider
+            );
+            self.native
+                .get_mut(index)
+                .ok_or_else(|| anyhow::anyhow!("Invalid server tool order"))?["input"] = args;
+        }
         ensure!(
             self.calls.len() <= 16,
             "{} requested too many tools",
