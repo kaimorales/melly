@@ -20,14 +20,52 @@ test('drags into a collapsed folder and back to Recent without changing the open
 
 test('spring opens a hovered folder and Escape abandons the drag', async ({ page }) => {
   await page.getByRole('button', { name: 'Writing', exact: true }).click();
-  const transfer = await page.evaluateHandle(() => new DataTransfer());
-  await page.getByRole('button', { name: 'Reading notes', exact: true }).dispatchEvent('dragstart', { dataTransfer: transfer });
-  await page.getByRole('button', { name: 'Writing', exact: true }).dispatchEvent('dragover', { dataTransfer: transfer });
+  const source = (await page.getByRole('button', { name: 'Reading notes', exact: true }).boundingBox())!;
+  const target = (await page.getByRole('button', { name: 'Writing', exact: true }).boundingBox())!;
+  await page.mouse.move(source.x + 20, source.y + source.height / 2); await page.mouse.down();
+  await page.mouse.move(target.x + 30, target.y + target.height / 2, { steps: 12 });
+  await expect(page.locator('.chat-drag-preview')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Writing', exact: true })).toHaveAttribute('aria-expanded', 'true');
   await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: 'Writing', exact: true }).dispatchEvent('drop', { dataTransfer: transfer });
+  await page.mouse.up();
   await expect(recent(page).getByRole('button', { name: 'Reading notes', exact: true })).toBeVisible();
   await expect(page.locator('[data-drop-active="true"]')).toHaveCount(0);
+  await expect(page.locator('.chat-drag-preview')).toBeHidden();
+});
+
+test('internal dragging never starts a system drag and releasing outside a destination cancels', async ({ page }) => {
+  await page.evaluate(() => { document.addEventListener('dragstart', () => { document.body.dataset.systemDrag = 'true'; }); });
+  const source = (await page.getByRole('button', { name: 'Reading notes', exact: true }).boundingBox())!;
+  await page.mouse.move(source.x + 20, source.y + source.height / 2); await page.mouse.down();
+  await page.mouse.move(700, 200, { steps: 10 });
+  await expect(page.locator('.chat-drag-preview')).toBeVisible();
+  await expect(page.locator('body')).not.toHaveAttribute('data-system-drag', 'true');
+  await page.mouse.up();
+  await expect(page.locator('.chat-drag-preview')).toBeHidden();
+  await expect(recent(page).getByRole('button', { name: 'Reading notes', exact: true })).toBeVisible();
+  await expect(page.locator('.chat-title')).toHaveText('Interview prep');
+});
+
+test('edge scrolling stops when a drag loses window focus', async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 560 });
+  const source = page.getByRole('button', { name: 'Reading notes', exact: true });
+  await source.scrollIntoViewIfNeeded();
+  const bounds = (await source.boundingBox())!;
+  const list = page.locator('.sidebar-list');
+  const region = (await list.boundingBox())!;
+  const initial = await list.evaluate((element) => element.scrollTop);
+  expect(initial).toBeGreaterThan(0);
+  await page.mouse.move(bounds.x + 20, bounds.y + bounds.height / 2); await page.mouse.down();
+  await page.mouse.move(region.x + 60, region.y + 5, { steps: 10 });
+  await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBeLessThan(initial);
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+  await expect(page.locator('.chat-drag-preview')).toBeHidden();
+  await expect(page.locator('body')).not.toHaveClass(/is-chat-dragging/);
+  const stopped = await list.evaluate((element) => element.scrollTop);
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  expect(await list.evaluate((element) => element.scrollTop)).toBe(stopped);
+  await page.mouse.up();
+  await expect(page.locator('.chat-title')).toHaveText('Interview prep');
 });
 
 test('rejects external drops even when they contain an existing chat ID', async ({ page }) => {

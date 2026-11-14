@@ -92,6 +92,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .recent-group .section-label { padding-top: 9px; }
 .drop-hint { font-size: 10px; color: var(--secondary); }
 .is-dragging .chat-row-options, .is-dragging .folder-options { visibility: hidden; }
+.is-chat-dragging, .is-chat-dragging * { cursor: grabbing !important; user-select: none !important; -webkit-user-select: none !important; }
+.chat-drag-preview { position: fixed; left: 0; top: 0; z-index: 1000; pointer-events: none; display: flex; align-items: center; gap: 9px; max-width: 220px; padding: 10px 13px; border: 1px solid var(--rule); border-radius: 10px; background: var(--panel); color: var(--ink); box-shadow: 0 5px 20px #0003; font-size: 13px; will-change: transform; }
+.chat-drag-preview svg { width: 15px; height: 15px; flex-shrink: 0; color: var(--secondary); }
+.chat-drag-preview span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-chat-menu { position: fixed; min-width: 212px; max-height: calc(100vh - 16px); overflow-y: auto; }
 .main { flex: 1; position: relative; min-width: 0; height: 100%; display: flex; flex-direction: column; }
 .main-header { height: 52px; flex: 0 0 52px; display: flex; align-items: center; gap: 10px; padding: 0 24px; user-select: none; }
@@ -302,5 +306,5 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .dialog { padding: 20px; }
   .model-menu { right: 0; width: min(340px, calc(100vw - 24px)); }
 }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
 [data-reduce-motion='true'] *, [data-reduce-motion='true'] *::before, [data-reduce-motion='true'] *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
