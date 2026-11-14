@@ -66,10 +66,10 @@ test('settings keep Qwen routes separate, show native credential boundary, and c
   await page.getByRole('button', { name: 'Configure QwenCloud' }).click();
   await page.getByRole('button', { name: 'Token Plan', exact: true }).click();
   await expect(page.getByText('Token Plan subscription', { exact: true })).toBeVisible();
-  await expect(page.getByLabel('Base URL')).toHaveAttribute('readonly', '');
+  await expect(page.getByLabel('Base URL')).toHaveCount(0);
   await expect(page.locator('input[type=password]')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Add key securely' }).click();
-  await expect(page.getByRole('alert')).toContainText('native desktop app');
+  await page.getByRole('button', { name: 'API key', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('desktop app');
   await page.getByRole('button', { name: 'Close provider settings' }).click();
   await page.getByRole('button', { name: 'Light', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
@@ -77,12 +77,11 @@ test('settings keep Qwen routes separate, show native credential boundary, and c
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
 });
 
-test('Claude setup distinguishes API access from a school or subscription account', async ({ page }) => {
+test('Claude setup uses an API key rather than a subscription sign-in', async ({ page }) => {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Configure Claude' }).click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByText('Use an Anthropic Console API key. Claude plans and school accounts do not automatically include API access.')).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Add key securely' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'API key', exact: true })).toBeVisible();
   await expect(dialog.getByRole('button', { name: /sign in|connect.*plan/i })).toHaveCount(0);
 });
 

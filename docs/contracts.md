@@ -17,7 +17,7 @@ Transport normally requires `text/event-stream`. The fixed ChatGPT Responses rou
 `auth::sign_in(vault:Arc<dyn SecretStore>, on_url:Arc<dyn Fn(String)+Send+Sync>, cancel:CancellationToken)->Result<()>` handles official new app-owned OAuth/loopback, DCR, PKCE/state/nonce, consented plan scope, no existing credential import. `auth::access_token(vault:Arc<dyn SecretStore>)->Result<String>` refreshes as needed. `auth::has_saved_plan(&dyn SecretStore)->bool` is startup-safe metadata; `auth::is_connected(&dyn SecretStore)->bool` reads credentials and must not run on startup. `auth::disconnect(&dyn SecretStore)->Result<()>`.
 `auth_namespace::AuthNamespaces::{open,begin,activate,detach,selected_vault}` owns UUID-only selection metadata. `AuthAttempt::sign_in` produces an opaque `AuthorizedPlan` only after verified authorization. Native activation holds the login-generation lock; Engine::{plan_vault,select_plan_vault} snapshots immutable credential namespaces for plan operations. Base-vault API keys never move into a plan namespace.
 `auth::begin_shutdown()` closes admission to new credential work before chats and login are cancelled. `auth::drain_pending(timeout)` waits for tracked sign-in and detached renewal writes. Native Quit uses `EXIT_DRAIN_TIMEOUT` (65 seconds), with no delay while idle. Damaged selector metadata disables only ChatGPT and is preserved on explicit recovery; it cannot block history or Demo startup.
-Native secret input: `src-tauri/src/secure_input.rs::prompt_secret(app:tauri::AppHandle,label:String)->Result<Option<String>,String>` async; native secure dialog on main thread, secret never reaches frontend. Save via Rust vault. UI only invokes enter_provider_key(providerId).
+Native secret input: `src-tauri/src/inline_secret.rs` positions an AppKit secure field in provider settings. Its generation and provider identity prevent stale UI sessions from saving to another provider. The frontend sends only field geometry, appearance, provider ID and lifecycle events; the key remains native and is saved directly to the Rust vault. The search-key flow still uses `secure_input.rs::prompt_secret` on the main thread.
 
 ## Frontend / Tauri commands
 - `bootstrap()` -> Bootstrap
@@ -29,7 +29,8 @@ Native secret input: `src-tauri/src/secure_input.rs::prompt_secret(app:tauri::Ap
 - `search_chats(query)` -> Chat[]
 - `save_settings(settings)` -> void
 - `save_connection(connection)` -> void; immutable native endpoints; custom changes don't reuse old key
-- `enter_provider_key(providerId)` -> bool (native secure input)
+- `open_provider_key_field(generation, providerId, rect, theme, configured)`, `update_provider_key_field(generation, rect, theme)`, `focus_provider_key_field(generation)`, `close_provider_key_field(generation)` -> void; no key bytes cross IPC
+- `save_provider_key_field(generation, providerId)` -> bool; saves the native field to the current provider/endpoint credential identity
 - `remove_provider_key(providerId)` -> void
 - `connect_chatgpt()` -> void starts async sign-in, emits `connection-update` on state changes; `disconnect_chatgpt()` -> void
 - `models(providerId)` -> ModelInfo[]; errors visible, custom model ID always supported

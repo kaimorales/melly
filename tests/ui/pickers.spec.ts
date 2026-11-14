@@ -107,7 +107,7 @@ test('changing a custom endpoint requires a separate model discovery result', as
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Configure Custom', exact: true }).click();
   await page.getByRole('textbox', { name: 'Base URL', exact: true }).fill('https://second.example.com/v1');
-  await page.getByRole('button', { name: 'Save connection', exact: true }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByText('Connection saved.', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Close provider settings' }).click();
   await page.getByRole('button', { name: 'New Chat', exact: true }).click();

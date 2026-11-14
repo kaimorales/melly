@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { backend, nativeApp } from './backend';
+import { ApiKeyField, type ApiKeyFieldHandle } from './ApiKeyField';
 import { Dialog } from './dialogs';
 import { Icon, ProviderIcon } from './icons';
 import { discoverModels, invalidateModelCatalog, useModelCatalog } from './model-catalog';
@@ -28,6 +29,7 @@ function ProviderDialog({ initialId, data, theme, onClose, refresh }: { initialI
   const [connection, setConnection] = useState<Connection>({ ...provider.connection });
   const [error, setError] = useState(''); const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false); const [pending, setPending] = useState(providerId === 'chatgpt' && provider.status === 'Sign-in pending');
+  const keyField = useRef<ApiKeyFieldHandle>(null);
   const catalog = useModelCatalog(provider);
   useEffect(() => { setConnection({ ...provider.connection }); setError(''); setNotice(''); }, [providerId]); // A route has its own endpoint, model and key.
   useEffect(() => {
@@ -48,13 +50,12 @@ function ProviderDialog({ initialId, data, theme, onClose, refresh }: { initialI
     await backend.invoke('save_connection', { connection });
     if (data.settings.defaultProvider === providerId && data.settings.defaultModel !== connection.modelId) await backend.invoke('save_settings', { settings: { ...data.settings, defaultModel: connection.modelId } });
   };
-  const save = async () => { await persistConnection(); await refresh(); setNotice('Connection saved.'); };
-  const addKey = () => run(async () => {
-    if (connection.modelId !== provider.connection.modelId || connection.baseUrl !== provider.connection.baseUrl) await persistConnection();
-    const saved = await backend.invoke<boolean>('enter_provider_key', { providerId });
+  const save = async () => {
+    await persistConnection();
+    const saved = providerId !== 'chatgpt' && nativeApp ? await keyField.current!.save() : false;
     if (saved) invalidateModelCatalog(providerId);
-    await refresh(); if (saved) setNotice('Key saved in Keychain. Live connection has not been verified.');
-  });
+    await refresh(); setNotice(saved ? 'Key saved · checked when used' : 'Connection saved.');
+  };
   const connect = () => run(async () => {
     setPending(true); setNotice('Complete sign-in in your browser.');
     try { await backend.invoke('connect_chatgpt'); await refresh(); }
@@ -62,19 +63,15 @@ function ProviderDialog({ initialId, data, theme, onClose, refresh }: { initialI
   });
   return <Dialog title={qwen ? 'QwenCloud' : providerName(provider)} closeLabel="Close provider settings" onClose={onClose} icon={<ProviderIcon id={providerId} theme={theme} />}>
     {qwen && <div className="theme-options" role="group" aria-label="QwenCloud billing route">
-      <button aria-pressed={providerId === 'qwen-standard'} onClick={() => setProviderId('qwen-standard')}>Standard API</button>
-      <button aria-pressed={providerId === 'qwen-token-plan'} onClick={() => setProviderId('qwen-token-plan')}>Token Plan</button>
+      <button disabled={busy} aria-pressed={providerId === 'qwen-standard'} onClick={() => setProviderId('qwen-standard')}>Standard API</button>
+      <button disabled={busy} aria-pressed={providerId === 'qwen-token-plan'} onClick={() => setProviderId('qwen-token-plan')}>Token Plan</button>
     </div>}
     <div className="connection-status"><strong>{providerId === 'qwen-token-plan' ? 'Token Plan subscription' : providerId === 'qwen-standard' ? 'Standard API · metered billing' : provider.billingRoute}</strong><span>{pending ? 'Sign-in pending' : provider.status}</span></div>
     {provider.disabledReason ? <p style={{ marginTop: 18 }}>{provider.disabledReason} No connection is available.</p> : providerId === 'mock' ? <p style={{ marginTop: 18 }}>A synthetic conversation for trying Melly. No provider is contacted and no account is needed.</p> : <>
-      {providerId === 'chatgpt' && <p style={{ marginTop: 18 }}>{provider.configured ? 'Eligible replies use your ChatGPT plan.' : pending ? 'Finish signing in with ChatGPT in your browser to connect your plan.' : 'Sign in with ChatGPT in your browser to use your eligible plan in Melly.'} Your ChatGPT history and memory are not imported.</p>}
-      {providerId === 'claude' && <p style={{ marginTop: 18 }}>Use an Anthropic Console API key. Claude plans and school accounts do not automatically include API access.</p>}
-      {qwen && <p style={{ marginTop: 18 }}>{providerId === 'qwen-token-plan' ? 'Use a Token Plan key for the Singapore Token Plan endpoint.' : 'Use a Standard API key for the Singapore metered endpoint.'} Each route has its own key. Errors keep the selected route.</p>}
-      {providerId === 'moonshot' && <p style={{ marginTop: 18 }}>Uses the general Moonshot API. A Kimi coding subscription is not used here.</p>}
       {configureModels && <>
-      {providerId !== 'chatgpt' && <label className="field">Base URL<input aria-label="Base URL" value={connection.baseUrl} readOnly={providerId !== 'custom'} placeholder="https://api.example.com/v1" spellCheck={false} onChange={(event) => setConnection({ ...connection, baseUrl: event.target.value })} />{providerId === 'custom' && <small>Public HTTPS only. Changing the endpoint requires a separate key.</small>}</label>}
-      <label className="field">Model ID<input value={connection.modelId} spellCheck={false} placeholder="Enter a model ID" onChange={(event) => setConnection({ ...connection, modelId: event.target.value })} /></label>
-      <button className="text-action" disabled={busy} onClick={() => run(async () => {
+      {providerId === 'custom' && <label className="field">Base URL<input aria-label="Base URL" value={connection.baseUrl} placeholder="https://api.example.com/v1" spellCheck={false} onChange={(event) => setConnection({ ...connection, baseUrl: event.target.value })} /><small>Each endpoint has its own key.</small></label>}
+      <label className="field">Model<input aria-label="Model" value={connection.modelId} spellCheck={false} placeholder="Enter a model name" onChange={(event) => setConnection({ ...connection, modelId: event.target.value })} /></label>
+      <button className="button" disabled={busy || !provider.configured || (providerId === 'custom' && connection.baseUrl !== provider.connection.baseUrl)} onClick={() => run(async () => {
         if (connection.modelId !== provider.connection.modelId || connection.baseUrl !== provider.connection.baseUrl) await persistConnection();
         const fresh = await refresh();
         await discoverModels(fresh.providers.find((entry) => entry.id === providerId)!, true); setNotice('Model list refreshed.');
@@ -82,15 +79,14 @@ function ProviderDialog({ initialId, data, theme, onClose, refresh }: { initialI
       {catalog.status === 'loading' && <p role="status" className="model-discovery-status">Loading models…</p>}
       {catalog.status === 'error' && !error && <div className="dialog-error" role="alert">{catalog.error}</div>}
       {catalog.models.length > 0 && <div className="models-discovered" aria-label="Discovered models">{catalog.models.map((model) => <button key={model.id} onClick={() => setConnection({ ...connection, modelId: model.id })}>{model.name || model.id}</button>)}</div>}
+      {providerId !== 'chatgpt' && <ApiKeyField key={`${providerId}-${provider.configured && connection.baseUrl === provider.connection.baseUrl}`} ref={keyField} providerId={providerId} theme={theme} configured={provider.configured && connection.baseUrl === provider.connection.baseUrl} onError={setError} />}
       </>}
       {error && <div className="dialog-error" role="alert">{error}</div>}
       {notice && <p role="status" style={{ marginTop: 14 }}>{notice}</p>}
       <div className="dialog-actions spread">
-        {providerId === 'chatgpt' ? (provider.configured || pending ? <button className="button quiet" disabled={busy} onClick={() => run(async () => { await backend.invoke('disconnect_chatgpt'); invalidateModelCatalog(providerId); setPending(false); await refresh(); setNotice(pending ? 'Sign-in cancelled.' : 'Disconnected.'); })}>{pending ? 'Cancel sign-in' : 'Disconnect'}</button> : <button className="button" disabled={busy} onClick={connect}>Continue with ChatGPT</button>) : <button className="button" disabled={busy} onClick={addKey}>{provider.configured ? 'Replace key securely' : 'Add key securely'}</button>}
-        {configureModels && <button className="button primary" disabled={busy || !connection.modelId.trim() || !connection.baseUrl.trim()} onClick={() => run(save)}>Save connection</button>}
+        {providerId === 'chatgpt' ? (provider.configured || pending ? <button className="button" disabled={busy} onClick={() => run(async () => { await backend.invoke('disconnect_chatgpt'); invalidateModelCatalog(providerId); setPending(false); await refresh(); setNotice(pending ? 'Sign-in cancelled.' : 'Disconnected.'); })}>{pending ? 'Cancel sign-in' : 'Disconnect'}</button> : <button className="button" disabled={busy} onClick={connect}>Continue with ChatGPT</button>) : provider.configured ? <button className="button" disabled={busy} onClick={() => run(async () => { await backend.invoke('remove_provider_key', { providerId }); invalidateModelCatalog(providerId); await refresh(); setNotice('Key removed.'); })}>Remove key</button> : <span />}
+        {configureModels && <button data-provider-save className="button primary" disabled={busy || !connection.modelId.trim() || !connection.baseUrl.trim()} onClick={() => run(save)}>Save</button>}
       </div>
-      {provider.configured && providerId !== 'chatgpt' && <button className="text-action" style={{ marginTop: 14 }} disabled={busy} onClick={() => run(async () => { await backend.invoke('remove_provider_key', { providerId }); invalidateModelCatalog(providerId); await refresh(); setNotice('Key removed.'); })}>Remove saved key</button>}
-      <p className="settings-note"><Icon name="lock" />{providerId === 'chatgpt' ? 'Plan billing only. Melly never switches this connection to a paid API key.' : nativeApp ? 'Keys are entered in a native secure dialog and stored in Keychain.' : 'Browser preview never accepts keys. Use the native desktop app to connect.'}</p>
     </>}
   </Dialog>;
 }
@@ -110,7 +106,7 @@ export function SettingsView({ data, theme, onSettings, refresh, onSeed, report 
           <button className={`provider-action ${provider.configured || provider.disabledReason ? 'provider-action-quiet' : ''}`} aria-label={`Configure ${name}`} onClick={() => setProviderId(provider.id)}>{provider.disabledReason ? 'Details' : provider.id === 'chatgpt' && !provider.configured ? 'Connect' : provider.id === 'custom' || provider.id === 'qwen-standard' ? 'Configure' : provider.configured ? 'Manage' : 'Add key'}{(provider.configured || provider.disabledReason) && <Icon name="chevron" />}</button>
         </div>;
       })}
-    </div><p className="settings-note"><Icon name="lock" />API keys are stored securely in your keychain.</p></section>
+    </div></section>
     <section className="settings-section" aria-labelledby="appearance-title"><h2 id="appearance-title">Appearance</h2><div className="settings-group">
       <div className="settings-row"><span className="settings-row-label">Theme</span><div className="theme-options" role="group" aria-label="Theme">{['system', 'light', 'dark'].map((value) => <button key={value} aria-pressed={data.settings.theme === value} onClick={() => update({ theme: value })}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div></div>
       <div className="settings-row"><span className="settings-row-label">Text size</span><div className="theme-options" role="group" aria-label="Text size">{[14, 16, 18].map((value) => <button key={value} aria-pressed={data.settings.fontSize === value} onClick={() => update({ fontSize: value })}>{value}</button>)}</div></div>

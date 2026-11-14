@@ -158,7 +158,7 @@ export const mockBackend: Backend = {
         if (provider.id === 'custom') { let url: URL; try { url = new URL(connection.baseUrl); } catch { throw new Error('Enter a public HTTPS base URL.'); } if (url.protocol !== 'https:' || url.username || url.password || /^(localhost|127\.|0\.|10\.|192\.168\.|\[)/.test(url.hostname)) throw new Error('Enter a public HTTPS base URL.'); }
         provider.connection = copy(connection); break;
       }
-      case 'enter_provider_key': case 'remove_provider_key': case 'enter_search_key': case 'remove_search_key': throw new Error('Open the native desktop app to use its secure key dialog. Browser preview never accepts credentials.');
+      case 'remove_provider_key': case 'enter_search_key': case 'remove_search_key': throw new Error('Use the desktop app to manage keys.');
       case 'connect_chatgpt': case 'disconnect_chatgpt': throw new Error('ChatGPT sign-in is available in the native desktop app. Browser preview cannot connect a plan.');
       case 'models': { if (args.providerId !== 'mock') throw new Error('Model discovery runs in the native desktop app after connecting a provider. You can still enter a model ID.'); result = [{ id: 'melly-demo', name: 'Demo' }]; break; }
       case 'start_chat': result = start(args.input as SendInput); break;

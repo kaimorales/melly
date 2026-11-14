@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod inline_secret;
 mod login_state;
 mod secure_input;
 use melly_core::{
@@ -163,36 +164,72 @@ async fn save_connection(s: State<'_, AppState>, connection: Connection) -> Repl
         .save_connection(&connection)
         .map_err(error)
 }
+#[cfg(target_os = "macos")]
 #[tauri::command]
-async fn enter_provider_key(
-    app: tauri::AppHandle,
-    s: State<'_, AppState>,
+async fn open_provider_key_field(
+    window: tauri::WebviewWindow,
+    generation: u64,
     provider_id: String,
-) -> Reply<bool> {
-    if matches!(provider_id.as_str(), "mock" | "chatgpt" | "muse") {
+    rect: inline_secret::FieldRect,
+    theme: String,
+    configured: bool,
+) -> Reply<()> {
+    if generation == 0 || !matches!(theme.as_str(), "light" | "dark") {
+        return Err("Invalid API key field".into());
+    }
+    let provider = providers::catalog()
+        .into_iter()
+        .find(|provider| provider.id == provider_id)
+        .ok_or("Unknown provider")?;
+    if matches!(provider.id.as_str(), "mock" | "chatgpt" | "muse")
+        || provider.disabled_reason.is_some()
+    {
         return Err("This connection does not accept an API key".into());
     }
+    inline_secret::open(window, generation, provider_id, rect, theme, configured).await
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn update_provider_key_field(
+    window: tauri::WebviewWindow,
+    generation: u64,
+    rect: inline_secret::FieldRect,
+    theme: String,
+) -> Reply<()> {
+    if !matches!(theme.as_str(), "light" | "dark") {
+        return Err("Invalid appearance".into());
+    }
+    inline_secret::update(window, generation, rect, theme).await
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn focus_provider_key_field(window: tauri::WebviewWindow, generation: u64) -> Reply<()> {
+    inline_secret::focus(window, generation).await
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn save_provider_key_field(
+    window: tauri::WebviewWindow,
+    s: State<'_, AppState>,
+    generation: u64,
+    provider_id: String,
+) -> Reply<bool> {
     let connection = s.engine.connection(&provider_id).map_err(error)?;
     providers::validate_connection(&connection).map_err(error)?;
-    let spec = providers::catalog()
-        .into_iter()
-        .find(|p| p.id == provider_id)
-        .ok_or("Unknown provider")?;
-    let host = url::Url::parse(&connection.base_url)
-        .map_err(|_| "Invalid provider URL")?
-        .host_str()
-        .unwrap_or("")
-        .to_owned();
-    if let Some(key) = secure_input::prompt_secret(app, format!("{} · {}", spec.name, host)).await?
-    {
-        s.engine
-            .vault
-            .set(&providers::credential_id(&connection), &key)
-            .map_err(error)?;
-        Ok(true)
-    } else {
-        Ok(false)
-    }
+    let credential_id = providers::credential_id(&connection);
+    inline_secret::save(
+        window,
+        generation,
+        provider_id,
+        credential_id,
+        s.engine.vault.clone(),
+    )
+    .await
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn close_provider_key_field(window: tauri::WebviewWindow, generation: u64) -> Reply<()> {
+    inline_secret::close(window, generation).await
 }
 #[tauri::command]
 async fn remove_provider_key(s: State<'_, AppState>, provider_id: String) -> Reply<()> {
@@ -390,7 +427,11 @@ fn main() {
             search_chats,
             save_settings,
             save_connection,
-            enter_provider_key,
+            open_provider_key_field,
+            update_provider_key_field,
+            focus_provider_key_field,
+            save_provider_key_field,
+            close_provider_key_field,
             remove_provider_key,
             enter_search_key,
             remove_search_key,
