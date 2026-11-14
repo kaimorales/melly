@@ -26,9 +26,13 @@ pub(crate) async fn send(
     // Never read an error body or location: either can contain reflected credentials or conversation text.
     if !status.is_success() {
         let reason = match status.as_u16() {
-            401 | 403 => "authorization unavailable",
-            429 => "request limit reached",
+            400 => "request rejected; check the model ID and settings",
+            401 => "authorization rejected; check this connection in Settings",
+            403 => "access denied; check model and account permissions",
+            404 => "model or endpoint not found; check the model ID and settings",
+            429 => "provider reported a rate or usage limit; check provider limits",
             300..=399 => "redirect refused",
+            500..=599 => "provider error; try again later",
             _ => "request failed",
         };
         bail!("{provider} HTTP {}: {reason}", status.as_u16());
@@ -361,6 +365,40 @@ mod tests {
         assert!(error.contains("429"));
         assert!(error.contains("mock-service"));
         assert!(!error.contains("synthetic-secret"));
+    }
+    #[tokio::test]
+    async fn provider_errors_offer_safe_status_specific_guidance() {
+        for (status, hint) in [
+            (400, "check the model ID and settings"),
+            (401, "check this connection in Settings"),
+            (403, "check model and account permissions"),
+            (404, "check the model ID and settings"),
+            (429, "check provider limits"),
+            (500, "try again later"),
+            (529, "try again later"),
+        ] {
+            let body = "synthetic-secret and synthetic-private-chat";
+            let response = format!(
+                "HTTP/1.1 {status} Synthetic\r\nContent-Length: {}\r\nLocation: https://example.com/synthetic-secret\r\n\r\n{body}",
+                body.len()
+            );
+            let (url, task, seen) = server(Some(response)).await;
+            let error = send(
+                test_client().get(url).bearer_auth("synthetic-secret"),
+                "synthetic-provider",
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+            task.abort();
+            assert!(error.contains(&status.to_string()) && error.contains("synthetic-provider"));
+            assert!(error.contains(hint), "{status}: {error}");
+            assert!(
+                !error.contains("synthetic-secret") && !error.contains("synthetic-private-chat")
+            );
+            assert!(seen.lock().unwrap().contains("synthetic-secret"));
+        }
     }
     #[tokio::test]
     async fn redirect_is_rejected_without_contacting_target() {
