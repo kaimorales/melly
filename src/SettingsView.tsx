@@ -6,17 +6,16 @@ import { Icon, ProviderIcon } from './icons';
 import { discoverModels, invalidateModelCatalog, useModelCatalog } from './model-catalog';
 import type { Bootstrap, Connection, ProviderView, Settings } from './types';
 
-export const providerName = (provider: ProviderView) => provider.id === 'mock' ? 'Demo' : provider.id === 'muse' ? 'Meta Muse Code' : provider.id === 'custom' ? 'Custom' : provider.id === 'moonshot' ? 'Kimi / Moonshot' : provider.name;
+export const providerName = (provider: ProviderView) => provider.id === 'mock' ? 'Demo' : provider.id === 'custom' ? 'Custom' : provider.id === 'moonshot' ? 'Kimi / Moonshot' : provider.name;
 export function routeLabel(provider: ProviderView) {
   if (provider.id === 'mock') return 'Mock';
-  if (provider.id === 'chatgpt' || provider.id === 'muse') return 'Plan';
+  if (provider.id === 'chatgpt') return 'Plan';
   if (provider.id === 'muse-api') return 'Metered API';
   if (provider.id === 'qwen-token-plan') return 'Token Plan';
   if (provider.id === 'qwen-standard') return 'Standard API';
   return 'API key';
 }
 export function modelLabel(provider: ProviderView, model: string) {
-  if (provider.id === 'muse') return 'Host default';
   if (provider.id === 'mock') return 'Demo';
   if (model.startsWith('claude-sonnet')) return 'Claude Sonnet';
   if (model.startsWith('claude-opus')) return 'Claude Opus';
@@ -94,41 +93,6 @@ function ProviderDialog({ initialId, data, theme, onClose, refresh }: { initialI
   </Dialog>;
 }
 
-function MuseDialog({ provider, theme, close, refresh }: {
-  provider: ProviderView; theme: string; close: () => void; refresh: () => Promise<Bootstrap>;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [code, setCode] = useState('');
-  const [error, setError] = useState('');
-  const pending = provider.status === 'Sign-in pending';
-  useEffect(() => {
-    let disposed = false;
-    let remove: (() => void) | undefined;
-    backend.listen<{ status: string; code?: string; message?: string }>('muse-update', (update) => {
-      setCode(update.status === 'approval' ? update.code || '' : '');
-      setError(update.message || '');
-      void refresh().catch((reason) => setError(String(reason)));
-    }).then((unlisten) => { if (disposed) unlisten(); else remove = unlisten; })
-      .catch((reason) => setError(String(reason)));
-    return () => { disposed = true; remove?.(); };
-  }, [refresh]);
-  const act = async () => {
-    setBusy(true); setError('');
-    try {
-      await backend.invoke(pending || provider.configured ? 'disconnect_muse' : 'connect_muse');
-      await refresh();
-    } catch (reason) { setError(String(reason)); }
-    finally { setBusy(false); }
-  };
-  return <Dialog title="Meta Muse Code" closeLabel="Close provider settings" onClose={close} icon={<ProviderIcon id="muse" theme={theme} />}>
-    <div className="connection-status"><strong>Experimental · Plan</strong><span>{provider.status}</span></div>
-    <p className="billing-note">{nativeApp ? 'Text chat · Sign in again after quitting Melly' : 'Connect in the Melly desktop app.'}</p>
-    {pending && <p role="status" className="billing-note">Approve in your browser{code && <> with code <strong>{code}</strong></>}.</p>}
-    {error && <p className="dialog-error" role="alert">{error}</p>}
-    {nativeApp && <div className="dialog-actions"><button className="button" disabled={busy} onClick={() => { void act(); }}>{pending ? 'Cancel sign-in' : provider.configured ? 'Disconnect' : 'Sign in with Meta'}</button></div>}
-  </Dialog>;
-}
-
 export function SettingsView({ data, theme, onSettings, refresh, onSeed, report }: { data: Bootstrap; theme: string; onSettings: (settings: Settings) => Promise<void>; refresh: () => Promise<Bootstrap>; onSeed: () => Promise<void>; report: (message: string) => void }) {
   const [providerId, setProviderId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState(data.settings.systemPrompt); const [promptSaved, setPromptSaved] = useState(false);
@@ -138,10 +102,10 @@ export function SettingsView({ data, theme, onSettings, refresh, onSeed, report 
     <section className="settings-section" aria-labelledby="providers-title"><h2 id="providers-title">Providers</h2><div className="provider-group">
       {providers.map((provider) => {
         const name = provider.id === 'qwen-standard' ? 'QwenCloud' : providerName(provider);
-        const route = provider.id === 'qwen-standard' ? 'Standard API or Token Plan' : provider.id === 'muse' ? 'Experimental · Plan' : provider.id === 'mock' ? 'Synthetic preview' : provider.id === 'moonshot' ? 'General API key' : provider.id === 'ollama' ? 'API key · plan or usage credits' : provider.id === 'custom' ? 'API key · OpenAI-compatible' : routeLabel(provider);
+        const route = provider.id === 'qwen-standard' ? 'Standard API or Token Plan' : provider.id === 'mock' ? 'Synthetic preview' : provider.id === 'moonshot' ? 'General API key' : provider.id === 'ollama' ? 'API key · plan or usage credits' : provider.id === 'custom' ? 'API key · OpenAI-compatible' : routeLabel(provider);
         return <div className="provider-row" key={provider.id}>
           <ProviderIcon id={provider.id} theme={theme} /><div className="provider-copy"><div className="provider-name">{name}</div><div className="provider-description">{route}{provider.id !== 'custom' && <><span className="provider-separator">·</span>{provider.id === 'qwen-standard' ? (data.providers.some((entry) => entry.id.startsWith('qwen') && entry.configured) ? 'Key saved' : 'Not connected') : provider.status}</>}</div></div>
-          <button className={`provider-action ${provider.configured || provider.disabledReason ? 'provider-action-quiet' : ''}`} aria-label={`Configure ${name}`} onClick={() => setProviderId(provider.id)}>{provider.disabledReason ? 'Details' : ['chatgpt', 'muse'].includes(provider.id) && !provider.configured ? 'Connect' : provider.id === 'custom' || provider.id === 'qwen-standard' ? 'Configure' : provider.configured ? 'Manage' : 'Add key'}{(provider.configured || provider.disabledReason) && <Icon name="chevron" />}</button>
+          <button className={`provider-action ${provider.configured || provider.disabledReason ? 'provider-action-quiet' : ''}`} aria-label={`Configure ${name}`} onClick={() => setProviderId(provider.id)}>{provider.disabledReason ? 'Details' : provider.id === 'chatgpt' && !provider.configured ? 'Connect' : provider.id === 'custom' || provider.id === 'qwen-standard' ? 'Configure' : provider.configured ? 'Manage' : 'Add key'}{(provider.configured || provider.disabledReason) && <Icon name="chevron" />}</button>
         </div>;
       })}
     </div></section>
@@ -158,5 +122,5 @@ export function SettingsView({ data, theme, onSettings, refresh, onSeed, report 
     </div></section>
     <section className="settings-section" aria-labelledby="search-title"><h2 id="search-title">Web search</h2><div className="settings-group"><div className="settings-row"><div><div className="settings-row-label">External search</div><div className="settings-row-description">{data.searchConfigured ? 'Tavily · search key saved' : 'Tavily · optional for providers without built-in search'}</div></div><div className="search-key-actions">{data.searchConfigured && <button className="button quiet" onClick={() => { void backend.invoke('remove_search_key').then(refresh).then(() => report('Search key removed.')).catch((reason) => report(String(reason))); }}>Remove key</button>}<button className="button" onClick={() => { void backend.invoke<boolean>('enter_search_key').then(async (saved) => { await refresh(); if (saved) report('Search key saved in Keychain.'); }).catch((reason) => report(String(reason))); }}>{data.searchConfigured ? 'Replace key' : 'Add key'}</button></div></div></div><p className="settings-note">Search runs only when you enable it for a message. External search uses its own billing.</p></section>
     {!nativeApp && <section className="settings-section" aria-labelledby="demo-title"><h2 id="demo-title">Try Melly</h2><div className="settings-group"><div className="settings-row"><div><div className="settings-row-label">Example conversations</div><div className="settings-row-description">Synthetic chats, folder references and citations</div></div><button className="button" onClick={() => { void onSeed().catch((reason) => report(String(reason))); }}>Try an example</button></div></div></section>}
-  </div>{providerId === 'muse' ? <MuseDialog provider={data.providers.find((provider) => provider.id === 'muse')!} theme={theme} close={() => setProviderId(null)} refresh={refresh} /> : providerId && <ProviderDialog key={providerId} initialId={providerId} data={data} theme={theme} onClose={() => setProviderId(null)} refresh={refresh} />}</div>;
+  </div>{providerId && <ProviderDialog key={providerId} initialId={providerId} data={data} theme={theme} onClose={() => setProviderId(null)} refresh={refresh} />}</div>;
 }

@@ -3,7 +3,7 @@
 Rust types in crates/melly-core/src/models.rs are the source of truth. JSON uses camelCase. Rust modules use snake_case.
 
 ## Provider ownership contract
-`providers::catalog() -> Vec<ProviderSpec>` includes mock, chatgpt, muse, muse-api, claude, gemini, grok, openrouter, deepseek, qwen-standard, qwen-token-plan, moonshot, ollama, custom. Qwen routes are distinct immutable entries grouped under QwenCloud. Ollama means its cloud API. Muse Code Plan uses the installed official host in a sandbox over stdio. Meta Model API uses an independent endpoint-bound Keychain credential, and its selection is explicit.
+`providers::catalog() -> Vec<ProviderSpec>` includes mock, chatgpt, muse-api, claude, gemini, grok, openrouter, deepseek, qwen-standard, qwen-token-plan, moonshot, ollama, custom. Qwen routes are distinct immutable entries grouped under QwenCloud. Ollama means its cloud API. Meta Model API uses an independent endpoint-bound Keychain credential, and its selection is explicit.
 `providers::validate_connection(&Connection) -> anyhow::Result<()>` validates fixed endpoints or public HTTPS custom. `providers::credential_id(&Connection) -> String` binds each secret to provider AND exact normalized base URL.
 `providers::list_models(connection: &Connection, credential: Option<&str>, cancel: CancellationToken) -> Result<Vec<ModelInfo>>`.
 `providers::stream(request: ProviderRequest, credential: Option<String>, sink: ProviderSink, cancel: CancellationToken) -> Result<()>`. Never Debug/log credentials. Done required for complete. Preserve tool-call IDs and arguments across streaming fragments. Native search citations become Sources; compatible providers use explicit external search tool if configured. Return sanitized errors with provider/status, not raw response/request bodies.
@@ -34,9 +34,8 @@ Native secret input: `src-tauri/src/inline_secret.rs` positions an AppKit secure
 - `remove_provider_key(providerId)` -> void
 - `connect_chatgpt()` -> void starts async sign-in, emits `connection-update` on state changes; `disconnect_chatgpt()` -> void
 - `models(providerId)` -> ModelInfo[]; errors visible, custom model ID always supported
-- `connect_muse()` starts native browser authorization and emits `muse-update` for sign-in, approval, connected, and error. `disconnect_muse()` cancels sign-in or disconnects the experimental profile.
 - `pick_muse_attachment()` -> {id, name} or null. AppKit supplies the only accepted path. Rust holds one selected UTF-8 file up to 24 KiB in memory. `remove_muse_attachment(id)` discards it.
-- `start_chat(input:SendInput, attachmentId?: string)` -> Message (assistant placeholder). Rust consumes the matching attachment on a new Muse turn. Retrying a reply does not reshare the file.
+- `start_chat(input:SendInput, attachmentId?: string)` -> Message (assistant placeholder). Rust consumes the matching attachment on a new Meta Model API turn. Retrying a reply does not reshare the file.
 - `stop_chat(chatId)` -> void
 - `open_source(source:Source)` -> void (web public HTTPS only; chat navigation handled UI)
 - `demo_seed()` -> Bootstrap (idempotent synthetic Job search + other folder examples)

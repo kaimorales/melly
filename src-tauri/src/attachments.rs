@@ -1,83 +1,10 @@
-//! Native entry points for the experimental Muse plan and selected text files.
+//! Native file selection for Meta Model API chat.
 #![allow(deprecated, unexpected_cfgs)]
-use crate::{AppState, Reply, login_state};
+use crate::{AppState, Reply};
 use melly_core::engine::TextAttachment;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use tauri::{Emitter, Manager, State};
-
-#[tauri::command]
-pub async fn connect_muse(app: tauri::AppHandle, s: State<'_, AppState>) -> Reply<()> {
-    let home = app
-        .path()
-        .home_dir()
-        .map_err(|_| "Could not locate the Muse installation")?;
-    let (generation, cancel) = {
-        let mut login = s.muse_login.lock().unwrap();
-        if s.shutdown_requested
-            .load(std::sync::atomic::Ordering::Acquire)
-        {
-            return Err("Melly is closing".into());
-        }
-        if s.engine.muse.connected() || login.is_pending() {
-            return Err("Muse is already connected or signing in".into());
-        }
-        login.begin()?
-    };
-    let muse = s.engine.muse.clone();
-    let approval_app = app.clone();
-    let approval_cancel = cancel.clone();
-    tauri::async_runtime::spawn(async move {
-        if !login_state::publish_if_current(&app.state::<AppState>().muse_login, generation, || {
-            let _ = app.emit("muse-update", serde_json::json!({"status":"signing-in"}));
-        }) {
-            return;
-        }
-        let result = muse
-            .connect(
-                home,
-                |url, code| {
-                    anyhow::ensure!(!approval_cancel.is_cancelled(), "Muse sign-in cancelled");
-                    open::that_detached(url)
-                        .map_err(|_| anyhow::anyhow!("Could not open Meta sign-in"))?;
-                    let code = code.to_owned();
-                    let _ = login_state::publish_if_current(
-                        &approval_app.state::<AppState>().muse_login,
-                        generation,
-                        || {
-                            let _ = approval_app.emit(
-                                "muse-update",
-                                serde_json::json!({"status":"approval","code":code}),
-                            );
-                        },
-                    );
-                    Ok(())
-                },
-                cancel.clone(),
-            )
-            .await;
-        let state = app.state::<AppState>();
-        login_state::publish_if_current(&state.muse_login, generation, || {
-            cancel.cancel();
-            let event = match result {
-                Ok(()) => serde_json::json!({"status":"connected"}),
-                Err(error) => serde_json::json!({"status":"error","message":error.to_string()}),
-            };
-            let _ = app.emit("muse-update", event);
-        });
-    });
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn disconnect_muse(app: tauri::AppHandle, s: State<'_, AppState>) -> Reply<()> {
-    let mut login = s.muse_login.lock().unwrap();
-    login.cancel();
-    s.engine.muse.disconnect();
-    s.muse_attachment.lock().unwrap().0 = None;
-    let _ = app.emit("muse-update", serde_json::json!({"status":"disconnected"}));
-    Ok(())
-}
+use tauri::State;
 
 #[derive(Default)]
 pub struct DraftAttachment(Option<(String, TextAttachment)>);

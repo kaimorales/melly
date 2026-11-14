@@ -28,17 +28,6 @@ pub fn catalog() -> Vec<ProviderSpec> {
             None,
         ),
         (
-            "muse",
-            "Meta Muse Code",
-            "Muse Code plan · Experimental",
-            "muse://local",
-            "host-default",
-            "muse",
-            false,
-            false,
-            None,
-        ),
-        (
             "muse-api",
             "Meta Model API",
             "API key · Metered",
@@ -187,15 +176,7 @@ pub(crate) fn spec(connection: &Connection) -> Result<ProviderSpec> {
 pub fn validate_connection(connection: &Connection) -> Result<()> {
     let provider = spec(connection)?;
     if provider.disabled_reason.is_some() {
-        bail!("Muse is unavailable for chat-only use");
-    }
-    if provider.id == "muse" {
-        ensure!(
-            connection.base_url == provider.base_url
-                && connection.model_id == provider.default_model,
-            "Muse uses the installed host and its default model"
-        );
-        return Ok(());
+        bail!("Provider is unavailable");
     }
     if provider.id == "mock" {
         ensure!(

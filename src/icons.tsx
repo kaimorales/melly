@@ -32,12 +32,12 @@ export function ProviderIcon({ id, theme, small = false }: { id: string; theme: 
   const file: Record<string, string> = {
     chatgpt: `chatgpt-${theme === 'light' ? 'black' : 'white'}.svg`, grok: `grok-${theme === 'light' ? 'black' : 'white'}.svg`,
     openrouter: theme === 'light' ? 'openrouter-grape.svg' : 'openrouter-cloud.svg', deepseek: 'deepseek.svg',
-    claude: 'claude-spark.svg', muse: 'meta-symbol.svg', 'muse-api': 'meta-symbol.svg', gemini: 'gemini-color.png',
+    claude: 'claude-spark.svg', 'muse-api': 'meta-symbol.svg', gemini: 'gemini-color.png',
     'qwen-standard': 'qwen.png', 'qwen-token-plan': 'qwen.png', moonshot: `kimi-${theme === 'light' ? 'light' : 'dark'}.svg`,
   };
   const className = small ? 'provider-logo' : 'provider-icon';
   if (file[id]) return <img className={className} src={`/providers/${file[id]}`} alt="" />;
   if (id === 'custom' || id === 'mock' || id === 'ollama') return <Icon name={id === 'custom' ? 'tune' : id === 'ollama' ? 'cloud' : 'spark'} className={`${className} provider-icon-custom`} />;
-  const initials: Record<string, string> = { claude: 'C', gemini: 'G', muse: 'M', deepseek: 'D', moonshot: 'K' };
+  const initials: Record<string, string> = { claude: 'C', gemini: 'G', 'muse-api': 'M', deepseek: 'D', moonshot: 'K' };
   return <span aria-hidden="true" className={`${className} provider-letter`} style={small ? { fontSize: 15 } : undefined}>{id.startsWith('qwen') ? 'Q' : initials[id] || id[0].toUpperCase()}</span>;
 }

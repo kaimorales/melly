@@ -24,7 +24,6 @@ fn catalog_has_explicit_isolated_billing_routes() {
         [
             "mock",
             "chatgpt",
-            "muse",
             "muse-api",
             "claude",
             "gemini",
@@ -52,18 +51,9 @@ fn catalog_has_explicit_isolated_billing_routes() {
         providers::credential_id(&standard),
         providers::credential_id(&plan)
     );
-    let mut muse = connection("muse");
-    assert!(providers::validate_connection(&muse).is_ok());
     let api = connection("muse-api");
     assert_eq!(api.base_url, "https://api.meta.ai/v1");
-    assert_ne!(
-        providers::credential_id(&muse),
-        providers::credential_id(&api)
-    );
-    muse.base_url = api.base_url;
-    assert!(providers::validate_connection(&muse).is_err());
-    muse.base_url = "https://example.com/v1".into();
-    assert!(providers::validate_connection(&muse).is_err());
+    providers::validate_connection(&api).unwrap();
 }
 
 #[test]
@@ -86,7 +76,7 @@ fn ollama_cloud_is_a_fixed_key_route_not_a_local_runtime_or_plan_fallback() {
 fn fixed_endpoints_cannot_be_replaced() {
     for p in providers::catalog()
         .into_iter()
-        .filter(|p| !["custom", "muse"].contains(&p.id.as_str()))
+        .filter(|p| p.id != "custom")
     {
         let mut c = connection(&p.id);
         assert!(providers::validate_connection(&c).is_ok());

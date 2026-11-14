@@ -538,8 +538,33 @@ async fn truncated_stream_is_error_not_success_and_retry_does_not_duplicate_user
     assert_eq!(s.message(&next.id).unwrap().content, "Partial answer");
 }
 #[tokio::test]
-async fn disabled_host_and_second_stream_are_rejected() {
+async fn retired_muse_plan_and_second_stream_are_rejected() {
     let (e, f, c) = fixture("slow");
+    let api = e.connection("muse-api").unwrap();
+    e.vault
+        .set(
+            &melly_core::providers::credential_id(&api),
+            "synthetic-meta-key",
+        )
+        .unwrap();
+    e.store
+        .lock()
+        .unwrap()
+        .save_settings(&Settings {
+            default_provider: "muse".into(),
+            default_model: "host-default".into(),
+            ..Settings::default()
+        })
+        .unwrap();
+    let state = e.bootstrap().unwrap();
+    assert!(state.settings.default_provider.is_empty());
+    assert!(state.settings.default_model.is_empty());
+    assert!(
+        state
+            .providers
+            .iter()
+            .any(|provider| provider.spec.id == "muse-api" && provider.configured)
+    );
     let mut i = input(&c);
     i.provider_id = "muse".into();
     i.model_id = "host-default".into();

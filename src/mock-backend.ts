@@ -15,7 +15,6 @@ try {
 const rows: Array<[string, string, string, string, string, string, boolean, boolean, string | null]> = [
   ['mock', 'Mock', 'Mock · no billing', 'mock://local', 'melly-demo', 'mock', false, true, null],
   ['chatgpt', 'ChatGPT', 'ChatGPT plan', 'https://api.openai.com/v1', 'gpt-6.1-sol', 'responses', true, true, null],
-  ['muse', 'Meta Muse Code', 'Muse Code plan · Experimental', 'muse://local', 'host-default', 'muse', false, false, null],
   ['muse-api', 'Meta Model API', 'API key · Metered', 'https://api.meta.ai/v1', 'muse-spark-1.3', 'responses', false, false, null],
   ['claude', 'Claude', 'Anthropic API', 'https://api.anthropic.com/v1', 'claude-sonnet-5-5', 'messages', true, true, null],
   ['gemini', 'Gemini', 'Google Gemini API', 'https://generativelanguage.googleapis.com/v1beta', 'gemini-4-hydrogen', 'interactions', true, true, null],

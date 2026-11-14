@@ -1,5 +1,5 @@
 //! Coordinates turns and grants read-only tools within a Rust-enforced scope.
-use crate::{auth, credentials::SecretStore, models::*, muse::Muse, providers, storage::Store};
+use crate::{auth, credentials::SecretStore, models::*, providers, storage::Store};
 use anyhow::{Context, Result, bail, ensure};
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -59,7 +59,6 @@ impl Transport for CloudTransport {
 pub struct Engine {
     pub store: Arc<Mutex<Store>>,
     pub vault: Arc<dyn SecretStore>,
-    pub muse: Arc<Muse>,
     plan_vault: RwLock<Arc<dyn SecretStore>>,
     transport: Arc<dyn Transport>,
     active: Mutex<HashMap<String, CancellationToken>>,
@@ -133,7 +132,6 @@ impl Engine {
             store,
             plan_vault: RwLock::new(vault.clone()),
             vault,
-            muse: Arc::new(Muse::default()),
             transport,
             active: Mutex::new(HashMap::new()),
         }
@@ -194,17 +192,21 @@ impl Engine {
             }))
     }
     pub fn bootstrap(&self) -> Result<Bootstrap> {
-        let (folders, chats, settings) = {
+        let (folders, chats, mut settings) = {
             let s = self.store.lock().unwrap();
             (s.folders()?, s.chats()?, s.settings()?)
         };
+        // A saved subscription choice cannot authorize the metered API.
+        if settings.default_provider == "muse" {
+            settings.default_provider.clear();
+            settings.default_model.clear();
+        }
         let mut views = vec![];
         for mut spec in providers::catalog() {
             let connection = self.connection(&spec.id)?;
             spec.native_search = providers::supports_native_search(&connection);
             let presence = match spec.id.as_str() {
                 "mock" => Ok(true),
-                "muse" => Ok(self.muse.connected()),
                 "chatgpt" => Ok(auth::has_saved_plan(self.plan_vault().as_ref())),
                 _ => self.vault.contains(&providers::credential_id(&connection)),
             };
@@ -217,8 +219,6 @@ impl Engine {
                 "Secure storage unavailable"
             } else if !configured {
                 "Not connected"
-            } else if spec.id == "muse" {
-                "Connected until quit"
             } else if spec.id == "chatgpt" {
                 "Plan saved · checked when used"
             } else {
@@ -243,10 +243,6 @@ impl Engine {
         providers::validate_connection(connection)?;
         match connection.provider_id.as_str() {
             "mock" => Ok(None),
-            "muse" => {
-                ensure!(self.muse.connected(), "Connect Muse in Settings");
-                Ok(None)
-            }
             "chatgpt" => {
                 let vault = self.plan_vault();
                 let token = auth::access_token(vault.clone()).await?;
@@ -284,9 +280,7 @@ impl Engine {
         if let Some(reason) = spec.disabled_reason {
             bail!("{reason}")
         }
-        let plan = spec.id == "muse";
-        let client_web = matches!(spec.id.as_str(), "muse" | "muse-api");
-        ensure!(!plan || self.muse.connected(), "Connect Muse in Settings");
+        let client_web = spec.id == "muse-api";
         if let Some(file) = attachment {
             ensure!(
                 client_web && !input.retry,
@@ -481,13 +475,6 @@ impl Engine {
             )?;
             output.lock().unwrap().sources = sources.clone();
             emit(turn, "sources", "", sources);
-        }
-        if turn.connection.provider_id == "muse" {
-            emit(turn, "tool", "Waiting for Muse", vec![]);
-            let text = self.muse.complete(&turn.request).await?;
-            output.lock().unwrap().text = text.clone();
-            emit(turn, "delta", &text, vec![]);
-            return Ok(());
         }
         let mut count = 0;
         for _ in 0..4 {

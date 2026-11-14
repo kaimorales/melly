@@ -10,7 +10,6 @@ Each native connection has one immutable base URL. Credentials are keyed by a SH
 | --- | --- | --- | --- |
 | Mock | No network | Synthetic adapter | `melly-demo` |
 | ChatGPT Plan | `https://api.openai.com/v1` | Responses | `gpt-6.1-sol`; replace with account discovery |
-| Meta Muse Code Plan (experimental) | Official local host over stdio | Stateless text completion | Host default |
 | Meta Model API (metered) | `https://api.meta.ai/v1` | Responses | `muse-spark-1.3` |
 | Claude API key | `https://api.anthropic.com/v1` | Messages | `claude-sonnet-5-5` |
 | Gemini API key | `https://generativelanguage.googleapis.com/v1beta` | Interactions | `gemini-4-hydrogen` |
@@ -82,4 +81,4 @@ The subsequent live ChatGPT fix added seven transport regressions; the full suit
 
 Native ChatGPT web search subsequently passed with `gpt-6.1-sol` on the tested account, returning a completed reply with a source citation and no external search key. The local allowlist is conservative; it does not prove other model IDs lack search. See [the proposed app-owned search service](research/search-service.md) for a path that avoids end-user search keys across providers; that service has not been deployed.
 
-Still pending for ChatGPT: renewal/revocation, usage-limit and entitlement failures, and other account/model combinations. Still pending for **other live providers**: account authorization, the selected model, actual inference and tool follow-up, native search/citation shape, region/plan entitlement and billing confirmation, real-service cancellation, and account-specific errors. Muse remains intentionally disabled.
+Still pending for ChatGPT: renewal/revocation, usage-limit and entitlement failures, and other account/model combinations. Still pending for **other live providers**: account authorization, the selected model, actual inference and tool follow-up, native search/citation shape, region/plan entitlement and billing confirmation, real-service cancellation, and account-specific errors. Meta Model API live inference requires its own API key.

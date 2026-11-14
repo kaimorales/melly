@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod attachments;
 mod inline_secret;
 mod login_state;
-mod muse_ui;
 mod secure_input;
 use melly_core::{
     auth,
@@ -19,8 +19,7 @@ struct AppState {
     engine: Arc<Engine>,
     login: Mutex<login_state::LoginState>,
     plan_namespaces: Mutex<AuthNamespaces>,
-    muse_login: Mutex<login_state::LoginState>,
-    muse_attachment: Mutex<muse_ui::DraftAttachment>,
+    muse_attachment: Mutex<attachments::DraftAttachment>,
     started: std::time::Instant,
     startup_recorded: std::sync::atomic::AtomicBool,
     shutdown_requested: std::sync::atomic::AtomicBool,
@@ -63,11 +62,6 @@ async fn bootstrap(s: State<'_, AppState>) -> Reply<Bootstrap> {
             provider.configured = false;
             provider.status = reason.into();
         }
-    }
-    if s.muse_login.lock().unwrap().is_pending()
-        && let Some(provider) = bootstrap.providers.iter_mut().find(|p| p.spec.id == "muse")
-    {
-        provider.status = "Sign-in pending".into();
     }
     Ok(bootstrap)
 }
@@ -149,9 +143,10 @@ async fn search_chats(s: State<'_, AppState>, query: String) -> Reply<Vec<Chat>>
 }
 #[tauri::command]
 async fn save_settings(s: State<'_, AppState>, settings: Settings) -> Reply<()> {
-    if !providers::catalog()
-        .iter()
-        .any(|p| p.id == settings.default_provider && p.disabled_reason.is_none())
+    if !settings.default_provider.is_empty()
+        && !providers::catalog()
+            .iter()
+            .any(|p| p.id == settings.default_provider && p.disabled_reason.is_none())
     {
         return Err("Choose an available default provider".into());
     }
@@ -189,9 +184,7 @@ async fn open_provider_key_field(
         .into_iter()
         .find(|provider| provider.id == provider_id)
         .ok_or("Unknown provider")?;
-    if matches!(provider.id.as_str(), "mock" | "chatgpt" | "muse")
-        || provider.disabled_reason.is_some()
-    {
+    if matches!(provider.id.as_str(), "mock" | "chatgpt") || provider.disabled_reason.is_some() {
         return Err("This connection does not accept an API key".into());
     }
     inline_secret::open(window, generation, provider_id, rect, theme, configured).await
@@ -241,9 +234,6 @@ async fn close_provider_key_field(window: tauri::WebviewWindow, generation: u64)
 }
 #[tauri::command]
 async fn remove_provider_key(s: State<'_, AppState>, provider_id: String) -> Reply<()> {
-    if provider_id == "muse" {
-        return Err("Muse Code Plan uses browser sign-in".into());
-    }
     let c = s.engine.connection(&provider_id).map_err(error)?;
     s.engine
         .vault
@@ -424,8 +414,7 @@ fn main() {
                 engine,
                 login: Mutex::new(login_state::LoginState::default()),
                 plan_namespaces: Mutex::new(namespaces),
-                muse_login: Mutex::new(login_state::LoginState::default()),
-                muse_attachment: Mutex::new(muse_ui::DraftAttachment::default()),
+                muse_attachment: Mutex::new(attachments::DraftAttachment::default()),
                 started,
                 startup_recorded: std::sync::atomic::AtomicBool::new(false),
                 shutdown_requested: std::sync::atomic::AtomicBool::new(false),
@@ -462,10 +451,8 @@ fn main() {
             remove_search_key,
             connect_chatgpt,
             disconnect_chatgpt,
-            muse_ui::connect_muse,
-            muse_ui::disconnect_muse,
-            muse_ui::pick_muse_attachment,
-            muse_ui::remove_muse_attachment,
+            attachments::pick_muse_attachment,
+            attachments::remove_muse_attachment,
             models,
             start_chat,
             stop_chat,
@@ -493,8 +480,6 @@ fn main() {
             }
             auth::begin_shutdown();
             state.login.lock().unwrap().cancel();
-            state.muse_login.lock().unwrap().cancel();
-            state.engine.muse.disconnect();
             state.engine.stop_all();
             let engine = state.engine.clone();
             let app = app.clone();

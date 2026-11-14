@@ -175,11 +175,6 @@ export default function App() {
         }).catch((reason) => setNotice(errorText(reason)));
       });
       if (!mounted.current) connectionListener(); else unlisteners.push(connectionListener);
-      const museListener = await backend.listen<{ status: string }>('muse-update', (update) => {
-        if (update.status === 'disconnected') setAttachment(null);
-        void refresh().catch((reason) => setNotice(errorText(reason)));
-      });
-      if (!mounted.current) museListener(); else unlisteners.push(museListener);
       const initial = await backend.invoke<Bootstrap>('bootstrap');
       if (mounted.current) { setData(initial); setSelectedId(initial.chats[0]?.id || null); }
     };
@@ -240,7 +235,7 @@ export default function App() {
   const activeRun = !!selectedId && running.has(selectedId);
   const explicitFolder = requestsFolderContext(draft);
   const folderContext = !!selectedFolder && !!provider?.tools && (manualFolder === true || (explicitFolder && manualFolder !== false));
-  const museRoute = provider?.id === 'muse' || provider?.id === 'muse-api';
+  const museRoute = provider?.id === 'muse-api';
   const webAvailable = !!provider && (provider.id === 'mock' || provider.nativeSearch || ((provider.tools || museRoute) && !!data?.searchConfigured));
   const sendAvailable = !!provider?.configured && !provider.disabledReason;
 
@@ -272,7 +267,7 @@ export default function App() {
   const chooseProvider = async (next: ProviderView) => {
     if (!data || (!next.configured && next.id !== 'mock') || next.disabledReason) return;
     await saveSettings({ ...data.settings, defaultProvider: next.id, defaultModel: next.connection.modelId || next.defaultModel });
-    clearAttachment(); setWebSearch(false); setManualFolder(null); setPicker(next.id === 'muse' ? null : 'models');
+    clearAttachment(); setWebSearch(false); setManualFolder(null); setPicker('models');
   };
   const chooseModel = async (modelId: string) => {
     if (!data || !provider || !modelId.trim()) return;
@@ -403,7 +398,7 @@ export default function App() {
               {provider ? <div className="model-pill" role="group" aria-label="Provider and model">
                 <button ref={providerButton} type="button" className="provider-picker-trigger" aria-label="Choose provider" title={`${providerName(provider)} · choose provider`} aria-expanded={picker === 'providers'} aria-haspopup="listbox" onClick={() => setPicker(picker === 'providers' ? null : 'providers')}><ProviderIcon id={provider.id} theme={theme} small /></button>
                 <span className="provider-divider" aria-hidden="true" />
-                {provider.id === 'muse' ? <span className="model-picker-trigger"><span className="model-name">Host default</span><span className="divider" /><span className="route">Plan</span></span> : <button ref={modelButton} type="button" className="model-picker-trigger" aria-label="Choose model" title="Choose model" aria-expanded={picker === 'models'} aria-haspopup="listbox" onClick={() => setPicker(picker === 'models' ? null : 'models')}><span className="model-name">{modelLabel(provider, model)}</span><span className="divider" /><span className="route">{routeLabel(provider)}</span><Icon name="down" /></button>}
+                <button ref={modelButton} type="button" className="model-picker-trigger" aria-label="Choose model" title="Choose model" aria-expanded={picker === 'models'} aria-haspopup="listbox" onClick={() => setPicker(picker === 'models' ? null : 'models')}><span className="model-name">{modelLabel(provider, model)}</span><span className="divider" /><span className="route">{routeLabel(provider)}</span><Icon name="down" /></button>
               </div> : <button ref={providerButton} type="button" className="button" onClick={() => { if (connectedProviders.length) setPicker('providers'); else setView('settings'); }}>{connectedProviders.length ? 'Choose provider' : 'Connect provider'}</button>}
               {activeRun ? <button type="button" className="round-control stop" aria-label="Stop response" title="Stop response" onClick={() => { if (selectedId) void backend.invoke('stop_chat', { chatId: selectedId }).catch((reason) => setNotice(errorText(reason))); }}><span className="stop-square" /></button> : <button type="submit" className="round-control send" aria-label="Send message" disabled={!draft.trim() || starting || pickingAttachment || !sendAvailable}><Icon name="up" /></button>}
             </div>

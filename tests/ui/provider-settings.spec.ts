@@ -21,7 +21,7 @@ test('provider settings show an obvious key field and a plainly named model', as
 test('provider detail actions look like buttons in both themes', async ({ page }) => {
   for (const theme of ['Light', 'Dark']) {
     await page.getByRole('button', { name: theme, exact: true }).click();
-    const action = page.getByRole('button', { name: 'Configure Meta Muse Code' });
+    const action = page.getByRole('button', { name: 'Configure Meta Model API' });
     const color = await action.evaluate((element) => getComputedStyle(element).backgroundColor);
     expect(color).not.toBe('rgba(0, 0, 0, 0)');
   }
@@ -62,12 +62,8 @@ test('Ollama Cloud setup identifies its key and credit billing', async ({ page }
   await expect(dialog.getByRole('textbox', { name: 'Base URL' })).toHaveCount(0);
 });
 
-test('Muse Plan and Meta Model API have separate setup and billing', async ({ page }) => {
-  await page.getByRole('button', { name: 'Configure Meta Muse Code' }).click();
-  const plan = page.getByRole('dialog', { name: 'Meta Muse Code' });
-  await expect(plan.getByText('Experimental · Plan')).toBeVisible();
-  await expect(plan.getByRole('button', { name: 'API key' })).toHaveCount(0);
-  await plan.getByRole('button', { name: 'Close provider settings' }).click();
+test('Meta Model API is the only Meta setup and has metered billing', async ({ page }) => {
+  await expect(page.getByRole('button', { name: 'Configure Meta Muse Code' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Configure Meta Model API' }).click();
   const api = page.getByRole('dialog', { name: 'Meta Model API' });
   await expect(api.getByText('API key · Metered')).toBeVisible();
