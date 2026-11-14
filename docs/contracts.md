@@ -46,3 +46,11 @@ Events `chat-stream` -> StreamUpdate: kind delta (text is new chunk), sources, t
 Denied model tool calls return a bounded denial with no data. Operational external-search failures terminate the reply with a sanitized visible error; they cannot be silently converted into a completed searched answer. Automatic folder permission recognizes only a direct opening request without quoted/multiline/ambiguous text; the explicit composer toggle handles other wording. Retry is unavailable while viewing older history pages.
 
 Frontend browser-only preview/test mode uses src/mock-backend.ts implementing same command/event contract and clearly labeled Mock; never claims Rust integration tests cover browser shim. Real app always invokes Rust. All configured/live states truthful; Key saved is not Live verified. No keys/tokens in React state/DOM/fixtures.
+
+## Sidebar organization and code display
+
+Sidebar pointer gestures, row menus and the header menu all use the existing Rust `move_chat` and `delete_chat` commands. Dragging is internal to the app; no chat title or ID is written to the system drag clipboard, and external drops cannot move chats. Folder destinations spring open after 450 ms; dropping on Recent removes the folder assignment. The selected chat/draft stays in place, and moving it revokes its per-turn folder permission. Rust rejects mutation of an active chat. The UI changes location only after persistence succeeds.
+
+Delete captures the intended chat, requires confirmation and keeps errors in the dialog. Removing another chat preserves the selected chat/draft. SQLite removes the deleted messages and search-index entries; old citations report an unavailable source.
+
+Fenced-code coloring is presentation only. A lazily loaded worker returns text/span tokens for explicit supported languages; source code is never executed or sent to another service. Streaming text does not wait for coloring. Bounds, watchdog behavior and dependency notices are recorded in [code-block design](design/code-blocks.md).

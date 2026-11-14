@@ -34,7 +34,9 @@ The first launch is empty and selects **Demo · Mock**. It makes no network requ
 
 Shortcuts: ⌘N new chat, ⌘K chat search, ⌘, settings. Shift-Enter inserts a newline. The sidebar collapses; long histories load in pages.
 
-See the [native screenshot walkthrough](docs/demo.md) and [verification record](docs/verification.md). The signed local release is 11.82 MiB; a measured process-to-render launch on this Mac took 569 ms. Warm-cache measurements exclude cloud latency and the OS launch request.
+Drag chats onto a folder to move them, hover to open a collapsed folder, or drop onto Recent to unfile them. Every chat has an ellipsis/right-click menu for rename, move and confirmed deletion. Fenced code has theme-aware syntax colors, a language label and exact-copy action; its highlighter loads only when needed and runs off the UI thread.
+
+See the [native screenshot walkthrough](docs/demo.md) and [verification record](docs/verification.md). The signed local release is 11.86 MiB; a measured process-to-render launch on this Mac took 569 ms. Warm-cache measurements exclude cloud latency and the OS launch request.
 
 ## Accounts and billing
 

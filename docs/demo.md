@@ -49,3 +49,13 @@ Selected `gpt-6.1-sol` from the connected account's models, enabled Search the w
 ![Live ChatGPT plan web-search reply](screenshots/native-chatgpt-web-search.png)
 
 After the white-icon rebuild, the existing development credential required the official reconnect flow. Retry completed a second live search reply on the final app, without a Mac password prompt.
+
+## Chat organization and colored code
+
+Dragged a synthetic chat into a collapsed folder, between folders and back to Recent in the actual Mac app. Folder access reset on the move. Right-click opened its actions and Delete showed the correct title; Cancel retained the chat. Automated synthetic tests cover confirmed deletion and its failures.
+
+The Python response below was generated live through ChatGPT, using synthetic test content. Its language label, native Copy action and syntax colors were inspected in both themes. Coloring runs in a lazy worker, independently of streamed text.
+
+![Native code colors in dark mode](screenshots/native-code-colors-dark.png)
+
+![Native code colors in light mode](screenshots/native-code-colors-light.png)

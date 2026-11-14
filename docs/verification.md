@@ -6,9 +6,9 @@ Local verification on 2026-11-13, Apple Silicon macOS. The desktop uses Rust and
 
 Run `npm run check`, `npm test`, and `npm run build`. `npm run check` checks TypeScript, Rust formatting and Clippy with warnings denied. `npm test` runs Rust plus Playwright browser UI tests. Browser tests use the labeled mock backend and do not prove native IPC or live provider access.
 
-Final automated run: **109 Rust tests passed** (103 core and 6 native login-state tests), **25 Playwright UI tests passed**, zero failures. One optional Keychain test is excluded from the default suite and was run separately below. TypeScript, formatting and Clippy passed. The UI suite includes reopening a pending browser sign-in and retaining its cancel action.
+Final automated run: **110 Rust tests passed** (104 core and 6 native login-state tests), **42 Playwright UI tests passed**, zero failures. One optional Keychain test is excluded from the default suite and was run separately below. TypeScript, formatting and Clippy passed. The UI suite includes reopening a pending browser sign-in and retaining its cancel action.
 
-The release build passed and produced `target/release/bundle/macos/Melly.app` (11.82 MiB); launch with `npm run launch`. This is a local ad-hoc signed build, not a notarized distribution. It requires no Rust, Node or development server at runtime.
+The release build passed and produced `target/release/bundle/macos/Melly.app` (11.86 MiB); launch with `npm run launch`. This is a local ad-hoc signed build, not a notarized distribution. It requires no Rust, Node or development server at runtime.
 
 The initial bundle had only a linker signature and failed strict resource-seal verification. The build now explicitly sets macOS `signingIdentity` to `-`, using [Tauri's documented local ad-hoc signing mode](https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing). This signs the complete bundle without a signing certificate, Keychain password or Apple account; it does not claim notarization or permission to publish a release. Verify packaging with `codesign --verify --deep --strict target/release/bundle/macos/Melly.app`.
 
@@ -84,6 +84,20 @@ Selected the account-discovered `gpt-6.1-sol`, enabled Search the web and reques
 The icon rebuild changed the ad-hoc binary and its prior Keychain item was inaccessible. The official reconnect flow restored the same account and plan permissions without a Mac password prompt or access-rule changes. Retry then completed another live web-search reply on the final build. Melly was left open on that conversation with `gpt-6.1-sol` selected. A stable distribution signing identity remains needed to address development-build credential continuity.
 
 Provider-independent search without user-supplied keys remains a proposed Melly-owned gateway, not a deployed feature. See [research, architecture and costs](research/search-service.md).
+
+## Chat organization and syntax colors
+
+The 110-Rust/42-UI run above covers this checkpoint. The complete check, test and release-build commands passed; the final 11.86 MiB app passed strict bundle signature verification. UI coverage includes real pointer dragging, spring-open destinations, removal to Recent, edge scrolling, Escape/blur/outside cancellation, external-drop rejection, failed moves with preserved drafts, active-stream guards, captured-target deletion, deletion errors, keyboard menus and revocation of old folder permission. Rust verifies that deleting a chat removes its messages and both full-text/folder-search entries while preserving its sibling.
+
+The first HTML5 implementation passed Chromium tests but stalled during native Mac drags. A plain-text pasteboard probe did not fix that observed failure and was discarded. The final `useChatDrag` implementation uses an internal pointer gesture, six-pixel threshold, lightweight pointer-following preview and time-based edge scrolling. It writes no chat data to the system drag clipboard. New regressions verify that it never starts an OS drag and stops scroll work when focus is lost.
+
+Native checks on the final WKWebView build passed: dragged the synthetic **Code colors demo** from Recent into a collapsed **Job search demo**, then to **Writing**, then back to Recent. The selected conversation stayed open and the folder tool permission reset to off on the folder change. Right-click opened the intended chat menu; Delete displayed the correct captured title, and Cancel preserved it. Confirmed permanent deletion was tested in the synthetic browser and Rust suites, not performed on native user history.
+
+A live ChatGPT Python response was inspected with colored keywords, function names, strings, comments and numbers in both Light and Dark. Native Copy displayed Copied. Captures contain synthetic content only: [dark](screenshots/native-code-colors-dark.png), [light](screenshots/native-code-colors-light.png). Automated code tests additionally cover exact clipboard text, language aliases, measured palette contrast, unknown/large blocks, inert HTML, worker failure, streaming colors and Stop. The 92.06 kB grammar worker is a separate asset loaded only when supported code appears; it has bounded input/output and a two-second watchdog.
+
+Verified application source: `b12be21` (including the native dragging correction `ea46233`). As with earlier ad-hoc rebuilds, final packaging required official ChatGPT reconnect with the same account and plan scopes. The synthetic follow-up completed with `6` on `gpt-5.6-terra`; after ordinary Quit and relaunch of that same build, Retry completed again without another sign-in. No Mac password prompt or credential access-rule change was involved. History and the unfiled chat persisted. Melly was left open in the user's Dark/14-point appearance with the original model selected. The fresh release startup record reported **470 ms** process-to-rendered UI on this warm-cache relaunch; this is a single local observation, not a controlled performance benchmark or a cold-launch claim.
+
+The files/coding/knowledge-graph request remains [a research proposal](research/workspace-and-graph.md). No workspace tab, file tools, Pi/OpenCode runtime or additional OAuth flow was added.
 
 ## Live checks still required
 
