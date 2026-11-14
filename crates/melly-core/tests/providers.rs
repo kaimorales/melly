@@ -220,6 +220,7 @@ async fn mock_answer_uses_only_actual_tool_result_sources() {
         content: json!({"sources":[source]}).to_string(),
         tool_call_id: Some("mock-search-folder".into()),
         tool_calls: vec![],
+        claude_continuation: None,
     });
     let events = Arc::new(Mutex::new(Vec::new()));
     let captured = events.clone();

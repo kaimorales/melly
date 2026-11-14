@@ -68,6 +68,8 @@ struct Output {
     text: String,
     sources: Vec<Source>,
     calls: Vec<ToolCall>,
+    continuation: Option<ClaudeContinuation>,
+    invalid_continuation: bool,
     done: bool,
     too_large: bool,
 }
@@ -376,6 +378,8 @@ impl Engine {
                 let mut o = output.lock().unwrap();
                 o.calls.clear();
                 o.done = false;
+                o.continuation = None;
+                o.invalid_continuation = false;
             }
             let shared = output.clone();
             let stream_cancel = turn.cancel.child_token();
@@ -414,6 +418,12 @@ impl Engine {
                     ProviderEvent::Activity(text) => {
                         Some(("tool", text.chars().take(160).collect(), vec![]))
                     }
+                    ProviderEvent::ClaudeSearchPaused(continuation) => {
+                        if o.continuation.replace(continuation).is_some() {
+                            o.invalid_continuation = true;
+                        }
+                        None
+                    }
                     ProviderEvent::Done => {
                         o.done = true;
                         None
@@ -450,7 +460,7 @@ impl Engine {
                 "Reply exceeded the safety limit. Start a shorter request."
             );
             stream_result.context("The provider timed out. You can retry this reply.")??;
-            let calls = {
+            let (calls, continuation) = {
                 let o = output.lock().unwrap();
                 ensure!(
                     !o.too_large,
@@ -460,8 +470,37 @@ impl Engine {
                     o.done,
                     "The connection ended before the provider completed its reply. You can retry."
                 );
-                o.calls.clone()
+                ensure!(
+                    !o.invalid_continuation,
+                    "The provider sent an invalid search continuation"
+                );
+                (o.calls.clone(), o.continuation.clone())
             };
+            if let Some(continuation) = continuation {
+                ensure!(
+                    turn.connection.provider_id == "claude"
+                        && turn.request.web_search
+                        && calls.is_empty(),
+                    "The provider requested an unauthorized search continuation"
+                );
+                ensure!(
+                    !continuation.blocks.is_empty()
+                        && continuation.blocks.len() <= 128
+                        && serde_json::to_vec(&continuation.blocks)?.len() <= OUTPUT_LIMIT,
+                    "The provider sent an invalid search continuation"
+                );
+                if turn.cancel.is_cancelled() {
+                    return Ok(());
+                }
+                turn.request.messages.push(WireMessage {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_call_id: None,
+                    tool_calls: vec![],
+                    claude_continuation: Some(continuation),
+                });
+                continue;
+            }
             if calls.is_empty() {
                 return Ok(());
             }
@@ -475,6 +514,7 @@ impl Engine {
                 content: String::new(),
                 tool_call_id: None,
                 tool_calls: calls.clone(),
+                claude_continuation: None,
             });
             for call in calls {
                 if turn.cancel.is_cancelled() {
@@ -496,6 +536,7 @@ impl Engine {
                     content,
                     tool_call_id: Some(call.id),
                     tool_calls: vec![],
+                    claude_continuation: None,
                 });
             }
         }

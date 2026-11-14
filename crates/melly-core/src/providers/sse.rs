@@ -1,4 +1,4 @@
-use crate::models::{ProviderEvent, ProviderSink, Source, ToolCall};
+use crate::models::{ClaudeContinuation, ProviderEvent, ProviderSink, Source, ToolCall};
 use anyhow::{Result, bail, ensure};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -90,6 +90,7 @@ pub(crate) struct Decoder {
     framing: Framer,
     done: bool,
     stop: bool,
+    paused: bool,
     bytes: usize,
     calls: BTreeMap<usize, CallParts>,
     native: BTreeMap<usize, Value>,
@@ -106,6 +107,7 @@ impl Decoder {
             framing: Framer::default(),
             done: false,
             stop: false,
+            paused: false,
             bytes: 0,
             calls: BTreeMap::new(),
             native: BTreeMap::new(),
@@ -414,10 +416,14 @@ impl Decoder {
             "message_delta" => {
                 if let Some(reason) = value["delta"]["stop_reason"].as_str() {
                     ensure!(
-                        matches!(reason, "end_turn" | "tool_use" | "stop_sequence"),
+                        matches!(
+                            reason,
+                            "end_turn" | "tool_use" | "stop_sequence" | "pause_turn"
+                        ),
                         "{} response did not complete",
                         self.provider
                     );
+                    self.paused = reason == "pause_turn";
                     self.stop = true;
                 }
             }
@@ -525,6 +531,10 @@ impl Decoder {
         Ok(())
     }
     fn complete(&mut self, sink: &ProviderSink) -> Result<()> {
+        ensure!(
+            !self.paused || self.calls.is_empty(),
+            "Paused server search cannot contain client tool calls"
+        );
         for (index, input) in &self.server_inputs {
             let args: Value = serde_json::from_str(input).map_err(|_| {
                 anyhow::anyhow!("{} sent invalid server tool arguments", self.provider)
@@ -616,6 +626,15 @@ impl Decoder {
         };
         if let Some(first) = calls.first_mut() {
             first.provider_data = metadata;
+        }
+        if self.paused {
+            ensure!(
+                !self.native.is_empty(),
+                "Paused server search has no content"
+            );
+            sink(ProviderEvent::ClaudeSearchPaused(ClaudeContinuation {
+                blocks: self.native.values().cloned().collect(),
+            }));
         }
         for call in calls {
             sink(ProviderEvent::ToolCall(call));

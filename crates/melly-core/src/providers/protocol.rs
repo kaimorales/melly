@@ -167,6 +167,8 @@ fn message_history(messages: &[WireMessage]) -> Vec<Value> {
             vec![
                 json!({"type":"tool_result","tool_use_id":message.tool_call_id,"content":message.content}),
             ]
+        } else if let Some(continuation) = &message.claude_continuation {
+            continuation.blocks.clone()
         } else if let Some(blocks) =
             metadata(message, "messages", "content").and_then(Value::as_array)
         {
@@ -339,7 +341,7 @@ mod tests {
     #[test]
     fn openrouter_replays_reasoning_details_with_tool_calls() {
         let mut input = input("openrouter");
-        input.messages.push(WireMessage {role:"assistant".into(),content:String::new(),tool_call_id:None,tool_calls:vec![ToolCall {id:"call".into(),name:"search_folder".into(),arguments:json!({"query":"demo"}),provider_data:Some(json!({"protocol":"chat-completions","reasoning_details":[{"type":"reasoning.encrypted","data":"synthetic"}]}))}]});
+        input.messages.push(WireMessage {role:"assistant".into(),content:String::new(),tool_call_id:None,tool_calls:vec![ToolCall {id:"call".into(),name:"search_folder".into(),arguments:json!({"query":"demo"}),provider_data:Some(json!({"protocol":"chat-completions","reasoning_details":[{"type":"reasoning.encrypted","data":"synthetic"}]}))}],claude_continuation:None});
         let (_, body, _) = request(&input).unwrap();
         assert_eq!(
             body["messages"][2]["reasoning_details"][0]["data"],
@@ -357,6 +359,28 @@ mod tests {
         assert_eq!(body["store"], false);
         assert_eq!(body["input"][0]["type"], "user_input");
         assert_eq!(body["system_instruction"], "Synthetic system");
+    }
+    #[test]
+    fn claude_paused_search_replays_original_blocks_in_order() {
+        let mut input = input("claude");
+        input.web_search = true;
+        let blocks = vec![
+            json!({"type":"server_tool_use","id":"srvtoolu_demo","name":"web_search","input":{"query":"synthetic query"}}),
+            json!({"type":"web_search_tool_result","tool_use_id":"srvtoolu_demo","content":[]}),
+            json!({"type":"text","text":"A partial answer."}),
+        ];
+        input.messages.push(WireMessage {
+            role: "assistant".into(),
+            content: String::new(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            claude_continuation: Some(ClaudeContinuation {
+                blocks: blocks.clone(),
+            }),
+        });
+        let (_, body, _) = request(&input).unwrap();
+        assert_eq!(body["messages"][1]["content"], json!(blocks));
+        assert_eq!(body["tools"][0]["name"], "web_search");
     }
     #[test]
     fn billing_routes_never_gain_fallbacks_or_extra_hosts() {
@@ -402,12 +426,13 @@ mod tests {
     #[test]
     fn gemini_tool_result_replays_thought_steps_without_server_state() {
         let mut input = input("gemini");
-        input.messages.push(WireMessage {role:"assistant".into(),content:String::new(),tool_call_id:None,tool_calls:vec![ToolCall {id:"native-call".into(),name:"search_folder".into(),arguments:json!({"query":"interview"}),provider_data:Some(json!({"protocol":"interactions","steps":[{"type":"thought","signature":"synthetic-signature"},{"type":"function_call","id":"native-call","name":"search_folder","arguments":{"query":"interview"}}]}))}]});
+        input.messages.push(WireMessage {role:"assistant".into(),content:String::new(),tool_call_id:None,tool_calls:vec![ToolCall {id:"native-call".into(),name:"search_folder".into(),arguments:json!({"query":"interview"}),provider_data:Some(json!({"protocol":"interactions","steps":[{"type":"thought","signature":"synthetic-signature"},{"type":"function_call","id":"native-call","name":"search_folder","arguments":{"query":"interview"}}]}))}],claude_continuation:None});
         input.messages.push(WireMessage {
             role: "tool".into(),
             content: "{\"sources\":[]}".into(),
             tool_call_id: Some("native-call".into()),
             tool_calls: vec![],
+            claude_continuation: None,
         });
         let (_, body, _) = request(&input).unwrap();
         assert_eq!(body["input"][1]["signature"], "synthetic-signature");

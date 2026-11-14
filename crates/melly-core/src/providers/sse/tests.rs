@@ -168,12 +168,14 @@ fn anthropic_mixed_search_preserves_server_arguments_for_continuation() {
                         content: String::new(),
                         tool_call_id: None,
                         tool_calls: calls,
+                        claude_continuation: None,
                     },
                     crate::models::WireMessage {
                         role: "tool".into(),
                         content: "{\"sources\":[]}".into(),
                         tool_call_id: Some("toolu_demo".into()),
                         tool_calls: vec![],
+                        claude_continuation: None,
                     },
                 ],
                 tools: vec![json!({"name":"search_folder","parameters":{"type":"object"}})],
@@ -204,6 +206,50 @@ fn malformed_anthropic_server_tool_arguments_never_dispatch_client_tools() {
             .iter()
             .any(|event| matches!(event, ProviderEvent::Done))
     );
+}
+
+#[test]
+fn anthropic_paused_web_search_is_a_continuable_response() {
+    let bytes = b"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"server_tool_use\",\"id\":\"srvtoolu_demo\",\"name\":\"web_search\",\"input\":{}}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"public sources\\\"}\"}}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"pause_turn\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n";
+    let (result, events) = parse(Protocol::Messages, bytes, 1);
+    assert!(
+        result.is_ok(),
+        "A paused server search needs a continuation, not an error"
+    );
+    assert!(
+        calls(&events).is_empty(),
+        "Server tools must never be dispatched as client tools"
+    );
+    let continuation = events
+        .iter()
+        .find_map(|event| match event {
+            ProviderEvent::ClaudeSearchPaused(continuation) => Some(continuation),
+            _ => None,
+        })
+        .expect("The run controller must receive the paused server content");
+    assert_eq!(
+        continuation.blocks[0]["input"],
+        json!({"query":"public sources"})
+    );
+    assert!(!format!("{continuation:?}").contains("public sources"));
+}
+
+#[test]
+fn anthropic_pause_with_a_client_tool_fails_before_dispatch() {
+    let bytes = String::from_utf8(anthropic_mixed_tools(true, false))
+        .unwrap()
+        .replace(
+            "\"stop_reason\":\"tool_use\"",
+            "\"stop_reason\":\"pause_turn\"",
+        );
+    assert!(bytes.contains("pause_turn"));
+    let (result, events) = parse(Protocol::Messages, bytes.as_bytes(), 1);
+    assert!(result.is_err());
+    assert!(calls(&events).is_empty());
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        ProviderEvent::Done | ProviderEvent::ClaudeSearchPaused(_)
+    )));
 }
 
 #[test]

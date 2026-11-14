@@ -109,6 +109,9 @@ pub struct WireMessage {
     pub tool_call_id: Option<String>,
     #[serde(default)]
     pub tool_calls: Vec<ToolCall>,
+    // Protocol-only state for the current turn; never stored or sent to the UI.
+    #[serde(skip)]
+    pub claude_continuation: Option<ClaudeContinuation>,
 }
 impl WireMessage {
     pub fn text(role: &str, content: impl Into<String>) -> Self {
@@ -117,6 +120,7 @@ impl WireMessage {
             content: content.into(),
             tool_call_id: None,
             tool_calls: vec![],
+            claude_continuation: None,
         }
     }
 }
@@ -128,12 +132,22 @@ pub struct ProviderRequest {
     pub tools: Vec<Value>,
     pub web_search: bool,
 }
+#[derive(Clone)]
+pub struct ClaudeContinuation {
+    pub blocks: Vec<Value>,
+}
+impl std::fmt::Debug for ClaudeContinuation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ClaudeContinuation([redacted])")
+    }
+}
 #[derive(Clone, Debug)]
 pub enum ProviderEvent {
     Delta(String),
     ToolCall(ToolCall),
     Sources(Vec<Source>),
     Activity(String),
+    ClaudeSearchPaused(ClaudeContinuation),
     Done,
 }
 pub type ProviderSink = std::sync::Arc<dyn Fn(ProviderEvent) + Send + Sync>;

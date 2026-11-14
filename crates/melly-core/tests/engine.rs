@@ -103,8 +103,31 @@ impl Transport for Fake {
         cancel: CancellationToken,
     ) -> anyhow::Result<()> {
         let second = request.messages.iter().any(|m| m.role == "tool");
-        self.calls.lock().unwrap().push(request);
+        let round = {
+            let mut calls = self.calls.lock().unwrap();
+            let round = calls.len();
+            calls.push(request);
+            round
+        };
         match self.mode {
+            "claude-pause-stoppable" if round > 0 => {
+                cancel.cancelled().await;
+                return Ok(());
+            }
+            "claude-pause" if round < 2 => {
+                sink(ProviderEvent::ClaudeSearchPaused(ClaudeContinuation {
+                    blocks: vec![
+                        json!({"type":"server_tool_use","id":format!("srvtoolu_{round}"),"name":"web_search","input":{"query":"synthetic private marker"}}),
+                    ],
+                }));
+            }
+            "claude-pause-forever" | "claude-pause-stoppable" | "unexpected-pause" => {
+                sink(ProviderEvent::ClaudeSearchPaused(ClaudeContinuation {
+                    blocks: vec![
+                        json!({"type":"server_tool_use","id":"srvtoolu_demo","name":"web_search","input":{"query":"synthetic private marker"}}),
+                    ],
+                }));
+            }
             "oversize" => {
                 sink(ProviderEvent::Delta("x".repeat(1_048_577)));
                 cancel.cancelled().await;
@@ -194,6 +217,154 @@ async fn finish(e: &Engine, chat: &str) {
     })
     .await
     .unwrap()
+}
+
+fn claude_request(engine: &Engine, chat: &str, web_search: bool) -> SendInput {
+    let connection = engine.connection("claude").unwrap();
+    engine
+        .vault
+        .set(
+            &melly_core::providers::credential_id(&connection),
+            "synthetic-provider-key",
+        )
+        .unwrap();
+    let mut request = input(chat);
+    request.provider_id = connection.provider_id;
+    request.model_id = connection.model_id;
+    request.web_search = web_search;
+    request.folder_context = false;
+    request
+}
+
+#[tokio::test]
+async fn claude_paused_search_continues_with_the_same_route_and_without_persisting_blocks() {
+    let (engine, transport, chat) = fixture("claude-pause");
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let observed = events.clone();
+    let reply = engine
+        .start(
+            claude_request(&engine, &chat, true),
+            Arc::new(move |event| observed.lock().unwrap().push(event)),
+        )
+        .unwrap();
+    finish(&engine, &chat).await;
+    let calls = transport.calls.lock().unwrap();
+    assert_eq!(
+        calls.len(),
+        3,
+        "Two pauses must resume twice before the final answer"
+    );
+    assert!(
+        calls
+            .iter()
+            .all(|call| call.connection.provider_id == "claude" && call.web_search)
+    );
+    assert!(calls.iter().all(
+        |call| call.connection.base_url == calls[0].connection.base_url
+            && call.connection.model_id == calls[0].connection.model_id
+    ));
+    assert_eq!(
+        calls[1]
+            .messages
+            .iter()
+            .filter(|m| m.claude_continuation.is_some())
+            .count(),
+        1
+    );
+    let continuations: Vec<_> = calls[2]
+        .messages
+        .iter()
+        .filter_map(|m| m.claude_continuation.as_ref())
+        .collect();
+    assert_eq!(continuations.len(), 2);
+    assert_eq!(continuations[0].blocks[0]["id"], "srvtoolu_0");
+    assert_eq!(continuations[1].blocks[0]["id"], "srvtoolu_1");
+    assert!(
+        !serde_json::to_string(&calls[2].messages)
+            .unwrap()
+            .contains("synthetic private marker")
+    );
+    assert!(!format!("{:?}", calls[2]).contains("synthetic private marker"));
+    let saved = engine.store.lock().unwrap().message(&reply.id).unwrap();
+    assert_eq!(saved.status, "complete");
+    assert!(
+        !serde_json::to_string(&saved)
+            .unwrap()
+            .contains("synthetic private marker")
+    );
+    assert!(
+        !serde_json::to_string(&*events.lock().unwrap())
+            .unwrap()
+            .contains("synthetic private marker")
+    );
+}
+
+#[tokio::test]
+async fn stopping_a_continued_claude_search_cancels_the_active_stream() {
+    let (engine, transport, chat) = fixture("claude-pause-stoppable");
+    let reply = engine
+        .start(claude_request(&engine, &chat, true), Arc::new(|_| {}))
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while transport.calls.lock().unwrap().len() < 2 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    engine.stop(&chat);
+    finish(&engine, &chat).await;
+    assert_eq!(transport.calls.lock().unwrap().len(), 2);
+    assert_eq!(
+        engine
+            .store
+            .lock()
+            .unwrap()
+            .message(&reply.id)
+            .unwrap()
+            .status,
+        "stopped"
+    );
+}
+
+#[tokio::test]
+async fn claude_paused_search_has_a_bounded_number_of_rounds() {
+    let (engine, transport, chat) = fixture("claude-pause-forever");
+    let reply = engine
+        .start(claude_request(&engine, &chat, true), Arc::new(|_| {}))
+        .unwrap();
+    finish(&engine, &chat).await;
+    assert_eq!(transport.calls.lock().unwrap().len(), 4);
+    assert_eq!(
+        engine
+            .store
+            .lock()
+            .unwrap()
+            .message(&reply.id)
+            .unwrap()
+            .status,
+        "error"
+    );
+}
+
+#[tokio::test]
+async fn unexpected_claude_search_pause_does_not_start_an_unauthorized_search() {
+    let (engine, transport, chat) = fixture("unexpected-pause");
+    let reply = engine
+        .start(claude_request(&engine, &chat, false), Arc::new(|_| {}))
+        .unwrap();
+    finish(&engine, &chat).await;
+    assert_eq!(transport.calls.lock().unwrap().len(), 1);
+    assert_eq!(
+        engine
+            .store
+            .lock()
+            .unwrap()
+            .message(&reply.id)
+            .unwrap()
+            .status,
+        "error"
+    );
 }
 
 #[tokio::test]
