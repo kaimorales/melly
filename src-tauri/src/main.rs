@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod attachments;
+mod coding_tests;
+mod coding_tools;
 mod file_edits;
 mod inline_secret;
 mod linked_projects;
@@ -20,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 struct AppState {
     engine: Arc<Engine>,
     file_edits: Mutex<file_edits::FileEdits>,
+    coding_approvals: Mutex<coding_tools::Approvals>,
     project_operations: Arc<Mutex<()>>,
     login: Mutex<login_state::LoginState>,
     plan_namespaces: Mutex<AuthNamespaces>,
@@ -469,9 +472,23 @@ async fn start_chat(
         .map(|id| draft.get(id))
         .transpose()?;
     let auto_edit = s.file_edits.lock().unwrap().grant(&input.chat_id);
+    let coding = if input.folder_context {
+        file_edits::workspace_for_chat(&s.engine.store.lock().unwrap(), &input.chat_id)?.map(
+            |workspace| {
+                Arc::new(coding_tools::ProjectTools {
+                    app: app.clone(),
+                    workspace,
+                    grant: auto_edit.clone(),
+                    reads: Mutex::new(Default::default()),
+                }) as Arc<dyn melly_core::coding::CodingTools>
+            },
+        )
+    } else {
+        None
+    };
     let result = s
         .engine
-        .start_with_attachment(
+        .start_with_coding_tools(
             input,
             attachment,
             Arc::new(move |update| {
@@ -483,6 +500,7 @@ async fn start_chat(
                     let _ = app.emit("chat-stream", update);
                 }
             }),
+            coding,
         )
         .map_err(error)?;
     if let Some(id) = attachment_id {
@@ -559,6 +577,7 @@ fn main() {
                 login: Mutex::new(login_state::LoginState::default()),
                 plan_namespaces: Mutex::new(namespaces),
                 file_edits: Mutex::new(file_edits::FileEdits::default()),
+                coding_approvals: Mutex::new(coding_tools::Approvals::default()),
                 project_operations: Arc::new(Mutex::new(())),
                 muse_attachment: Mutex::new(attachments::DraftAttachment::default()),
                 started,
@@ -605,6 +624,8 @@ fn main() {
             linked_projects::project_link,
             linked_projects::link_project_directory,
             linked_projects::unlink_project,
+            coding_tools::confirm_coding_action,
+            coding_tools::coding_activity,
             file_edits::file_edit_mode,
             file_edits::set_file_edit_mode,
             file_edits::applied_file_edit,

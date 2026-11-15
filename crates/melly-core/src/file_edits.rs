@@ -14,9 +14,9 @@ pub struct Proposal {
     content: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Replacement {
+pub struct Replacement {
     old: String,
     new: String,
 }
@@ -50,22 +50,16 @@ impl Proposal {
             proposal.edits.is_some() ^ proposal.content.is_some(),
             "The model must propose one change"
         );
-        let path = Path::new(&proposal.path);
-        ensure!(
-            !proposal.path.is_empty()
-                && proposal.path.len() <= 1024
-                && !proposal.path.contains(['\\', ':'])
-                && !proposal.path.chars().any(char::is_control)
-                && proposal
-                    .path
-                    .split('/')
-                    .all(|part| !part.is_empty() && part != "." && part != "..")
-                && path
-                    .components()
-                    .all(|part| matches!(part, Component::Normal(_))),
-            "The proposed file must be inside the linked project"
-        );
+        validate_path(&proposal.path)?;
         Ok(proposal)
+    }
+
+    pub fn edit(path: String, edits: Vec<Replacement>) -> Self {
+        Self {
+            path,
+            edits: Some(edits),
+            content: None,
+        }
     }
 
     pub fn permits_new_file(&self) -> bool {
@@ -125,6 +119,24 @@ impl Proposal {
         );
         Ok(after)
     }
+}
+
+pub fn validate_path(value: &str) -> Result<()> {
+    let path = Path::new(value);
+    ensure!(
+        !value.is_empty()
+            && value.len() <= 1024
+            && !value.contains(['\\', ':'])
+            && !value.chars().any(char::is_control)
+            && value
+                .split('/')
+                .all(|part| !part.is_empty() && part != "." && part != "..")
+            && path
+                .components()
+                .all(|part| matches!(part, Component::Normal(_))),
+        "The proposed file must be inside the linked project"
+    );
+    Ok(())
 }
 
 #[cfg(test)]

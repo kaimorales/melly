@@ -75,3 +75,11 @@ Use a folder’s menu to link a local directory. Enabling Project context shares
 - `file_edit_mode(chatId)` returns null without a linked folder, false for Ask, or true for Auto-apply. `set_file_edit_mode(chatId, automatic)` changes the current chat's mode for the app session.
 - `review_file_edit(chatId, messageId)` returns a compact diff and a ticket. `apply_file_edit(messageId, ticket)` revalidates the workspace and file content before writing.
 - `applied_file_edit(chatId, messageId)` returns the saved diff. Auto-apply performs the same scoped checks on a completed reply before recording its diff.
+
+## Coding tools
+
+Enable Project context for a chat in a linked directory to give the selected model project search and file reads. The app handles up to one tool call per model round and 16 rounds per reply. Newly created or edited files are read directly from disk in later rounds. Text files are limited to 24 KiB for writes and results are bounded. Deletes require a current-turn read and a matching file revision.
+
+Ask pauses in the conversation before creating, editing, deleting, or running tests. The existing Auto-apply grant applies those operations to the same chat and link for the current app session. The conversation shows each mutation's diff and the test status and output.
+
+The test tool selects Python unittest discovery or Node's built-in test runner. The macOS test process runs with a clean environment, networking denied, and writes limited to temporary scratch storage. It receives the linked project as read-only input. It times out after 90 seconds and does not provide arbitrary commands.

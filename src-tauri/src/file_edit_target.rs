@@ -13,7 +13,7 @@ mod macos {
         fs::{File, Metadata, OpenOptions},
         io::{self, Read, Write},
         os::{
-            fd::{AsRawFd, FromRawFd},
+            fd::{AsRawFd, FromRawFd, IntoRawFd},
             unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
         },
         path::{Component, Path, PathBuf},
@@ -72,6 +72,55 @@ mod macos {
                 .map(|snapshot| snapshot.bytes.as_str())
         }
 
+        pub fn delete(&self) -> Result<()> {
+            let selection = &self.0;
+            let original = selection.original.as_ref().context("The file is missing")?;
+            selection.verify_directory()?;
+            selection.verify(original)?;
+            let removed =
+                unsafe { libc::unlinkat(selection.parent.as_raw_fd(), selection.name.as_ptr(), 0) };
+            check(removed).context("Could not delete the selected file")
+        }
+
+        pub fn entries(
+            root: &Path,
+            identity: (u64, u64),
+            relative: &Path,
+            limit: usize,
+        ) -> Result<Vec<(String, bool)>> {
+            let parent = scoped_parent(root, identity, &relative.join("entry"))?;
+            let fd = parent.into_raw_fd();
+            let directory = unsafe { libc::fdopendir(fd) };
+            if directory.is_null() {
+                unsafe {
+                    libc::close(fd);
+                }
+                anyhow::bail!("Could not open project directory");
+            }
+            let mut entries = Vec::new();
+            for _ in 0..limit {
+                let entry = unsafe { libc::readdir(directory) };
+                if entry.is_null() {
+                    break;
+                }
+                let entry = unsafe { &*entry };
+                if !matches!(entry.d_type, libc::DT_DIR | libc::DT_REG) {
+                    continue;
+                }
+                let name = unsafe { CStr::from_ptr(entry.d_name.as_ptr()) };
+                if let Ok(name) = name.to_str()
+                    && !melly_core::projects::excluded(name)
+                {
+                    entries.push((name.to_owned(), entry.d_type == libc::DT_DIR));
+                }
+            }
+            unsafe {
+                libc::closedir(directory);
+            }
+            entries.sort_unstable();
+            Ok(entries)
+        }
+
         pub fn write(&self, updated: &str) -> Result<()> {
             let selection = &self.0;
             ensure!(
@@ -79,16 +128,7 @@ mod macos {
                 "Invalid file edit contents"
             );
             let parent = &selection.parent;
-            let verify_directory = || -> Result<()> {
-                let current =
-                    scoped_parent(&selection.root, selection.identity, &selection.relative)?;
-                ensure!(
-                    same_inode(&current.metadata()?, &parent.metadata()?),
-                    "The project directory changed. Ask for a new edit."
-                );
-                Ok(())
-            };
-            verify_directory()?;
+            selection.verify_directory()?;
             let existing = selection
                 .original
                 .as_ref()
@@ -120,7 +160,7 @@ mod macos {
                     file.set_permissions(std::fs::Permissions::from_mode(metadata.mode() & 0o777))?;
                 }
                 file.sync_all().context("Could not save the staged edit")?;
-                verify_directory()?;
+                selection.verify_directory()?;
                 if let Some(original) = &selection.original {
                     selection.verify(original)?;
                 }
@@ -151,6 +191,15 @@ mod macos {
     }
 
     impl Selection {
+        fn verify_directory(&self) -> Result<()> {
+            let current = scoped_parent(&self.root, self.identity, &self.relative)?;
+            ensure!(
+                same_inode(&current.metadata()?, &self.parent.metadata()?),
+                "The project directory changed. Ask for a new edit."
+            );
+            Ok(())
+        }
+
         fn verify(&self, expected: &Snapshot) -> Result<(File, Metadata)> {
             let (file, actual) = read_regular(&self.parent, &self.name)
                 .context("The selected file changed or is unavailable. Choose it again.")?;
@@ -363,6 +412,17 @@ impl Target {
         _: bool,
     ) -> Result<Self> {
         anyhow::bail!("File editing requires macOS")
+    }
+    pub fn delete(&self) -> Result<()> {
+        anyhow::bail!("File editing requires macOS")
+    }
+    pub fn entries(
+        _: &std::path::Path,
+        _: (u64, u64),
+        _: &std::path::Path,
+        _: usize,
+    ) -> Result<Vec<(String, bool)>> {
+        anyhow::bail!("Project search requires macOS")
     }
     pub fn write(&self, _: &str) -> Result<()> {
         anyhow::bail!("File editing requires macOS")

@@ -46,7 +46,9 @@ impl Store {
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS project_links(folder_id TEXT PRIMARY KEY REFERENCES folders(id) ON DELETE CASCADE,path TEXT NOT NULL,device INTEGER NOT NULL,inode INTEGER NOT NULL,status TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS file_edit_scopes(message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,folder_id TEXT NOT NULL REFERENCES folders(id) ON DELETE CASCADE,device INTEGER NOT NULL,inode INTEGER NOT NULL,applied INTEGER NOT NULL DEFAULT 0);
-             CREATE TABLE IF NOT EXISTS file_edit_diffs(message_id TEXT PRIMARY KEY REFERENCES file_edit_scopes(message_id) ON DELETE CASCADE,diff TEXT NOT NULL);",
+             CREATE TABLE IF NOT EXISTS file_edit_diffs(message_id TEXT PRIMARY KEY REFERENCES file_edit_scopes(message_id) ON DELETE CASCADE,diff TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS coding_activity(id INTEGER PRIMARY KEY,message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,result TEXT NOT NULL);
+             CREATE INDEX IF NOT EXISTS coding_activity_by_message ON coding_activity(message_id,id);",
         )?;
         Ok(())
     }

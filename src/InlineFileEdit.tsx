@@ -25,10 +25,10 @@ export function splitFileEdit(text: string, streaming: boolean) {
   return { text, proposed: false };
 }
 
-type DiffLine = { kind: ' ' | '+' | '-' | '…'; text: string };
+export type DiffLine = { kind: ' ' | '+' | '-' | '…'; text: string };
 type Preview = { status: 'review'; ticket: string; path: string; diff: DiffLine[] } | { status: 'applied'; path: string; diff: DiffLine[] };
 
-function Diff({ lines }: { lines: DiffLine[] }) {
+export function Diff({ lines }: { lines: DiffLine[] }) {
   return <pre className="file-edit-diff" tabIndex={0} aria-label="File diff">{lines.map((line, index) => (
     <span key={index} data-change={line.kind === '+' ? 'added' : line.kind === '-' ? 'removed' : undefined}>{line.kind} {line.text}{'\n'}</span>
   ))}</pre>;

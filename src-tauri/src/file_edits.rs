@@ -16,7 +16,7 @@ use tauri::{Emitter, Manager, State};
 use uuid::Uuid;
 
 #[path = "file_edit_target.rs"]
-mod file_edit_target;
+pub(crate) mod file_edit_target;
 use file_edit_target::Target;
 
 const REVIEW_WINDOW: Duration = Duration::from_secs(900);
@@ -31,6 +31,12 @@ pub struct FileEdits {
 pub(crate) struct Grant {
     ticket: Uuid,
     workspace: ProjectLink,
+}
+
+impl Grant {
+    pub(crate) fn matches(&self, other: &Self, workspace: &ProjectLink) -> bool {
+        self.ticket == other.ticket && same_link(workspace, &self.workspace)
+    }
 }
 
 impl FileEdits {
@@ -96,7 +102,7 @@ impl Pending {
     }
 }
 
-fn same_link(left: &ProjectLink, right: &ProjectLink) -> bool {
+pub(crate) fn same_link(left: &ProjectLink, right: &ProjectLink) -> bool {
     left.folder_id == right.folder_id
         && left.device == right.device
         && left.inode == right.inode
@@ -117,7 +123,7 @@ pub enum Preview {
     },
 }
 
-fn workspace_for_chat(store: &Store, chat_id: &str) -> Reply<Option<ProjectLink>> {
+pub(crate) fn workspace_for_chat(store: &Store, chat_id: &str) -> Reply<Option<ProjectLink>> {
     if let Some(folder) = store.chat(chat_id).map_err(error)?.folder_id {
         store.ensure_active_project(&folder).map_err(error)?;
         return store.project_link(&folder).map_err(error);

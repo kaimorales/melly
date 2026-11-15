@@ -25,6 +25,16 @@ pub fn root_identity(root: &Path) -> Result<(u64, u64)> {
 
 #[cfg(unix)]
 pub fn read_scoped(root: &Path, identity: Option<(u64, u64)>, relative: &Path) -> Result<Vec<u8>> {
+    read_scoped_with_limit(root, identity, relative, crate::projects::MAX_FILE_BYTES)
+}
+
+#[cfg(unix)]
+pub fn read_scoped_with_limit(
+    root: &Path,
+    identity: Option<(u64, u64)>,
+    relative: &Path,
+    limit: u64,
+) -> Result<Vec<u8>> {
     use std::{
         ffi::CString,
         os::{
@@ -74,15 +84,13 @@ pub fn read_scoped(root: &Path, identity: Option<(u64, u64)>, relative: &Path) -
     }
     let metadata = directory.metadata()?;
     ensure!(
-        metadata.is_file() && metadata.len() <= crate::projects::MAX_FILE_BYTES,
+        metadata.is_file() && metadata.len() <= limit,
         "File exceeds the supported size or is not a regular file"
     );
     let mut bytes = Vec::new();
-    directory
-        .take(crate::projects::MAX_FILE_BYTES + 1)
-        .read_to_end(&mut bytes)?;
+    directory.take(limit + 1).read_to_end(&mut bytes)?;
     ensure!(
-        bytes.len() as u64 <= crate::projects::MAX_FILE_BYTES,
+        bytes.len() as u64 <= limit,
         "File exceeds the supported size"
     );
     Ok(bytes)
@@ -93,5 +101,15 @@ pub fn root_identity(_: &Path) -> Result<(u64, u64)> {
 }
 #[cfg(not(unix))]
 pub fn read_scoped(_: &Path, _: Option<(u64, u64)>, _: &Path) -> Result<Vec<u8>> {
+    anyhow::bail!("Scoped file reads require a Unix host")
+}
+
+#[cfg(not(unix))]
+pub fn read_scoped_with_limit(
+    _: &Path,
+    _: Option<(u64, u64)>,
+    _: &Path,
+    _: u64,
+) -> Result<Vec<u8>> {
     anyhow::bail!("Scoped file reads require a Unix host")
 }

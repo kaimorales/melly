@@ -1,6 +1,6 @@
 # Melly desktop
 
-This is a cloud chat desktop app, using Tauri, a thin React view, and Rust for state, persistence, network, streaming, cancellation and tool boundaries. No coding agent, local model runtime or shell tool.
+This is a cloud chat desktop app, using Tauri, a thin React view, and Rust for state, persistence, network, streaming, cancellation and tool boundaries. Linked-project chats can use scoped coding tools and an isolated test runner.
 
 Read docs/architecture.md and docs/contracts.md before changing interfaces. Use npm run dev, npm run check, npm test, npm run build. Never put credentials or real conversations in fixtures, frontend state, logs or SQLite. Provider keys use a native secure field in settings; the web-search key uses a native secure dialog. macOS Keychain owns stored credentials.
 

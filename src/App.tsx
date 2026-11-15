@@ -4,6 +4,7 @@ import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import { backend, nativeApp } from './backend';
+import { CodingActivity, type CodingActivityState } from './CodingActivity';
 import { FileEditMode, InlineFileEdit, splitFileEdit } from './InlineFileEdit';
 import { NameDialog, SearchDialog } from './dialogs';
 import { ChatList } from './ChatList';
@@ -34,7 +35,7 @@ type NameAction = { kind: 'new-folder' | 'rename-folder' | 'rename-chat'; id?: s
 type StreamBuffer = { chatId: string; text: string; sources?: Source[]; activity: string } & StreamReveal;
 type StreamReveal = { visible?: number; deadline?: number; done?: StreamUpdate };
 
-function MessageView({ message, activity, theme, highlight, onSource, onRetry, busy, retryEnabled, report }: { message: Message; activity?: string; theme: string; highlight: boolean; onSource: (source: Source) => void; onRetry: () => void; busy: boolean; retryEnabled: boolean; report: (text: string) => void }) {
+function MessageView({ message, activity, codingActivity, theme, highlight, onSource, onRetry, busy, retryEnabled, report }: { message: Message; activity?: string; codingActivity?: CodingActivityState; theme: string; highlight: boolean; onSource: (source: Source) => void; onRetry: () => void; busy: boolean; retryEnabled: boolean; report: (text: string) => void }) {
   const reply = message.role === 'assistant' ? splitFileEdit(message.content, message.status === 'streaming') : { text: message.content, proposed: false };
   const markdown = useMemo(() => message.role === 'assistant' ? normalizeMathDelimiters(reply.text) : reply.text, [reply.text, message.role]);
   const folderSources = message.sources.filter((source) => source.kind === 'chat');
@@ -62,6 +63,7 @@ function MessageView({ message, activity, theme, highlight, onSource, onRetry, b
       pre: MarkdownCodeBlock,
       code: MarkdownInlineCode,
     }}>{markdown}</ReactMarkdown></div> : message.status === 'streaming' ? <span className="stream-pending" aria-label="Preparing response" /> : null}
+    {codingActivity && <CodingActivity activity={codingActivity} />}
     {nativeApp && reply.proposed && message.status === 'complete' && <InlineFileEdit chatId={message.chatId} messageId={message.id} busy={busy} />}
     {message.sources.some((source) => !reply.text.includes(`melly-source:${source.id}`)) && <div className="source-row">{message.sources.filter((source) => !reply.text.includes(`melly-source:${source.id}`)).map((source) => <button key={source.id || `${source.title}-${source.url}`} className="source" aria-label={`Open source ${source.title}`} title={source.snippet || source.title} onClick={() => onSource(source)}><Icon name={source.kind === 'chat' ? 'message' : 'globe'} /><span>{source.title}</span><Icon name={source.kind === 'chat' ? 'right' : 'external'} /></button>)}</div>}
     {message.status !== 'streaming' && <div className="message-tools">
@@ -97,6 +99,7 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false); const [nameAction, setNameAction] = useState<NameAction | null>(null); const [deleteTarget, setDeleteTarget] = useState<Chat | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null); const jump = useRef<{ chatId: string; messageId: string } | null>(null);
   const [systemDark, setSystemDark] = useState(window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const [codingActivities, setCodingActivities] = useState<Record<string, CodingActivityState>>({});
   const [activities, setActivities] = useState<Record<string, string>>({});
   const streamBuffers = useRef(new Map<string, StreamBuffer>()); const frame = useRef<number | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null); const scroll = useRef<HTMLDivElement>(null); const modelButton = useRef<HTMLButtonElement>(null); const providerButton = useRef<HTMLButtonElement>(null);
@@ -122,7 +125,10 @@ export default function App() {
     const request = ++messageRequest.current;
     if (selectedRef.current === chatId) setLoading(true);
     try {
-      let page = await backend.invoke<Message[]>('messages', { chatId, before: null });
+      let [page, savedActivity] = await Promise.all([
+        backend.invoke<Message[]>('messages', { chatId, before: null }),
+        nativeApp ? backend.invoke<Record<string, CodingActivityState['results']>>('coding_activity', { chatId }).catch(() => null) : null,
+      ]);
       let olderPage = false;
       if (target) {
         // Each read and the displayed page stay bounded while locating an older citation.
@@ -134,6 +140,15 @@ export default function App() {
         }
       }
       if (selectedRef.current !== chatId || messageRequest.current !== request || !mounted.current) return;
+      if (savedActivity) {
+        setCodingActivities(previous => {
+          const next = { ...previous };
+          for (const [id, results] of Object.entries(savedActivity)) {
+            if ((next[id]?.results.length ?? 0) < results.length) next[id] = { ...next[id], results };
+          }
+          return next;
+        });
+      }
       setItems((current) => {
         if (!retainHistory || !current.length) return mergeStreams(page);
         const fresh = new Map(page.map((message) => [message.id, message]));
@@ -188,6 +203,21 @@ export default function App() {
     };
     const register = async () => {
       const unlisten = await backend.listen<StreamUpdate>('chat-stream', (update) => {
+        if (update.kind === 'coding-approval' || update.kind === 'coding-approval-closed' || update.kind === 'coding-result') {
+          let payload: unknown = update.text;
+          if (update.kind !== 'coding-approval-closed') {
+            try { payload = JSON.parse(update.text); } catch { return; }
+          }
+          setCodingActivities(previous => {
+            const current = previous[update.messageId] ?? { results: [] };
+            if (update.kind === 'coding-approval-closed' && current.approval?.id !== payload) return previous;
+            const next = update.kind === 'coding-result'
+              ? { ...current, results: [...current.results, payload as CodingActivityState['results'][number]] }
+              : { ...current, approval: update.kind === 'coding-approval' ? payload as CodingActivityState['approval'] : undefined };
+            return { ...previous, [update.messageId]: next };
+          });
+          return;
+        }
         if (update.kind === 'delta' || update.kind === 'sources' || update.kind === 'tool') {
           const buffer: StreamBuffer = streamBuffers.current.get(update.messageId) || { chatId: update.chatId, text: '', activity: '' };
           if (update.kind === 'delta' && update.text) {
@@ -491,7 +521,7 @@ export default function App() {
           {!items.length && !loading ? <div className="empty-state"><h1>{selectedFolder ? `A new thought in ${selectedFolder.title}` : 'What’s on your mind?'}</h1>{!nativeApp && provider?.id === 'mock' && <><p>Try a synthetic conversation, or connect a provider in Settings.</p><button className="text-action" onClick={() => { void seed().catch((reason) => setNotice(errorText(reason))); }}>Try an example</button></>}</div> : <div className={`transcript ${hasOlder || viewingOlder ? 'has-older' : ''}`} aria-label="Conversation">
             {hasOlder && <button className="load-older" disabled={loading} onClick={() => { void older(); }}>{loading ? 'Loading…' : 'Load older messages'}</button>}
             {viewingOlder && <button className="load-older" onClick={() => { if (selectedId) { setHighlight(null); followBottom.current = true; void loadMessages(selectedId); } }}>Back to latest messages</button>}
-            {items.map((message, index) => <MessageView key={message.id} message={message} theme={theme} activity={activities[message.id]} highlight={highlight === message.id} onSource={(value) => { void source(value).catch((reason) => setNotice(errorText(reason))); }} onRetry={() => { void send(true); }} busy={activeRun || starting || loading} retryEnabled={index === items.length - 1 && !viewingOlder && !loading && !activeRun && !starting} report={setNotice} />)}
+            {items.map((message, index) => <MessageView key={message.id} message={message} theme={theme} activity={activities[message.id]} codingActivity={codingActivities[message.id]} highlight={highlight === message.id} onSource={(value) => { void source(value).catch((reason) => setNotice(errorText(reason))); }} onRetry={() => { void send(true); }} busy={activeRun || starting || loading} retryEnabled={index === items.length - 1 && !viewingOlder && !loading && !activeRun && !starting} report={setNotice} />)}
           </div>}
         </div>
         <div className="composer-area" data-menu-root>
