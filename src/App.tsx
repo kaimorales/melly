@@ -1,3 +1,4 @@
+import { useComposerDraft } from './useComposerDraft';
 import { UndoChanges } from './UndoChanges';
 import { advanceStream, streamRevealWindow } from './stream-reveal';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
@@ -86,11 +87,14 @@ export default function App() {
   const [view, setView] = useState<'chat' | 'settings'>('chat');
   const [items, setItems] = useState<Message[]>([]); const [loading, setLoading] = useState(false);
   const [hasOlder, setHasOlder] = useState(false); const [viewingOlder, setViewingOlder] = useState(false);
-  const [draft, setDraft] = useState(''); const [webSearch, setWebSearch] = useState(false); const [manualFolder, setManualFolder] = useState<boolean | null>(null);
+  const [webSearch, setWebSearch] = useState(false); const [manualFolder, setManualFolder] = useState<boolean | null>(null);
   const [attachment, setAttachment] = useState<{ id: string; name: string } | null>(null);
   const [pickingAttachment, setPickingAttachment] = useState(false);
   const [running, setRunning] = useState<Set<string>>(new Set()); const [starting, setStarting] = useState(false); const sendingRef = useRef(false);
-  const [notice, setNotice] = useState(''); const [sidebar, setSidebar] = useState(window.innerWidth > 600);
+  const [notice, setNotice] = useState('');
+  const composer = useComposerDraft(selectedId, !!data, setNotice);
+  const { content: draft, setContent: setDraft } = composer;
+  const [sidebar, setSidebar] = useState(window.innerWidth > 600);
   const [moving, setMoving] = useState<Set<string>>(new Set()); const movingIds = useRef(new Set<string>());
   const removedChatIds = useRef(new Set<string>());
   const [chatMenu, setChatMenu] = useState(false); const [picker, setPicker] = useState<'providers' | 'models' | null>(null);
@@ -365,6 +369,7 @@ export default function App() {
     setDraftModel(null);
     setDraftContext(null);
     if (!preserveAttachment && chat.id !== selectedRef.current) clearAttachment();
+    if (preserveAttachment && chat.id !== selectedRef.current) composer.adopt(chat.id);
     selectedRef.current = chat.id; setSelectedId(chat.id);
     setData((current) => current && !current.chats.some((entry) => entry.id === chat.id) ? { ...current, chats: [...current.chats, chat] } : current);
     setView('chat'); setHighlight(null); setNotice(''); followBottom.current = true;
@@ -378,7 +383,6 @@ export default function App() {
       setView('chat');
     } else {
       selectChat(chat, preserveAttachment);
-      if (!preserveAttachment) setDraft('');
     }
     requestAnimationFrame(() => textarea.current?.focus());
     return chat;
@@ -415,20 +419,22 @@ export default function App() {
     setWebSearch(false); closePicker();
   };
   const send = async (retry = false) => {
-    if (!data || !provider || !sendAvailable || activeRun || pickingAttachment || savingContext.current || sendingRef.current || (retry && (viewingOlder || loading || !!attachment)) || (!retry && !draft.trim())) return;
+    if (!composer.ready || !data || !provider || !sendAvailable || activeRun || pickingAttachment || savingContext.current || sendingRef.current || (retry && (viewingOlder || loading || !!attachment)) || (!retry && !draft.trim())) return;
     sendingRef.current = true; setStarting(true); setNotice(''); setHighlight(null); followBottom.current = true;
     let chatId = selectedId;
     try {
+      await composer.flush();
       if (!chatId) {
         const chat = await createChat(null, true);
         chatId = chat.id;
         if (draftContext !== null) await backend.invoke('set_chat_context_limit', { chatId, limit: draftContext });
       }
       if (draftModel || namedConnection) await backend.invoke('save_chat_model', { chatId, providerId: provider.id, modelId: model });
+      await composer.flush();
       selectedRef.current = chatId;
       setRunning((current) => new Set(current).add(chatId!));
-      await backend.invoke<Message>('start_chat', { input: { chatId, content: draft.trim(), providerId: provider.id, modelId: model, webSearch: webSearch && webAvailable, folderContext, retry }, attachmentId: !retry && museRoute ? attachment?.id : undefined });
-      if (!retry) { setDraft(''); clearAttachment(); } setManualFolder(null); await loadMessages(chatId); await refresh();
+      await backend.invoke<Message>('start_chat', { input: { chatId, content: draft.trim(), providerId: provider.id, modelId: model, webSearch: webSearch && webAvailable, folderContext, retry }, attachmentId: !retry && museRoute ? attachment?.id : undefined, draftKey: composer.key });
+      if (!retry) { composer.clear(composer.key); if (chatId !== composer.key) composer.clear(chatId); clearAttachment(); } setManualFolder(null); await loadMessages(chatId); await refresh();
     } catch (reason) { setNotice(errorText(reason)); if (chatId) setRunning((current) => { const next = new Set(current); next.delete(chatId!); return next; }); }
     finally { sendingRef.current = false; setStarting(false); textarea.current?.focus(); }
   };
@@ -490,7 +496,7 @@ export default function App() {
     removedChatIds.current.add(chat.id);
     setData((current) => current && { ...current, chats: current.chats.filter((entry) => entry.id !== chat.id) });
     if (selectedRef.current === chat.id) {
-      clearAttachment(); selectedRef.current = null; setSelectedId(null); setItems([]); setDraft(''); setManualFolder(null);
+      clearAttachment(); selectedRef.current = null; setSelectedId(null); setItems([]); setManualFolder(null);
       setActivities({}); setHighlight(null); setHasOlder(false); setViewingOlder(false); ++messageRequest.current;
     }
     setNotice('Chat deleted.');
@@ -534,7 +540,7 @@ export default function App() {
           {!selectedFolder && explicitFolder && <div className="folder-consent"><Icon name="folder" /><span>Move this chat into a folder to use other chats.</span></div>}
           <form className="composer" onSubmit={(event) => { event.preventDefault(); void send(); }}>
             {museRoute && attachment && <div className="attachment-draft"><span title={attachment.name}>{attachment.name}</span><button type="button" className="icon-button" aria-label="Remove attachment" disabled={starting} onClick={clearAttachment}><Icon name="close" /></button></div>}
-            <textarea ref={textarea} aria-label="Message" rows={1} placeholder="Send a message" value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => {
+            <textarea ref={textarea} aria-label="Message" rows={1} placeholder="Send a message" disabled={!composer.ready || starting} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.key !== 'Enter') return;
               const shouldSend = data.settings.sendBehavior === 'cmd-enter' ? event.metaKey || event.ctrlKey : !event.shiftKey && !event.altKey;
               if (shouldSend) { event.preventDefault(); void send(); }
@@ -550,7 +556,7 @@ export default function App() {
                 <button ref={modelButton} type="button" className="model-picker-trigger" aria-label="Choose model" title="Choose model" aria-expanded={picker === 'models'} aria-haspopup="listbox" onClick={() => setPicker(picker === 'models' ? null : 'models')}><span className="model-name">{displayModel}</span><span className="divider" /><span className="route">{routeLabel(provider)}</span><Icon name="down" /></button>
               </div> : <button ref={providerButton} type="button" className="button" onClick={() => { if (connectedProviders.length) setPicker('providers'); else setView('settings'); }}>{connectedProviders.length ? 'Choose provider' : 'Connect provider'}</button>}
               {provider && <ContextMeter draftContext={draftContext} contextRevision={contextRevision} onLimit={chooseContext} chatId={selectedId} providerId={provider.id} modelId={model} draft={draft} revision={selectedChat?.updatedAt || 0} busy={activeRun || starting || pickingAttachment} />}
-              {activeRun ? <button type="button" className="round-control stop" aria-label="Stop response" title="Stop response" onClick={() => { if (selectedId) void backend.invoke('stop_chat', { chatId: selectedId }).catch((reason) => setNotice(errorText(reason))); }}><span className="stop-square" /></button> : <button type="submit" className="round-control send" aria-label="Send message" disabled={!draft.trim() || starting || pickingAttachment || !sendAvailable}><Icon name="up" /></button>}
+              {activeRun ? <button type="button" className="round-control stop" aria-label="Stop response" title="Stop response" onClick={() => { if (selectedId) void backend.invoke('stop_chat', { chatId: selectedId }).catch((reason) => setNotice(errorText(reason))); }}><span className="stop-square" /></button> : <button type="submit" className="round-control send" aria-label="Send message" disabled={!composer.ready || !draft.trim() || starting || pickingAttachment || !sendAvailable}><Icon name="up" /></button>}
             </div>
           </form>
           {!sendAvailable && provider && <p className="composer-note">{providerName(provider)} is not connected. <button onClick={() => setView('settings')}>Open Settings</button></p>}

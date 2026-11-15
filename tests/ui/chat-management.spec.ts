@@ -6,6 +6,8 @@ const recent = (page: Page) => page.getByRole('group', { name: 'Recent chats', e
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Try an example' }).click();
+  await expect(page.locator('.chat-title')).toHaveText('Interview prep');
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEditable();
 });
 
 test('drags into a collapsed folder and back to Recent without changing the open conversation', async ({ page }) => {

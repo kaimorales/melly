@@ -87,3 +87,7 @@ The test tool selects Python unittest discovery or Node's built-in test runner. 
 ## Undo
 
 File mutations persist before/after snapshots in a local journal before touching disk. `file_changes(chatId,messageId)` returns only path/status metadata; `undo_file_changes(chatId,messageId,changeId?)` reverses one change or the turn. Undo revalidates the original linked directory, all affected file contents, and newer changes before mutation. It cannot overwrite subsequent user edits or run during active replies. A partial filesystem failure preserves per-file recovery state for a retry. Deleted file contents and POSIX permissions can be restored; deleted-file ACLs and extended attributes are not retained. Snapshots are local, excluded from model requests and portable exports, and removed with the owning conversation.
+
+## Saved composer drafts
+
+`composer_draft(chatId?)` restores the unsent text, selected attachment metadata, and edit target for that chat (or the new-chat composer). `save_composer_draft(chatId?,draft)` persists bounded content locally as input changes, with serialized writes and no idle polling. Switching chats preserves each draft. Send flushes pending saves and consumes only the matching accepted draft; a failed send retains it. Draft-owned attachment bytes survive restart, remain local until Send, and are removed when discarded. Drafts and undo snapshots are excluded from portable exports.

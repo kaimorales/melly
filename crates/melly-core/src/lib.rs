@@ -3,6 +3,7 @@ pub mod auth_namespace;
 pub mod coding;
 pub mod context;
 pub mod credentials;
+pub mod drafts;
 pub mod engine;
 pub mod file_edits;
 pub mod file_history;

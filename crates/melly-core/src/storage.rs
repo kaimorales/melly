@@ -117,6 +117,7 @@ impl Store {
         let store = Self { conn };
         store.initialize_file_edits()?;
         store.initialize_file_history()?;
+        store.initialize_drafts()?;
         Ok(store)
     }
     fn timestamp(&self) -> Result<i64> {

@@ -35,6 +35,7 @@ const providers: ProviderView[] = rows.map(([id, name, billingRoute, baseUrl, de
 const folders: Folder[] = [];
 const chats: Chat[] = [];
 const messages: Message[] = [];
+const composerDrafts = new Map<string, { content: string; attachments: never[]; editing: null }>();
 const listeners = new Map<string, Set<(payload: unknown) => void>>();
 const runs = new Map<string, { timer: ReturnType<typeof setTimeout>; message: Message }>();
 let timestamp = Date.now();
@@ -134,6 +135,12 @@ export const mockBackend: Backend = {
   async invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
     let result: unknown;
     switch (command) {
+      case 'composer_draft': result = composerDrafts.get(String(args.chatId ?? 'new')) ?? { content: '', attachments: [], editing: null }; break;
+      case 'save_composer_draft': {
+        const draft = args.draft as { content: string };
+        composerDrafts.set(String(args.chatId ?? 'new'), { content: draft.content, attachments: [], editing: null });
+        break;
+      }
       case 'bootstrap': result = snapshot(); break;
       case 'set_chat_context_limit': {
         const key = String(args.chatId);

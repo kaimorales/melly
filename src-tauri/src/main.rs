@@ -2,6 +2,7 @@
 mod attachments;
 mod coding_tests;
 mod coding_tools;
+mod drafts;
 mod file_edits;
 mod file_history;
 mod inline_secret;
@@ -466,6 +467,7 @@ async fn start_chat(
     s: State<'_, AppState>,
     input: SendInput,
     attachment_id: Option<String>,
+    draft_key: Option<String>,
 ) -> Reply<Message> {
     let mut draft = s.muse_attachment.lock().unwrap();
     let attachment = attachment_id
@@ -487,6 +489,8 @@ async fn start_chat(
     } else {
         None
     };
+    let sent_content = input.content.clone();
+    let consume = !input.retry;
     let result = s
         .engine
         .start_with_coding_tools(
@@ -506,6 +510,11 @@ async fn start_chat(
         .map_err(error)?;
     if let Some(id) = attachment_id {
         draft.remove(&id);
+    }
+    if consume && let Some(key) = draft_key {
+        let store = s.engine.store.lock().unwrap();
+        let _ = store.consume_composer_draft(&key, &sent_content);
+        let _ = store.consume_composer_draft(&result.chat_id, &sent_content);
     }
     Ok(result)
 }
@@ -627,6 +636,8 @@ fn main() {
             linked_projects::unlink_project,
             coding_tools::confirm_coding_action,
             coding_tools::coding_activity,
+            drafts::composer_draft,
+            drafts::save_composer_draft,
             file_history::file_changes,
             file_history::undo_file_changes,
             file_edits::file_edit_mode,
