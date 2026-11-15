@@ -135,6 +135,9 @@ export const mockBackend: Backend = {
   async invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
     let result: unknown;
     switch (command) {
+      case 'context_summary': result = null; break;
+      case 'clear_context_summary': break;
+      case 'compact_context': throw new Error('Context compaction requires a connected model in the native app.');
       case 'composer_draft': result = composerDrafts.get(String(args.chatId ?? 'new')) ?? { content: '', attachments: [], editing: null }; break;
       case 'save_composer_draft': {
         const draft = args.draft as { content: string };

@@ -2,15 +2,17 @@ import { useEffect, useState } from 'react';
 import { backend } from './backend';
 import { Dialog } from './dialogs';
 import { ContextSelector } from './ContextSelector';
+import { ContextSummary } from './ContextSummary';
 import type { ContextLimit, ContextSelection } from './types';
 import './usage.css';
 
 type Preview = { selection: ContextSelection; estimatedTokens: number; capacity: number | null; omittedMessages: number; draftExceedsLimit: boolean };
 
-export function ContextMeter({ draftContext, contextRevision, onLimit, chatId, providerId, modelId, draft, revision, busy }: {
-  draftContext: ContextLimit | null; contextRevision: number; onLimit: (limit: ContextLimit | null) => Promise<void>; chatId: string | null; providerId: string; modelId: string; draft: string; revision: number; busy: boolean;
+export function ContextMeter({ draftContext, contextRevision, onLimit, onCompacting, chatId, providerId, modelId, draft, revision, busy }: {
+  draftContext: ContextLimit | null; contextRevision: number; onLimit: (limit: ContextLimit | null) => Promise<void>; onCompacting: (chatId: string | null) => void; chatId: string | null; providerId: string; modelId: string; draft: string; revision: number; busy: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [summaryRevision, setSummaryRevision] = useState(0);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState('');
   useEffect(() => { setPreview(null); setError(''); }, [chatId, providerId, modelId]);
@@ -23,7 +25,7 @@ export function ContextMeter({ draftContext, contextRevision, onLimit, chatId, p
         .catch(reason => { if (active) { setPreview(null); setError(String(reason)); } });
     }, 450);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [chatId, providerId, modelId, draft, revision, busy, draftContext, contextRevision]);
+  }, [chatId, providerId, modelId, draft, revision, busy, draftContext, contextRevision, summaryRevision]);
   const percent = preview?.capacity ? Math.min(100, Math.round(preview.estimatedTokens / preview.capacity * 100)) : null;
   return <>
     <button type="button" className="context-meter" aria-label="Context and tokens" onClick={() => setOpen(true)}>
@@ -39,6 +41,7 @@ export function ContextMeter({ draftContext, contextRevision, onLimit, chatId, p
         {preview.draftExceedsLimit && <p className="context-omission" role="alert">This draft exceeds the configured context limit.</p>}
         {preview.omittedMessages > 0 && <p className="context-omission">{preview.omittedMessages} older {preview.omittedMessages === 1 ? 'message' : 'messages'} omitted</p>}
         <ContextSelector selection={preview.selection} busy={busy} onChange={onLimit} />
+        {chatId && <ContextSummary key={chatId} chatId={chatId} providerId={providerId} modelId={modelId} busy={busy} onPending={onCompacting} onChanged={() => setSummaryRevision(value => value + 1)} />}
       </> : <p role="status">Preparing context…</p>}
     </Dialog>}
   </>;

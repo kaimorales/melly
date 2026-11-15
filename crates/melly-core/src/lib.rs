@@ -2,6 +2,7 @@ pub mod auth;
 pub mod auth_namespace;
 pub mod coding;
 pub mod coding_resume;
+pub mod compaction;
 pub mod context;
 pub mod credentials;
 pub mod drafts;

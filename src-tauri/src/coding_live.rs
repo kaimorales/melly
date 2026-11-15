@@ -214,3 +214,72 @@ async fn local_model_repairs_and_checks_a_disposable_project_with_native_tools()
     );
     Ok(())
 }
+
+#[tokio::test]
+#[ignore = "Requires an explicitly configured local model server; synthetic data only"]
+async fn local_model_compacts_synthetic_constraints_without_losing_history() -> Result<()> {
+    let base = std::env::var("MELLY_LIVE_BASE_URL")?;
+    ensure!(
+        providers::compatible::local(&providers::compatible::parse_base(&base)?),
+        "Use localhost"
+    );
+    let model = std::env::var("MELLY_LIVE_MODEL")?;
+    let store = Store::memory()?;
+    let chat = store.create_chat(None)?;
+    let messages = [
+        "Goal: repair an offline report generator. User constraint: keep the exact report key violet-482. Never rename it.",
+        "Decision: preserve that key and use existing JSON fixtures.",
+        "Completed: changed parser.py to accept blank lines. A regression test passed.",
+        "Recorded: blank-line regression passed; broader checks remain pending.",
+        "Pending: handle negative quantities in report.py. Do not claim this part is done.",
+        "Plan: inspect report.py, add the failing case, implement the fix, and rerun checks.",
+        "Keep all files inside the linked project and ask before deleting anything.",
+        "Understood. The next task is still pending.",
+        "Latest question: what should we check next?",
+        "We should read the quantity handling.",
+        "Latest instruction: preserve this exchange verbatim.",
+        "Ready for the next step.",
+    ];
+    for (i, text) in messages.iter().enumerate() {
+        store.insert_message(
+            &chat.id,
+            if i % 2 == 0 { "user" } else { "assistant" },
+            text,
+            "complete",
+            None,
+            None,
+            None,
+        )?;
+    }
+    let provider = "compatible:00000000-0000-4000-8000-000000000001";
+    store.save_compatible_connection(CompatibleConnection {
+        id: provider.into(),
+        name: "Local summary fixture".into(),
+        base_url: base,
+        text_tool_calls: false,
+        models: vec![ModelInfo {
+            id: model.clone(),
+            name: model.clone(),
+            context_window: Some(32768),
+            default_context_window: Some(32768),
+        }],
+    })?;
+    let engine = Arc::new(Engine::new(
+        Arc::new(Mutex::new(store)),
+        Arc::new(MemorySecrets::default()),
+    ));
+    let summary = engine.compact_context(&chat.id, provider, &model).await?;
+    ensure!(
+        summary.text.contains("violet-482")
+            && summary.text.contains("report.py")
+            && summary.text.to_lowercase().contains("pending"),
+        "Summary omitted a required synthetic fact"
+    );
+    let store = engine.store.lock().unwrap();
+    assert_eq!(store.messages(&chat.id, None)?.len(), 12);
+    assert_eq!(store.context(&chat.id)?.len(), 4);
+    eprintln!(
+        "Local summary retained the synthetic report key and pending task; all 12 originals remain."
+    );
+    Ok(())
+}

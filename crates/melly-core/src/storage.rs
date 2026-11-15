@@ -118,6 +118,7 @@ impl Store {
         store.initialize_file_edits()?;
         store.initialize_file_history()?;
         store.initialize_coding_resume()?;
+        store.initialize_compaction()?;
         store.initialize_drafts()?;
         Ok(store)
     }
@@ -304,24 +305,18 @@ impl Store {
     pub fn context(&self, chat_id: &str) -> Result<Vec<WireMessage>> {
         self.context_with_budget(chat_id, 60_000)
     }
-    pub(crate) fn completed_message_count(&self, chat_id: &str) -> Result<usize> {
-        Ok(self.conn.query_row(
-            "SELECT count(*) FROM messages WHERE chat_id=?1 AND status='complete'",
-            [chat_id],
-            |row| row.get(0),
-        )?)
-    }
     pub(crate) fn context_with_budget(
         &self,
         chat_id: &str,
         mut budget: usize,
     ) -> Result<Vec<WireMessage>> {
         let messages = self.messages(chat_id, None)?;
+        let through = self.context_summary(chat_id)?.map_or(0, |s| s.through);
         let mut wire = Vec::new();
         for m in messages
             .into_iter()
             .rev()
-            .filter(|m| m.status == "complete")
+            .filter(|m| m.status == "complete" && m.created_at > through)
         {
             let n = m.content.len();
             if n > budget {

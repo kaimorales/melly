@@ -14,3 +14,8 @@
 .context-choice { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--secondary); }
 .context-choice select, .context-custom input { min-width: 0; max-width: 65%; border: 1px solid var(--rule); border-radius: 6px; padding: 5px 7px; background: var(--panel); color: var(--ink); font: inherit; }
 .context-custom { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 8px; }
+.context-summary { margin-top: 14px; font-size: 12px; color: var(--secondary); }
+.context-summary-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.context-summary details { margin-top: 12px; }
+.context-summary summary { cursor: pointer; }
+.context-summary pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; font: inherit; line-height: 1.6; color: var(--ink); }

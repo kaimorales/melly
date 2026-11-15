@@ -2,6 +2,7 @@
 mod attachments;
 mod coding_tests;
 mod coding_tools;
+mod compaction;
 mod drafts;
 mod file_edits;
 mod file_history;
@@ -642,6 +643,9 @@ fn main() {
             linked_projects::unlink_project,
             coding_tools::confirm_coding_action,
             coding_tools::coding_activity,
+            compaction::context_summary,
+            compaction::compact_context,
+            compaction::clear_context_summary,
             drafts::composer_draft,
             drafts::save_composer_draft,
             file_history::file_changes,

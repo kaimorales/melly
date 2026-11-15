@@ -101,6 +101,7 @@ export default function App() {
   const [draftModel, setDraftModel] = useState<ChatModel | null>(null);
   const [draftContext, setDraftContext] = useState<ContextLimit | null>(null);
   const [contextRevision, setContextRevision] = useState(0);
+  const [compactingChat, setCompactingChat] = useState<string | null>(null);
   const savingContext = useRef(false);
   const [searchOpen, setSearchOpen] = useState(false); const [nameAction, setNameAction] = useState<NameAction | null>(null); const [deleteTarget, setDeleteTarget] = useState<Chat | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null); const jump = useRef<{ chatId: string; messageId: string } | null>(null);
@@ -342,7 +343,7 @@ export default function App() {
   const compatible = data?.compatibleConnections || [];
   const namedConnection = compatible.find(item => item.id === provider?.id);
   const displayModel = namedConnection?.models.find(item => item.id === model)?.name || (provider ? modelLabel(provider, model) : '');
-  const activeRun = !!selectedId && running.has(selectedId);
+  const activeRun = !!selectedId && (running.has(selectedId) || compactingChat === selectedId);
   const explicitFolder = requestsFolderContext(draft);
   const canUseFolderContext = !!provider && (linked || provider.tools);
   const folderContext = !!selectedFolder && canUseFolderContext && (manualFolder === true || (explicitFolder && manualFolder !== false));
@@ -555,7 +556,7 @@ export default function App() {
                 <span className="provider-divider" aria-hidden="true" />
                 <button ref={modelButton} type="button" className="model-picker-trigger" aria-label="Choose model" title="Choose model" aria-expanded={picker === 'models'} aria-haspopup="listbox" onClick={() => setPicker(picker === 'models' ? null : 'models')}><span className="model-name">{displayModel}</span><span className="divider" /><span className="route">{routeLabel(provider)}</span><Icon name="down" /></button>
               </div> : <button ref={providerButton} type="button" className="button" onClick={() => { if (connectedProviders.length) setPicker('providers'); else setView('settings'); }}>{connectedProviders.length ? 'Choose provider' : 'Connect provider'}</button>}
-              {provider && <ContextMeter draftContext={draftContext} contextRevision={contextRevision} onLimit={chooseContext} chatId={selectedId} providerId={provider.id} modelId={model} draft={draft} revision={selectedChat?.updatedAt || 0} busy={activeRun || starting || pickingAttachment} />}
+              {provider && <ContextMeter onCompacting={setCompactingChat} draftContext={draftContext} contextRevision={contextRevision} onLimit={chooseContext} chatId={selectedId} providerId={provider.id} modelId={model} draft={draft} revision={selectedChat?.updatedAt || 0} busy={activeRun || starting || pickingAttachment} />}
               {activeRun ? <button type="button" className="round-control stop" aria-label="Stop response" title="Stop response" onClick={() => { if (selectedId) void backend.invoke('stop_chat', { chatId: selectedId }).catch((reason) => setNotice(errorText(reason))); }}><span className="stop-square" /></button> : <button type="submit" className="round-control send" aria-label="Send message" disabled={!composer.ready || !draft.trim() || starting || pickingAttachment || !sendAvailable}><Icon name="up" /></button>}
             </div>
           </form>

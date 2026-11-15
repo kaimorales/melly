@@ -103,3 +103,7 @@ Coding tools read, edit, create, and undo UTF-8 files up to 1 MiB. Search traver
 ## Native coding functions
 
 Tool-capable provider routes receive six named project functions. Rust validates arguments, derives scope from the chat, and executes calls serially through the same Ask/Auto-apply, revision, undo, and sandbox boundaries. Up to 16 operations/rounds are allowed per coding reply. Native IDs and signed provider continuation data remain intact; tool output is returned as untrusted data. Named compatible connections default to native functions, with an explicit **Compatibility → Tool calls → Text fallback** setting for servers without function calling. Text-only routes continue to use the existing bounded proposal parser. Errors never change endpoints or billing routes.
+
+## Explicit context compaction
+
+The context ring offers **Compact context**. It uses only the currently selected provider/model, with tools and web disabled, to summarize older conversation into bounded task notes. At most eight sequential model requests are admitted; Stop or failure leaves the prior context unchanged. The newest four messages stay verbatim. Summaries retain a durable prefix boundary; ordinary context selection omits only that prefix and includes its notes. All original messages, attachments, and undo records remain untouched. **Task notes** exposes the actual summary and **Undo compaction** restores normal history selection. Summaries are references, not instructions, and are excluded from exports; originals are exported normally.
