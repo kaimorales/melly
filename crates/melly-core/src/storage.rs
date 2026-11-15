@@ -114,7 +114,9 @@ impl Store {
             CREATE TABLE IF NOT EXISTS chat_context_limits(chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE, tokens INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS chat_models(chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE, provider_id TEXT NOT NULL, model_id TEXT NOT NULL);
             UPDATE messages SET status='interrupted' WHERE status='streaming'; PRAGMA user_version=1;")?;
-        Ok(Self { conn })
+        let store = Self { conn };
+        store.initialize_file_edits()?;
+        Ok(store)
     }
     fn timestamp(&self) -> Result<i64> {
         let last: i64 = self.conn.query_row(

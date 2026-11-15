@@ -66,3 +66,12 @@ characters and can differ from the server's tokenizer, chat template and tool
 overhead. A context limit reserves space for generation and constrains the
 history Melly sends. It describes the connected model and does not increase a
 server's own context window.
+
+## File edits in linked chats
+
+Use a folder’s menu to link a local directory. Enabling Project context shares bounded contents of explicitly named paths with the selected provider. Rust binds a file proposal to the linked directory of the originating chat and allows one UTF-8 file per reply.
+
+- `project_link(folderId)`, `link_project_directory(folderId)`, and `unlink_project(folderId)` manage the link. AppKit supplies the path.
+- `file_edit_mode(chatId)` returns null without a linked folder, false for Ask, or true for Auto-apply. `set_file_edit_mode(chatId, automatic)` changes the current chat's mode for the app session.
+- `review_file_edit(chatId, messageId)` returns a compact diff and a ticket. `apply_file_edit(messageId, ticket)` revalidates the workspace and file content before writing.
+- `applied_file_edit(chatId, messageId)` returns the saved diff. Auto-apply performs the same scoped checks on a completed reply before recording its diff.

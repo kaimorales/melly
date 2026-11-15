@@ -1,0 +1,19 @@
+.file-edit-card { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; color: var(--secondary); }
+.file-edit-card .button { display: inline-flex; align-items: center; gap: 6px; }
+.file-edit-card .icon { width: 15px; height: 15px; }
+.file-edit-card code { overflow-wrap: anywhere; }
+.file-edit-card.file-edit-review { display: grid; gap: 10px; border: 1px solid var(--rule); border-radius: 10px; padding: 12px; }
+.file-edit-review header { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--ink); }
+.file-edit-diff { margin: 0; max-height: 24vh; overflow: auto; padding: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; color: var(--ink); background: var(--panel); border-radius: 6px; font-size: 12px; }
+.file-edit-diff span { display: inline-block; min-width: 100%; padding: 0 10px; }
+.file-edit-diff [data-change="added"] { background: #33a56827; }
+.file-edit-diff [data-change="removed"] { background: #d9575727; }
+.file-edit-saved { display: block; }
+.file-edit-saved summary { cursor: pointer; display: flex; align-items: center; gap: 7px; width: fit-content; }
+.file-edit-saved[open] summary { margin-bottom: 8px; }
+.file-edit-saved[open] summary .icon:last-child { transform: rotate(90deg); }
+.file-edit-mode { display: inline-flex; align-items: center; gap: 4px; margin-right: auto; color: var(--secondary); white-space: nowrap; }
+.file-edit-mode .icon { width: 14px; height: 14px; }
+.file-edit-mode select { border: 0; color: inherit; background: transparent; font-size: 12px; max-width: 104px; }
+.file-edit-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.file-edit-error { color: var(--danger); font-size: 12px; }

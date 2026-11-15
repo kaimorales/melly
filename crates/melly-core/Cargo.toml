@@ -27,3 +27,6 @@ core-foundation = "0.10"
 [dev-dependencies]
 tempfile = "3"
 ring = "0.17"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

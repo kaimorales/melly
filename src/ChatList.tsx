@@ -9,10 +9,11 @@ type Props = {
   chats: Chat[]; folders: Folder[]; selectedId: string | null; busy: Set<string>;
   onSelect: (chat: Chat) => void; onMove: (chat: Chat, folderId: string | null) => void;
   onDelete: (chat: Chat) => void; onRename: (chat: Chat) => void;
+  onLocalFolder?: (folder: Folder, unlink: boolean) => void;
   onNewChat: (folderId: string) => void; onNewFolder: () => void; onRenameFolder: (folder: Folder) => void;
 };
 
-export function ChatList({ chats, folders, selectedId, busy, onSelect, onMove, onDelete, onRename, onNewChat, onNewFolder, onRenameFolder }: Props) {
+export function ChatList({ chats, folders, selectedId, busy, onSelect, onMove, onDelete, onRename, onNewChat, onNewFolder, onRenameFolder, onLocalFolder }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [folderMenu, setFolderMenu] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ id: string; anchor: HTMLElement; point?: { x: number; y: number } } | null>(null);
@@ -45,7 +46,10 @@ export function ChatList({ chats, folders, selectedId, busy, onSelect, onMove, o
         <Icon name={collapsed.has(folder.id) ? 'chevron' : 'down'} className="chevron" /><Icon name="folder" className="folder-icon" /><span>{folder.title}</span>
       </button>
       <button className="icon-button folder-options" aria-label={`Folder options for ${folder.title}`} onClick={() => { setMenu(null); setFolderMenu(folderMenu === folder.id ? null : folder.id); }}><Icon name="more" className="small" /></button>
-      {folderMenu === folder.id && <div className="menu folder-menu" role="menu"><button role="menuitem" className="menu-item" onClick={() => { setFolderMenu(null); onNewChat(folder.id); }}>New chat in folder</button><button role="menuitem" className="menu-item" onClick={() => { setFolderMenu(null); onRenameFolder(folder); }}>Rename folder</button></div>}
+      {folderMenu === folder.id && <div className="menu folder-menu" role="menu"><button role="menuitem" className="menu-item" onClick={() => { setFolderMenu(null); onNewChat(folder.id); }}>New chat in folder</button><button role="menuitem" className="menu-item" onClick={() => { setFolderMenu(null); onRenameFolder(folder); }}>Rename folder</button>{onLocalFolder && <>
+        <button role="menuitem" className="menu-item" onClick={() => { setFolderMenu(null); onLocalFolder(folder, false); }}>Link local folder…</button>
+        <button role="menuitem" className="menu-item" onClick={() => { setFolderMenu(null); onLocalFolder(folder, true); }}>Unlink local folder</button>
+      </>}</div>}
       {!collapsed.has(folder.id) && chats.filter((chat) => chat.folderId === folder.id).map((chat) => row(chat, true))}
     </div>)}
     <div className="recent-group" role="group" aria-label="Recent chats" data-drop-folder="" data-drop-active={destination === ''}>

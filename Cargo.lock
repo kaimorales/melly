@@ -2221,6 +2221,7 @@ dependencies = [
  "core-foundation",
  "futures-util",
  "jsonwebtoken",
+ "libc",
  "rand 0.8.8",
  "reqwest 0.12.28",
  "ring",
@@ -2241,6 +2242,7 @@ name = "melly-desktop"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "block",
  "cocoa",
  "libc",
  "melly-core",

@@ -35,12 +35,7 @@ pub async fn pick_muse_attachment(
     app: tauri::AppHandle,
     s: State<'_, AppState>,
 ) -> Reply<Option<PickedAttachment>> {
-    let (send, receive) = tokio::sync::oneshot::channel();
-    app.run_on_main_thread(move || {
-        let _ = send.send(pick_file());
-    })
-    .map_err(|_| "Could not open the file picker")?;
-    let Some(path) = receive.await.map_err(|_| "File picker closed")? else {
+    let Some(path) = pick_path(&app, false).await? else {
         return Ok(None);
     };
     let attachment = tokio::task::spawn_blocking(move || read_selected_text(&path))
@@ -58,43 +53,95 @@ pub async fn remove_muse_attachment(s: State<'_, AppState>, id: String) -> Reply
     Ok(())
 }
 
+pub(crate) async fn pick_path(app: &tauri::AppHandle, directory: bool) -> Reply<Option<PathBuf>> {
+    let (send, receive) = tokio::sync::oneshot::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || begin_picker(&handle, directory, send))
+        .map_err(|_| "Could not open the file picker")?;
+    receive.await.map_err(|_| "File picker closed")?
+}
+
 #[cfg(target_os = "macos")]
-fn pick_file() -> Option<PathBuf> {
+fn begin_picker(
+    app: &tauri::AppHandle,
+    directory: bool,
+    send: tokio::sync::oneshot::Sender<Reply<Option<PathBuf>>>,
+) {
     use cocoa::{
-        base::{id, nil},
+        base::{BOOL, NO, YES, id, nil},
         foundation::NSAutoreleasePool,
     };
     use objc::{class, msg_send, sel, sel_impl};
-    use std::{ffi::CStr, os::unix::ffi::OsStrExt};
-    // AppKit owns the panel. Only its selection can reach the file reader.
+    use std::{cell::RefCell, ffi::CStr, os::unix::ffi::OsStrExt};
+    use tauri::Manager;
+    // An asynchronous sheet leaves Tauri's main event loop free while AppKit owns selection.
+    // Never nest runModal inside a Tauri main-thread dispatch.
     unsafe {
         let pool = NSAutoreleasePool::new(nil);
-        let panel: id = msg_send![class!(NSOpenPanel), openPanel];
-        let _: () = msg_send![panel, setCanChooseDirectories: false];
-        let _: () = msg_send![panel, setAllowsMultipleSelection: false];
-        let _: () = msg_send![panel, setResolvesAliases: false];
-        let answer: isize = msg_send![panel, runModal];
-        let mut selected = None;
-        if answer == 1 {
-            let url: id = msg_send![panel, URL];
-            let file: bool = msg_send![url, isFileURL];
-            if file {
-                let path: *const std::ffi::c_char = msg_send![url, fileSystemRepresentation];
-                if !path.is_null() {
-                    selected = Some(PathBuf::from(std::ffi::OsStr::from_bytes(
-                        CStr::from_ptr(path).to_bytes(),
-                    )));
+        let panel: id = msg_send![class!(NSOpenPanel), new];
+        let window = app
+            .get_webview_window("main")
+            .and_then(|window| window.ns_window().ok());
+        let Some(window) = window else {
+            let _ = send.send(Err("The main window is unavailable".into()));
+            let _: () = msg_send![panel, release];
+            pool.drain();
+            return;
+        };
+        let directories: BOOL = if directory { YES } else { NO };
+        let files: BOOL = if directory { NO } else { YES };
+        let _: () = msg_send![panel, setCanChooseDirectories: directories];
+        let _: () = msg_send![panel, setCanChooseFiles: files];
+        let _: () = msg_send![panel, setAllowsMultipleSelection: NO];
+        let _: () = msg_send![panel, setResolvesAliases: NO];
+        // File validation belongs to the bounded Rust importer. Clear any
+        // remembered panel type restriction before showing a new selection.
+        let _: () = msg_send![panel, setAllowedFileTypes: nil];
+        let _: () = msg_send![panel, setAllowsOtherFileTypes: YES];
+        let actual_files: BOOL = msg_send![panel, canChooseFiles];
+        let actual_directories: BOOL = msg_send![panel, canChooseDirectories];
+        if actual_files != files || actual_directories != directories {
+            let _ = send.send(Err("Could not configure file selection".into()));
+            let _: () = msg_send![panel, release];
+            pool.drain();
+            return;
+        }
+        let sender = RefCell::new(Some(send));
+        let completion = block::ConcreteBlock::new(move |answer: isize| {
+            let mut selected = None;
+            if answer == 1 {
+                let url: id = msg_send![panel, URL];
+                let file: bool = msg_send![url, isFileURL];
+                if file {
+                    let path: *const std::ffi::c_char = msg_send![url, fileSystemRepresentation];
+                    if !path.is_null() {
+                        selected = Some(PathBuf::from(std::ffi::OsStr::from_bytes(
+                            CStr::from_ptr(path).to_bytes(),
+                        )));
+                    }
                 }
             }
-        }
+            let _: () = msg_send![panel, orderOut:nil];
+            if let Some(sender) = sender.borrow_mut().take() {
+                let _ = sender.send(Ok(selected));
+            }
+            // Defer the owning release until AppKit finishes invoking this completion.
+            let _: id = msg_send![panel, autorelease];
+        })
+        .copy();
+        let _: () =
+            msg_send![panel, beginSheetModalForWindow:window as id completionHandler:&*completion];
         pool.drain();
-        selected
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn pick_file() -> Option<PathBuf> {
-    None
+fn begin_picker(
+    _: &tauri::AppHandle,
+    _: bool,
+    send: tokio::sync::oneshot::Sender<Reply<Option<PathBuf>>>,
+) {
+    let _ = send.send(Err("Native file selection requires macOS".into()));
 }
 
 fn read_selected_text(path: &Path) -> Reply<TextAttachment> {

@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod attachments;
+mod file_edits;
 mod inline_secret;
+mod linked_projects;
 mod login_state;
 mod secure_input;
 use melly_core::{
@@ -17,6 +19,8 @@ use tauri::{Emitter, Manager, State};
 use tokio_util::sync::CancellationToken;
 struct AppState {
     engine: Arc<Engine>,
+    file_edits: Mutex<file_edits::FileEdits>,
+    project_operations: Arc<Mutex<()>>,
     login: Mutex<login_state::LoginState>,
     plan_namespaces: Mutex<AuthNamespaces>,
     muse_attachment: Mutex<attachments::DraftAttachment>,
@@ -103,7 +107,9 @@ async fn move_chat(
 ) -> Reply<()> {
     s.engine
         .move_chat(&chat_id, folder_id.as_deref())
-        .map_err(error)
+        .map_err(error)?;
+    s.file_edits.lock().unwrap().revoke_chat(&chat_id);
+    Ok(())
 }
 #[tauri::command]
 async fn create_folder(s: State<'_, AppState>, title: String) -> Reply<Folder> {
@@ -462,13 +468,20 @@ async fn start_chat(
         .as_deref()
         .map(|id| draft.get(id))
         .transpose()?;
+    let auto_edit = s.file_edits.lock().unwrap().grant(&input.chat_id);
     let result = s
         .engine
         .start_with_attachment(
             input,
             attachment,
             Arc::new(move |update| {
-                let _ = app.emit("chat-stream", update);
+                if update.kind == "done"
+                    && let Some(grant) = &auto_edit
+                {
+                    file_edits::finish(app.clone(), update, grant.clone());
+                } else {
+                    let _ = app.emit("chat-stream", update);
+                }
             }),
         )
         .map_err(error)?;
@@ -545,6 +558,8 @@ fn main() {
                 engine,
                 login: Mutex::new(login_state::LoginState::default()),
                 plan_namespaces: Mutex::new(namespaces),
+                file_edits: Mutex::new(file_edits::FileEdits::default()),
+                project_operations: Arc::new(Mutex::new(())),
                 muse_attachment: Mutex::new(attachments::DraftAttachment::default()),
                 started,
                 startup_recorded: std::sync::atomic::AtomicBool::new(false),
@@ -587,6 +602,14 @@ fn main() {
             remove_search_key,
             connect_chatgpt,
             disconnect_chatgpt,
+            linked_projects::project_link,
+            linked_projects::link_project_directory,
+            linked_projects::unlink_project,
+            file_edits::file_edit_mode,
+            file_edits::set_file_edit_mode,
+            file_edits::applied_file_edit,
+            file_edits::review_file_edit,
+            file_edits::apply_file_edit,
             attachments::pick_muse_attachment,
             attachments::remove_muse_attachment,
             models,
