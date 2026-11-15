@@ -21,7 +21,7 @@ Native secret input: `src-tauri/src/inline_secret.rs` positions an AppKit secure
 
 ## Frontend / Tauri commands
 - `bootstrap()` -> Bootstrap
-- `create_chat(folderId: string|null)` -> Chat
+- `create_chat(folderId: string|null, preferredId?)` → Chat. Reuses an empty chat in the requested folder, preferring the currently selected chat.
 - `chat(chatId)` -> Chat (one ID lookup for source navigation, independent of title/recent-list limits)
 - `rename_chat(chatId,title)`, `delete_chat(chatId)`, `move_chat(chatId,folderId)` -> void
 - `create_folder(title)` -> Folder; `rename_folder(folderId,title)` -> void

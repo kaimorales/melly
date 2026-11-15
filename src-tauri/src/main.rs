@@ -66,12 +66,16 @@ async fn bootstrap(s: State<'_, AppState>) -> Reply<Bootstrap> {
     Ok(bootstrap)
 }
 #[tauri::command]
-async fn create_chat(s: State<'_, AppState>, folder_id: Option<String>) -> Reply<Chat> {
+async fn create_chat(
+    s: State<'_, AppState>,
+    folder_id: Option<String>,
+    preferred_id: Option<String>,
+) -> Reply<Chat> {
     s.engine
         .store
         .lock()
         .unwrap()
-        .create_chat(folder_id.as_deref())
+        .open_new_chat(folder_id.as_deref(), preferred_id.as_deref())
         .map_err(error)
 }
 #[tauri::command]

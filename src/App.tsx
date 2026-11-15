@@ -273,7 +273,19 @@ export default function App() {
     setView('chat'); setHighlight(null); setNotice(''); followBottom.current = true;
     if (window.innerWidth <= 600) setSidebar(false);
   };
-  const createChat = async (folderId: string | null = null, preserveAttachment = false) => { const chat = await backend.invoke<Chat>('create_chat', { folderId }); await refresh(); selectChat(chat, preserveAttachment); setDraft(''); requestAnimationFrame(() => textarea.current?.focus()); return chat; };
+  const createChat = async (folderId: string | null = null, preserveAttachment = false) => {
+    const preferredId = selectedRef.current;
+    const chat = await backend.invoke<Chat>('create_chat', { folderId, preferredId });
+    await refresh();
+    if (chat.id === selectedRef.current) {
+      setView('chat');
+    } else {
+      selectChat(chat, preserveAttachment);
+      if (!preserveAttachment) setDraft('');
+    }
+    requestAnimationFrame(() => textarea.current?.focus());
+    return chat;
+  };
   const seed = async () => { const fresh = await backend.invoke<Bootstrap>('demo_seed'); setData(fresh); const chat = fresh.chats.find((entry) => entry.title === 'Interview prep') || fresh.chats[0]; if (chat) selectChat(chat); setWebSearch(true); };
   const saveSettings = async (settings: Settings) => { await backend.invoke('save_settings', { settings }); await refresh(); };
   const chooseContext = async (limit: ContextLimit | null) => {

@@ -164,6 +164,20 @@ impl Store {
         Ok(s.query_map([], row_chat)?
             .collect::<rusqlite::Result<_>>()?)
     }
+    pub fn open_new_chat(&self, folder: Option<&str>, preferred: Option<&str>) -> Result<Chat> {
+        let existing = self
+            .conn
+            .query_row(
+                "SELECT id,title,folder_id,updated_at FROM chats
+             WHERE folder_id IS ?1 AND (title='New chat' OR id=?2)
+               AND NOT EXISTS(SELECT 1 FROM messages WHERE chat_id=chats.id)
+             ORDER BY (id=?2) DESC, updated_at DESC, chats.rowid DESC LIMIT 1",
+                params![folder, preferred],
+                row_chat,
+            )
+            .optional()?;
+        existing.map_or_else(|| self.create_chat(folder), Ok)
+    }
     pub fn create_chat(&self, folder: Option<&str>) -> Result<Chat> {
         let c = Chat {
             id: Uuid::new_v4().to_string(),

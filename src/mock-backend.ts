@@ -152,7 +152,13 @@ export const mockBackend: Backend = {
         break;
       }
       case 'chat': result = copy(chats.find((chat) => chat.id === args.chatId) || null); break;
-      case 'create_chat': result = copy(newChat(args.folderId as string | null)); break;
+      case 'create_chat': {
+        const folderId = (args.folderId as string | null) ?? null;
+        const empty = chats.filter(chat => chat.folderId === folderId && !messages.some(message => message.chatId === chat.id));
+        const existing = empty.find(chat => chat.id === args.preferredId) ?? empty.filter(chat => chat.title === 'New chat').at(-1);
+        result = copy(existing ?? newChat(folderId));
+        break;
+      }
       case 'rename_chat': findChat(args.chatId as string).title = String(args.title).trim(); break;
       case 'delete_chat': {
         const chatId = args.chatId as string; if (runs.has(chatId)) throw new Error('Stop this reply before deleting the chat');
