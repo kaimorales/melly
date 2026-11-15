@@ -121,9 +121,14 @@ mod macos {
                     entries.push((name.to_owned(), entry.d_type == libc::DT_DIR));
                 }
             }
+            let more = !unsafe { libc::readdir(directory) }.is_null();
             unsafe {
                 libc::closedir(directory);
             }
+            ensure!(
+                !more,
+                "Too many directory entries. Search a narrower project subdirectory."
+            );
             entries.sort_unstable();
             Ok(entries)
         }

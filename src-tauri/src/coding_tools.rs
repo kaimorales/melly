@@ -14,11 +14,7 @@ use melly_core::{
 };
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{collections::HashMap, path::Path, time::Duration};
 use tauri::{Emitter, Manager, State};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -245,18 +241,41 @@ impl CodingTools for ProjectTools {
                 return Ok(result);
             }
         }
-        if let Call::SearchRepo { query } = call {
+        if let Call::SearchRepo {
+            query,
+            path,
+            cursor,
+        } = call
+        {
             let workspace = self.workspace.clone();
             self.emit(chat, message, "tool", "Searching project files".into());
-            return tokio::task::spawn_blocking(move || search(&workspace, &query, &cancel))
-                .await?;
+            return tokio::task::spawn_blocking(move || {
+                search(
+                    &workspace,
+                    &query,
+                    path.as_deref(),
+                    cursor.as_deref(),
+                    &cancel,
+                )
+            })
+            .await?;
         }
-        if let Call::ReadFile { path, start_line } = call {
+        if let Call::ReadFile {
+            path,
+            start_line,
+            start_column,
+        } = call
+        {
             let workspace = self.workspace.clone();
             self.emit(chat, message, "tool", "Reading project file".into());
             let selected = path.clone();
             let (result, revision) = tokio::task::spawn_blocking(move || {
-                read(&workspace, &selected, start_line.unwrap_or(1))
+                read(
+                    &workspace,
+                    &selected,
+                    start_line.unwrap_or(1),
+                    start_column.unwrap_or(1),
+                )
             })
             .await??;
             self.reads.lock().unwrap().insert(path, revision);
@@ -428,101 +447,198 @@ fn relative(path: &str) -> Result<&Path> {
     Ok(path)
 }
 
-fn read(workspace: &ProjectLink, path: &str, start_line: usize) -> Result<(Value, String)> {
+fn read(
+    workspace: &ProjectLink,
+    path: &str,
+    start_line: usize,
+    start_column: usize,
+) -> Result<(Value, String)> {
     let relative = relative(path)?;
-    ensure!(start_line > 0, "Lines are numbered from 1");
+    ensure!(
+        start_line > 0 && start_column > 0,
+        "Lines and columns are numbered from 1"
+    );
     let bytes = linked::read_scoped_with_limit(
         &workspace.path,
         Some((workspace.device, workspace.inode)),
         relative,
-        1024 * 1024,
+        MAX_FILE_BYTES as u64,
     )?;
     let text = String::from_utf8(bytes).context("Choose a UTF-8 text file")?;
     ensure!(!text.contains('\0'), "Choose a text file");
-    let mut lines = text
+    let offset = text
         .split_inclusive('\n')
-        .enumerate()
-        .skip(start_line - 1)
-        .peekable();
-    let mut content = String::new();
-    let mut next_line = None;
-    for (index, line) in lines.by_ref() {
-        if content.len() + line.len() > 12_000 || index + 1 >= start_line.saturating_add(160) {
-            if content.is_empty() {
-                content.push_str(&line[..line.floor_char_boundary(12_000)]);
-            }
-            next_line = Some(index + if index + 1 == start_line { 2 } else { 1 });
-            break;
+        .take(start_line - 1)
+        .map(str::len)
+        .sum::<usize>();
+    let rest = &text[offset..];
+    let first = rest.split_inclusive('\n').next().unwrap_or("");
+    let column_offset = if start_column == 1 {
+        0
+    } else {
+        first
+            .char_indices()
+            .nth(start_column - 1)
+            .map(|(i, _)| i)
+            .context("Column is outside this line")?
+    };
+    let rest = &rest[column_offset..];
+    let line_bound = rest
+        .split_inclusive('\n')
+        .take(160)
+        .map(str::len)
+        .sum::<usize>();
+    let end = rest.floor_char_boundary(line_bound.min(12_000));
+    let content = &rest[..end];
+    let more = end < rest.len();
+    let lines = content.bytes().filter(|b| *b == b'\n').count();
+    let next_line = more.then_some(start_line + lines);
+    let next_column = more.then(|| {
+        if lines > 0 {
+            content.rsplit('\n').next().unwrap_or("").chars().count() + 1
+        } else {
+            start_column + content.chars().count()
         }
-        content.push_str(line);
-    }
+    });
     Ok((
-        json!({"path":path,"text":content,"start_line":start_line,"next_line":next_line}),
+        json!({"path":path,"text":content,"start_line":start_line,"start_column":start_column,"next_line":next_line,"next_column":next_column}),
         linked::revision(text.as_bytes()),
     ))
 }
 
-fn search(workspace: &ProjectLink, query: &str, cancel: &CancellationToken) -> Result<Value> {
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SearchCursor {
+    query: String,
+    scope: String,
+    path: String,
+    line: usize,
+}
+
+fn search(
+    workspace: &ProjectLink,
+    query: &str,
+    scope: Option<&str>,
+    cursor: Option<&str>,
+    cancel: &CancellationToken,
+) -> Result<Value> {
     let query = query.trim().to_lowercase();
     ensure!(
         !query.is_empty() && query.len() <= 160,
         "Enter a search term up to 160 bytes"
     );
+    let scope = scope.unwrap_or("");
+    let selected = if scope.is_empty() {
+        Path::new("")
+    } else {
+        relative(scope)?
+    };
+    let cursor: Option<SearchCursor> = cursor
+        .map(|s| -> Result<_> {
+            ensure!(s.len() <= 3000, "Invalid search cursor");
+            let c: SearchCursor = serde_json::from_str(s)?;
+            ensure!(
+                c.query == query && c.scope == scope,
+                "Continue with the same query and path"
+            );
+            relative(&c.path)?;
+            Ok(c)
+        })
+        .transpose()?;
     let identity = (workspace.device, workspace.inode);
-    let mut queue = vec![PathBuf::new()];
-    let mut inspected = 0;
-    let mut hits = Vec::new();
+    let mut queue = vec![selected.to_owned()];
+    let mut files = Vec::new();
+    let mut entries = 0;
     while let Some(parent) = queue.pop() {
-        if inspected >= 1500 || hits.len() >= 15 || cancel.is_cancelled() {
-            break;
-        }
-        for (name, directory) in
-            Target::entries(&workspace.path, identity, &parent, 1500 - inspected)?
-        {
-            if hits.len() >= 15 || cancel.is_cancelled() {
-                break;
-            }
-            inspected += 1;
+        ensure!(!cancel.is_cancelled(), "Search cancelled");
+        for (name, directory) in Target::entries(&workspace.path, identity, &parent, 20_002)? {
+            entries += 1;
+            ensure!(
+                entries <= 20_000,
+                "Project search exceeds 20,000 entries. Use path to search a narrower subdirectory."
+            );
             let path = parent.join(name);
             if directory {
-                if path.components().count() < 12 {
-                    queue.push(path);
-                }
-                continue;
-            }
-            let name = path.to_string_lossy();
-            if name.to_lowercase().contains(&query) {
-                hits.push(json!({"path":name}));
-            }
-            if hits.len() >= 15 {
-                break;
-            }
-            // Read a bounded number of small files while matching content.
-            if inspected > 300 {
-                continue;
-            }
-            let Ok(bytes) =
-                linked::read_scoped_with_limit(&workspace.path, Some(identity), &path, 64 * 1024)
-            else {
-                continue;
-            };
-            let Ok(text) = String::from_utf8(bytes) else {
-                continue;
-            };
-            if text.len() > 64 * 1024 || text.contains('\0') {
-                continue;
-            }
-            for (line, item) in text.lines().enumerate() {
-                if item.to_lowercase().contains(&query) {
-                    hits.push(json!({"path":name,"line":line+1,"text":item.chars().take(200).collect::<String>()}));
-                    if hits.len() >= 15 {
-                        break;
-                    }
-                }
+                ensure!(
+                    path.components().count() < 40,
+                    "Project nesting is too deep. Search a narrower subdirectory."
+                );
+                queue.push(path);
+            } else {
+                files.push(path);
             }
         }
     }
-    Ok(json!({"matches":hits,"bounded":true,"entries_checked":inspected}))
+    files.sort_unstable_by(|a, b| a.as_os_str().cmp(b.as_os_str()));
+    let mut hits = Vec::new();
+    let mut checked = 0;
+    let mut skipped = 0;
+    let mut bytes = 0;
+    let mut next = None;
+    for path in files {
+        ensure!(!cancel.is_cancelled(), "Search cancelled");
+        let name = path.to_string_lossy().to_string();
+        if cursor.as_ref().is_some_and(|c| name < c.path) {
+            continue;
+        }
+        let start = cursor
+            .as_ref()
+            .filter(|c| c.path == name)
+            .map_or(0, |c| c.line);
+        let make_cursor = |line| {
+            serde_json::to_string(&SearchCursor {
+                query: query.clone(),
+                scope: scope.into(),
+                path: name.clone(),
+                line,
+            })
+        };
+        if checked >= 500 || bytes >= 16 * 1024 * 1024 || hits.len() >= 20 {
+            next = Some(make_cursor(start)?);
+            break;
+        }
+        checked += 1;
+        if start == 0 && name.to_lowercase().contains(&query) {
+            hits.push(json!({"path":name}));
+        }
+        if hits.len() >= 20 {
+            next = Some(make_cursor(1)?);
+            break;
+        }
+        let Ok(data) = linked::read_scoped_with_limit(
+            &workspace.path,
+            Some(identity),
+            &path,
+            MAX_FILE_BYTES as u64,
+        ) else {
+            skipped += 1;
+            continue;
+        };
+        bytes += data.len();
+        let Ok(text) = String::from_utf8(data) else {
+            skipped += 1;
+            continue;
+        };
+        if text.contains('\0') {
+            skipped += 1;
+            continue;
+        }
+        for (line, item) in text.lines().enumerate().skip(start.saturating_sub(1)) {
+            if hits.len() >= 20 {
+                next = Some(make_cursor(line + 1)?);
+                break;
+            }
+            if item.to_lowercase().contains(&query) {
+                hits.push(json!({"path":name,"line":line+1,"text":item.chars().take(240).collect::<String>()}));
+            }
+        }
+        if next.is_some() {
+            break;
+        }
+    }
+    Ok(
+        json!({"matches":hits,"next_cursor":next,"files_checked":checked,"skipped_files":skipped,"note":"Literal, case-insensitive search. Binary, excluded, unreadable, and files over 1 MiB are omitted. Results reflect current files; continue with the same query/path."}),
+    )
 }
 
 fn prepare(workspace: &ProjectLink, call: Call) -> Result<Prepared> {
@@ -551,7 +667,7 @@ fn prepare(workspace: &ProjectLink, call: Call) -> Result<Prepared> {
         );
         ensure!(
             content.len() <= MAX_FILE_BYTES && !content.contains('\0'),
-            "The new file must be UTF-8 text of 24 KiB or less"
+            "The new file must be UTF-8 text of 1 MiB or less"
         );
         Some(content)
     } else if let Some(edits) = edits {
@@ -590,13 +706,19 @@ fn project_tools_search_read_create_edit_and_delete_scoped_files() -> Result<()>
     std::os::unix::fs::symlink(&outside, scope.join("linked.txt"))?;
     std::fs::write(scope.join(".env"), "PRIVATE_NEEDLE")?;
     assert!(
-        search(&workspace, "PRIVATE_NEEDLE", &CancellationToken::new())?["matches"]
+        search(
+            &workspace,
+            "PRIVATE_NEEDLE",
+            None,
+            None,
+            &CancellationToken::new()
+        )?["matches"]
             .as_array()
             .unwrap()
             .is_empty()
     );
-    assert!(read(&workspace, "linked.txt", 1).is_err());
-    assert!(read(&workspace, "../outside.txt", 1).is_err());
+    assert!(read(&workspace, "linked.txt", 1, 1).is_err());
+    assert!(read(&workspace, "../outside.txt", 1, 1).is_err());
     let save = |call| -> Result<()> {
         let Prepared::Change {
             target, updated, ..
@@ -614,13 +736,22 @@ fn project_tools_search_read_create_edit_and_delete_scoped_files() -> Result<()>
         path: "sample.py".into(),
         content: "print(41)\n".into(),
     })?;
-    assert_eq!(read(&workspace, "sample.py", 1)?.0["text"], "print(41)\n");
+    assert_eq!(
+        read(&workspace, "sample.py", 1, 1)?.0["text"],
+        "print(41)\n"
+    );
     let edit: Call = serde_json::from_value(
         json!({"tool":"edit_file","path":"sample.py","edits":[{"old":"41","new":"42"}]}),
     )?;
     save(edit)?;
     assert_eq!(
-        search(&workspace, "print(42)", &CancellationToken::new())?["matches"][0]["path"],
+        search(
+            &workspace,
+            "print(42)",
+            None,
+            None,
+            &CancellationToken::new()
+        )?["matches"][0]["path"],
         "sample.py"
     );
     save(Call::DeleteFile {
@@ -672,5 +803,109 @@ fn a_completed_write_is_reused_without_changing_the_file_again() -> Result<()> {
     std::fs::write(&file, "user's later edit")?;
     assert!(reused_change(&link, &receipt)?.is_none());
     assert_eq!(std::fs::read_to_string(file)?, "user's later edit");
+    Ok(())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+fn searches_later_files_and_pages_large_unicode_files_without_gaps() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let store = melly_core::storage::Store::memory()?;
+    let folder = store.create_folder("Synthetic")?;
+    store.set_project_link(&folder.id, &root.path().canonicalize()?)?;
+    let workspace = store.project_link(&folder.id)?.unwrap();
+    for index in 0..520 {
+        std::fs::write(
+            root.path().join(format!("file-{index:04}.txt")),
+            if index >= 510 {
+                "buried detail"
+            } else {
+                "ordinary"
+            },
+        )?;
+    }
+    let first = search(
+        &workspace,
+        "buried detail",
+        None,
+        None,
+        &CancellationToken::new(),
+    )?;
+    assert!(first["matches"].as_array().unwrap().is_empty());
+    let next = search(
+        &workspace,
+        "buried detail",
+        None,
+        first["next_cursor"].as_str(),
+        &CancellationToken::new(),
+    )?;
+    assert_eq!(next["matches"].as_array().unwrap().len(), 10);
+    assert!(next["next_cursor"].is_null());
+    assert!(
+        search(
+            &workspace,
+            "different",
+            None,
+            first["next_cursor"].as_str(),
+            &CancellationToken::new()
+        )
+        .is_err()
+    );
+    let text = format!("{}\n{}\n", "é".repeat(40_000), "row\n".repeat(200));
+    std::fs::write(root.path().join("large.txt"), &text)?;
+    let (mut line, mut column) = (1, 1);
+    let mut rebuilt = String::new();
+    loop {
+        let page = read(&workspace, "large.txt", line, column)?.0;
+        rebuilt.push_str(page["text"].as_str().unwrap());
+        if page["next_line"].is_null() {
+            break;
+        }
+        line = page["next_line"].as_u64().unwrap() as usize;
+        column = page["next_column"].as_u64().unwrap() as usize;
+    }
+    assert_eq!(rebuilt, text);
+    let edit = serde_json::from_value(
+        json!({"tool":"edit_file","path":"large.txt","edits":[{"old":"row\nrow\nrow\nrow\n", "new":"test"}]}),
+    )?;
+    assert!(
+        prepare(&workspace, edit).is_err(),
+        "ambiguous edits still fail"
+    );
+    let edit = serde_json::from_value(
+        json!({"tool":"edit_file","path":"large.txt","edits":[{"old":"é".repeat(40_000),"new":"updated"}]}),
+    )?;
+    let Prepared::Change {
+        target,
+        updated,
+        diff,
+        ..
+    } = prepare(&workspace, edit)?
+    else {
+        panic!("expected change")
+    };
+    assert!(serde_json::to_vec(&diff)?.len() < 70_000);
+    assert!(diff.iter().any(|l| l.kind == '…'));
+    target.write(&updated.unwrap())?;
+    assert!(std::fs::read_to_string(root.path().join("large.txt"))?.starts_with("updated\n"));
+    std::fs::write(root.path().join("many.txt"), "needle\n".repeat(61))?;
+    let mut cursor = None;
+    let mut found = Vec::new();
+    loop {
+        let result = search(
+            &workspace,
+            "needle",
+            None,
+            cursor.as_deref(),
+            &CancellationToken::new(),
+        )?;
+        found.extend(result["matches"].as_array().unwrap().clone());
+        cursor = result["next_cursor"].as_str().map(str::to_owned);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(found.len(), 61);
+    assert_eq!(found.last().unwrap()["line"], 61);
     Ok(())
 }

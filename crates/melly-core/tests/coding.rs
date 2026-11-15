@@ -85,7 +85,7 @@ impl CodingTools for Tools {
         _: CancellationToken,
     ) -> anyhow::Result<Value> {
         Ok(match call {
-            Call::SearchRepo { query } => {
+            Call::SearchRepo { query, .. } => {
                 assert_eq!(query, "test");
                 json!({"matches":[{"path":"test_example.py"}]})
             }

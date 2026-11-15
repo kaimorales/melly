@@ -5,7 +5,7 @@ use rusqlite::{OptionalExtension, params};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-pub const MAX_FILE_BYTES: u64 = crate::file_edits::MAX_FILE_BYTES as u64;
+pub const MAX_FILE_BYTES: u64 = 24 * 1024;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

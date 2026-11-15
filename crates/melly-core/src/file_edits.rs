@@ -3,7 +3,7 @@ use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 use std::path::{Component, Path};
 
-pub const MAX_FILE_BYTES: usize = 24 * 1024;
+pub const MAX_FILE_BYTES: usize = 1024 * 1024;
 pub const PROMPT: &str = r#"When the user asks to change or create a file in this linked project, reply normally and put one proposed file change in a fenced melly-file-edit block at the end of the reply. For an existing file use {"path":"relative/file","edits":[{"old":"exact original text that occurs once","new":"replacement"}]}. Use each nonoverlapping original substring exactly as supplied. For a new file use {"path":"relative/file","content":"complete contents"} and include all text. For an existing empty file use the content format. Use only paths relative to the linked project. If you do not have the current contents for an edit, ask the user to turn on project context or provide the relevant text. Say you proposed the edit. Melly shows the user the change before applying it. Do not emit a proposal for informational requests."#;
 
 #[derive(Deserialize)]
@@ -111,7 +111,7 @@ impl Proposal {
         };
         ensure!(
             after.len() <= MAX_FILE_BYTES && !after.contains('\0'),
-            "The resulting file must be UTF-8 text of 24 KiB or less"
+            "The resulting file must be UTF-8 text of 1 MiB or less"
         );
         ensure!(
             original != Some(after.as_str()),
@@ -215,7 +215,14 @@ pub fn diff_lines(before: Option<&str>, after: &str) -> Vec<DiffLine> {
     let old = &before[prefix..before.len() - suffix];
     let new = &after[prefix..after.len() - suffix];
     let width = new.len() + 1;
-    if (old.len() + 1) * width <= 65_536 {
+    if old.len() + new.len() > 400 {
+        diff.extend(old.iter().take(180).map(|text| line('-', text)));
+        diff.push(line(
+            '…',
+            "Diff preview shortened; additional changed lines are omitted.",
+        ));
+        diff.extend(new.iter().take(180).map(|text| line('+', text)));
+    } else if (old.len() + 1) * width <= 65_536 {
         let mut common = vec![0u16; (old.len() + 1) * width];
         for i in (0..old.len()).rev() {
             for j in (0..new.len()).rev() {
@@ -271,6 +278,27 @@ pub fn diff_lines(before: Option<&str>, after: &str) -> Vec<DiffLine> {
         } else {
             index += 1;
         }
+    }
+    let mut bytes = 0;
+    let mut omitted = false;
+    diff.retain_mut(|row| {
+        if bytes >= 60_000 {
+            omitted = true;
+            return false;
+        }
+        if row.text.len() > 2000 {
+            row.text.truncate(row.text.floor_char_boundary(2000));
+            row.text.push_str("… [line shortened]");
+            omitted = true;
+        }
+        bytes += row.text.len();
+        true
+    });
+    if omitted {
+        diff.push(line(
+            '…',
+            "Diff preview shortened; some changed text is omitted.",
+        ));
     }
     diff
 }

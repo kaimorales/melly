@@ -78,7 +78,7 @@ Use a folder’s menu to link a local directory. Enabling Project context shares
 
 ## Coding tools
 
-Enable Project context for a chat in a linked directory to give the selected model project search and file reads. The app handles up to one tool call per model round and 16 rounds per reply. Newly created or edited files are read directly from disk in later rounds. Text files are limited to 24 KiB for writes and results are bounded. Deletes require a current-turn read and a matching file revision.
+Enable Project context for a chat in a linked directory to give the selected model project search and file reads. The app handles up to one tool call per model round and 16 rounds per reply. Newly created or edited files are read directly from disk in later rounds. Text files are limited to 1 MiB for writes and results are bounded. Edits and deletes require a current-turn read and a matching file revision.
 
 Ask pauses in the conversation before creating, editing, deleting, or running tests. The existing Auto-apply grant applies those operations to the same chat and link for the current app session. The conversation shows each mutation's diff and the test status and output.
 
@@ -95,3 +95,7 @@ File mutations persist before/after snapshots in a local journal before touching
 ## Continuing interrupted coding tasks
 
 Coding replies expose Continue instead of destructive Retry. A continuation preserves the earlier reply, its undo journal, and recorded checks, and appends a new turn tied to the original task. Bounded action/check results are replayed as untrusted data; file snapshots stay private. Each mutation is associated with a durable operation receipt before writing. Repeated identical operations in the same task reuse the verified on-disk result, including recovery after interruption between the write and its completion record. If the file changed, the model must read it again; a new user task has independent receipts. Pending approvals are not restored as permissions, and Ask remains the restart default.
+
+## Larger project files and paged search
+
+Coding tools read, edit, create, and undo UTF-8 files up to 1 MiB. Search traverses up to 20,000 eligible entries and pages content scans in batches of 500 files / 16 MiB with up to 20 matches. `search_repo` accepts an optional project-relative `path` and a returned `cursor`; it reports skipped files and never treats a truncated scan as a complete search. Large trees require a narrower path. `read_file` returns `next_line` and `next_column` so long Unicode lines can be read without missing text. Writes still require a fresh file revision, and project-context excerpts keep their smaller prompt budget. Diff previews are bounded and explicitly mark omitted lines/text.
