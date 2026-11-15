@@ -128,15 +128,27 @@ $$`;
   return copy(reply);
 }
 
+const chatContextLimits = new Map<string, number | 'auto'>();
+
 export const mockBackend: Backend = {
   async invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
     let result: unknown;
     switch (command) {
       case 'bootstrap': result = snapshot(); break;
+      case 'set_chat_context_limit': {
+        const key = String(args.chatId);
+        if (typeof args.limit === 'number' || args.limit === 'auto') chatContextLimits.set(key, args.limit);
+        else chatContextLimits.delete(key);
+        break;
+      }
       case 'context_preview': {
-        const count = messages.filter(message => message.chatId === args.chatId && message.status === 'complete')
-          .reduce((length, message) => length + message.content.length, 0);
-        result = { estimatedTokens: Math.ceil((count + String(args.draft || '').length) / 4), capacity: null, omittedMessages: 0, draftExceedsLimit: false };
+        const history = messages.filter(message => message.chatId === args.chatId && message.status === 'complete');
+        const count = history.reduce((length, message) => length + message.content.length, 0);
+        const choice = args.chatId ? chatContextLimits.get(String(args.chatId)) ?? null : args.draftContext ?? null;
+        const capacity = typeof choice === 'number' ? choice : null;
+        result = { estimatedTokens: Math.ceil((count + String(args.draft || '').length) / 4), capacity,
+          selection: { choice, ceiling: null, modelDefault: null, effective: capacity },
+          omittedMessages: 0, sources: [], draftExceedsLimit: false };
         break;
       }
       case 'chat': result = copy(chats.find((chat) => chat.id === args.chatId) || null); break;

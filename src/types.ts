@@ -16,7 +16,9 @@ export interface ProviderSpec {
   protocol: string; nativeSearch: boolean; tools: boolean; disabledReason: string | null;
 }
 export interface ProviderView extends ProviderSpec { configured: boolean; connection: Connection; status: string }
-export interface ModelInfo { id: string; name: string; contextWindow?: number | null }
+export type ContextLimit = number | 'auto';
+export interface ContextSelection { choice: ContextLimit | null; ceiling: number | null; modelDefault: number | null; effective: number | null }
+export interface ModelInfo { id: string; name: string; contextWindow?: number | null; defaultContextWindow?: number | null }
 export interface ChatModel { providerId: string; modelId: string }
 export interface CompatibleConnection { id: string; name: string; baseUrl: string; models: ModelInfo[] }
 export interface Bootstrap { folders: Folder[]; chats: Chat[]; settings: Settings; providers: ProviderView[]; searchConfigured: boolean; compatibleConnections?: CompatibleConnection[]; chatModels?: Record<string, ChatModel> }

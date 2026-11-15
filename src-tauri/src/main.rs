@@ -198,6 +198,20 @@ async fn save_compatible_connection(
 }
 
 #[tauri::command]
+async fn set_chat_context_limit(
+    s: State<'_, AppState>,
+    chat_id: String,
+    limit: Option<melly_core::context::ContextLimit>,
+) -> Reply<()> {
+    s.engine
+        .store
+        .lock()
+        .unwrap()
+        .set_chat_context_limit(&chat_id, limit)
+        .map_err(error)
+}
+
+#[tauri::command]
 async fn save_chat_model(
     s: State<'_, AppState>,
     chat_id: String,
@@ -471,10 +485,17 @@ async fn context_preview(
     provider_id: String,
     model_id: String,
     draft: String,
+    draft_context: Option<melly_core::context::ContextLimit>,
 ) -> Reply<ContextPreview> {
     let engine = s.engine.clone();
     tokio::task::spawn_blocking(move || {
-        engine.context_preview(chat_id.as_deref(), &provider_id, &model_id, &draft)
+        engine.context_preview(
+            chat_id.as_deref(),
+            &provider_id,
+            &model_id,
+            &draft,
+            draft_context,
+        )
     })
     .await
     .map_err(|_| "Context preview interrupted".to_owned())?
@@ -549,6 +570,7 @@ fn main() {
             save_connection,
             save_compatible_connection,
             save_chat_model,
+            set_chat_context_limit,
             has_compatible_key,
             enter_compatible_key,
             open_provider_key_field,

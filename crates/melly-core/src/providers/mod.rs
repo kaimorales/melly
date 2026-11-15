@@ -26,6 +26,7 @@ pub async fn list_models(
             id: "melly-demo".into(),
             name: "Melly demo · Mock".into(),
             context_window: None,
+            default_context_window: None,
         }]);
     }
     let url = model_list_url(connection)?;
@@ -73,6 +74,16 @@ pub async fn stream(
     sink: ProviderSink,
     cancel: CancellationToken,
 ) -> Result<()> {
+    stream_with_context(request, credential, sink, cancel, None).await
+}
+
+pub(crate) async fn stream_with_context(
+    request: ProviderRequest,
+    credential: Option<String>,
+    sink: ProviderSink,
+    cancel: CancellationToken,
+    context: Option<usize>,
+) -> Result<()> {
     transport::check_cancel(&cancel)?;
     validate_connection(&request.connection)?;
     let observer_cancel = cancel.clone();
@@ -84,21 +95,24 @@ pub async fn stream(
     if request.connection.provider_id == "mock" {
         return mock::stream(request, guarded, cancel).await;
     }
-    let (url, body, protocol) = protocol::request(&request)?;
+    let (url, mut body, protocol) = protocol::request(&request)?;
     let provider = &request.connection.provider_id;
     let client = if compatible::is_custom(provider) {
         compatible::client(&url)?
     } else {
         network::client()?
     };
-    let http = authenticated(
-        client
-            .post(url)
-            .json(&body)
-            .header("Accept", "text/event-stream"),
-        provider,
-        credential.as_deref(),
-    )?;
+    let loopback = compatible::is_custom(provider) && compatible::local(&url);
+    let mut http = client.post(url).header("Accept", "text/event-stream");
+    if let Some(tokens) = context
+        && compatible::is_custom(provider)
+    {
+        body["max_tokens"] = serde_json::json!((tokens / 4).min(4096));
+        if loopback {
+            http = http.header("X-Melly-Context-Limit", tokens.to_string());
+        }
+    }
+    let http = authenticated(http.json(&body), provider, credential.as_deref())?;
     let response = transport::send(http, provider, &cancel).await?;
     transport::read_stream(response, protocol, provider, guarded, &cancel).await
 }

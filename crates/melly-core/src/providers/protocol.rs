@@ -296,6 +296,7 @@ pub(crate) fn models(provider: &str, value: Value) -> Result<Vec<ModelInfo>> {
             result.push(ModelInfo {
                 id: id.into(),
                 name: name.unwrap_or(id).chars().take(256).collect(),
+                default_context_window: None,
                 context_window: model["context_length"]
                     .as_u64()
                     .or_else(|| model["inputTokenLimit"].as_u64())

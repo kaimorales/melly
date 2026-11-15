@@ -3,7 +3,7 @@ import { backend } from './backend';
 import { Dialog } from './dialogs';
 import type { Bootstrap, ChatModel, CompatibleConnection, ModelInfo } from './types';
 
-type ModelDraft = { id: string; name: string; context: string; existing: boolean };
+type ModelDraft = { id: string; name: string; context: string; defaultContext: string; existing: boolean };
 
 export function CompatibleConnectionDialog({ initial, close, changed, setDefault, defaultRoute }: {
   initial: CompatibleConnection | null; close: () => void; changed: () => Promise<Bootstrap>;
@@ -45,13 +45,13 @@ export function CompatibleConnectionDialog({ initial, close, changed, setDefault
     if (updated) { setName(updated.name); setBaseUrl(updated.baseUrl); }
   };
   const edit = (model?: ModelInfo, existing = false) => setDraft({
-    id: model?.id || '', name: model?.name || '', context: model?.contextWindow?.toString() || '', existing,
+    id: model?.id || '', name: model?.name || '', context: model?.contextWindow?.toString() || '', defaultContext: model?.defaultContextWindow?.toString() || '', existing,
   });
   const saveModel = (event: FormEvent) => {
     event.preventDefault();
     if (!draft || !connection) return;
     void run(async () => {
-      const model = { id: draft.id.trim(), name: draft.name.trim() || draft.id.trim(), contextWindow: draft.context ? Number(draft.context) : null };
+      const model = { id: draft.id.trim(), name: draft.name.trim() || draft.id.trim(), contextWindow: draft.context ? Number(draft.context) : null, defaultContextWindow: draft.defaultContext ? Number(draft.defaultContext) : null };
       const models = connection.models.some(item => item.id === model.id)
         ? connection.models.map(item => item.id === model.id ? model : item)
         : [...connection.models, model];
@@ -117,6 +117,7 @@ export function CompatibleConnectionDialog({ initial, close, changed, setDefault
           <label className="field">Model ID<input value={draft.id} readOnly={draft.existing} maxLength={200} required spellCheck={false} onChange={event => setDraft({ ...draft, id: event.target.value })} /></label>
           <label className="field">Display name<input value={draft.name} maxLength={200} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
           <label className="field">Context limit (optional)<input type="number" min={1024} max={100000000} value={draft.context} onChange={event => setDraft({ ...draft, context: event.target.value })} /></label>
+          <label className="field">Default context (optional)<input type="number" min={1024} max={draft.context || 100000000} value={draft.defaultContext} onChange={event => setDraft({ ...draft, defaultContext: event.target.value })} /></label>
           <div className="custom-connection-actions">
             <button type="button" className="text-action" disabled={busy} onClick={() => setDraft(null)}>Cancel</button>
             <button className="button primary" disabled={busy || !draft.id.trim()}>Save model</button>

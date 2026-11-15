@@ -83,6 +83,7 @@ fn named_compatible_connections_allow_loopback_without_weakening_cloud_routes() 
             id: "upstream-id".into(),
             name: "Model name".into(),
             context_window: Some(32768),
+            default_context_window: None,
         }],
     };
     connection.validate().unwrap();

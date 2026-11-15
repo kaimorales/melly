@@ -92,6 +92,8 @@ pub struct ModelInfo {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_context_window: Option<usize>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -197,6 +199,7 @@ pub struct ChatModel {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextPreview {
+    pub selection: crate::context::ContextSelection,
     pub estimated_tokens: usize,
     pub capacity: Option<usize>,
     pub omitted_messages: usize,

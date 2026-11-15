@@ -48,7 +48,13 @@ name and the server's API base URL, including its `/v1` prefix if required.
 Use **Add API key** to enter a key in the native secure dialog if required.
 Use **Test connection** to fetch the model list.
 Choose a discovered model or enter its API ID manually. The display name appears
-in the picker, and an optional context limit overrides discovered metadata.
+in the picker. Set the server's context limit if discovery does not supply it,
+and optionally set a smaller default for this model. The chat's context ring
+lets you use that default, choose Auto, or set a limit for that chat. Melly
+clamps the limit to the model's reported or configured capacity when known.
+For a named loopback connection, Melly sends the effective limit in
+`X-Melly-Context-Limit` so a local companion can choose the right runtime
+profile. Servers can ignore the header.
 
 Connections support streaming Chat Completions. They accept public HTTPS or
 loopback HTTP/HTTPS and use endpoint-bound Keychain credentials if configured.

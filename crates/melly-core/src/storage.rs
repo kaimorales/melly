@@ -8,7 +8,7 @@ use std::{
 use uuid::Uuid;
 
 pub struct Store {
-    conn: SqlConnection,
+    pub(crate) conn: SqlConnection,
 }
 fn now() -> i64 {
     SystemTime::now()
@@ -111,6 +111,7 @@ impl Store {
             CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS connections(provider_id TEXT PRIMARY KEY,base_url TEXT NOT NULL,model_id TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS compatible_connections(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS chat_context_limits(chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE, tokens INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS chat_models(chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE, provider_id TEXT NOT NULL, model_id TEXT NOT NULL);
             UPDATE messages SET status='interrupted' WHERE status='streaming'; PRAGMA user_version=1;")?;
         Ok(Self { conn })

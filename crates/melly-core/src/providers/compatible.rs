@@ -134,6 +134,17 @@ impl CompatibleConnection {
                 "Enter a context limit of 1,024 tokens or larger"
             );
         }
+        for model in &self.models {
+            if let Some(default) = model.default_context_window {
+                crate::context::ContextLimit::Tokens(default).validate()?;
+                ensure!(
+                    model
+                        .context_window
+                        .is_none_or(|maximum| default <= maximum),
+                    "Default context must fit the model's context limit"
+                );
+            }
+        }
         Ok(())
     }
 }

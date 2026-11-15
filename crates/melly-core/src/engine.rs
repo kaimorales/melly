@@ -33,6 +33,16 @@ pub trait Transport: Send + Sync {
         sink: ProviderSink,
         cancel: CancellationToken,
     ) -> Result<()>;
+    async fn stream_with_context(
+        &self,
+        request: ProviderRequest,
+        credential: Option<String>,
+        sink: ProviderSink,
+        cancel: CancellationToken,
+        _context: Option<usize>,
+    ) -> Result<()> {
+        self.stream(request, credential, sink, cancel).await
+    }
     async fn web_search(
         &self,
         query: &str,
@@ -51,6 +61,16 @@ impl Transport for CloudTransport {
         c: CancellationToken,
     ) -> Result<()> {
         providers::stream(r, key, sink, c).await
+    }
+    async fn stream_with_context(
+        &self,
+        request: ProviderRequest,
+        credential: Option<String>,
+        sink: ProviderSink,
+        cancel: CancellationToken,
+        context: Option<usize>,
+    ) -> Result<()> {
+        providers::stream_with_context(request, credential, sink, cancel, context).await
     }
     async fn web_search(&self, q: &str, key: &str, c: CancellationToken) -> Result<Vec<Source>> {
         providers::web_search(q, key, c).await
@@ -78,6 +98,7 @@ struct Turn {
     message: Message,
     connection: Connection,
     request: ProviderRequest,
+    context: Option<usize>,
     cancel: CancellationToken,
     sink: UpdateSink,
     search_query: Option<String>,
@@ -222,6 +243,7 @@ impl Engine {
         provider: &str,
         model: &str,
         draft: &str,
+        draft_context: Option<crate::context::ContextLimit>,
     ) -> Result<ContextPreview> {
         ensure!(
             draft.len() <= 32_000,
@@ -229,7 +251,13 @@ impl Engine {
         );
         let connection = self.model_connection(provider, model)?;
         let store = self.store.lock().unwrap();
-        let capacity = store.model_context_window(&connection)?;
+        let selection = store.context_selection(
+            &connection,
+            chat,
+            draft_context,
+            store.model_context_window(&connection)?,
+        )?;
+        let capacity = selection.effective;
         let system = format!("{}\n\n{}", store.settings()?.system_prompt, TOOL_POLICY);
         let budget = context_budget(capacity, &system);
         let (messages, completed) = if let Some(chat) = chat {
@@ -250,6 +278,7 @@ impl Engine {
                 .map(|entry| entry.content.chars().count() + 16)
                 .sum::<usize>();
         Ok(ContextPreview {
+            selection,
             estimated_tokens: estimate.div_ceil(4),
             capacity,
             omitted_messages: completed.saturating_sub(messages.len()),
@@ -419,7 +448,13 @@ impl Engine {
             input.content.trim().to_owned()
         };
         let mut prompt = format!("{}\n\n{}", store.settings()?.system_prompt, TOOL_POLICY);
-        let capacity = store.model_context_window(&connection)?;
+        let selection = store.context_selection(
+            &connection,
+            Some(&input.chat_id),
+            None,
+            store.model_context_window(&connection)?,
+        )?;
+        let capacity = selection.effective;
         let budget = context_budget(capacity, &prompt);
         ensure!(
             capacity.is_none() || content.len() <= budget,
@@ -500,6 +535,7 @@ impl Engine {
             message: message.clone(),
             connection,
             request,
+            context: selection.transport_limit(),
             cancel,
             sink,
             search_query,
@@ -652,11 +688,12 @@ impl Engine {
             };
             let stream_result = tokio::time::timeout(
                 Duration::from_secs(timeout),
-                self.transport.stream(
+                self.transport.stream_with_context(
                     turn.request.clone(),
                     credential.clone(),
                     sink,
                     stream_cancel,
+                    turn.context,
                 ),
             )
             .await;
