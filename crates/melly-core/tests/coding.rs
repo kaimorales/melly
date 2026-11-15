@@ -89,7 +89,7 @@ impl CodingTools for Tools {
                 assert_eq!(query, "test");
                 json!({"matches":[{"path":"test_example.py"}]})
             }
-            Call::RunTests => json!({"passed":true,"output":"synthetic result"}),
+            Call::RunTests { .. } => json!({"passed":true,"output":"synthetic result"}),
             _ => anyhow::bail!("Unexpected call"),
         })
     }

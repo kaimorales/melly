@@ -5,7 +5,7 @@ import { Icon } from './icons';
 
 export type CodingApproval = { id: string; label: string; path: string | null; diff: DiffLine[] };
 type CodingResult = { action: string; path: string; diff: DiffLine[] }
-  | { command: string; passed: boolean; no_tests_found: boolean; exit_code: number | null; stdout: string; stderr: string };
+  | { command: string; label?: string; passed: boolean; no_tests_found: boolean; exit_code: number | null; stdout: string; stderr: string };
 export type CodingActivityState = { approval?: CodingApproval; results: CodingResult[] };
 
 export function CodingActivity({ activity }: { activity: CodingActivityState }) {
@@ -21,7 +21,7 @@ export function CodingActivity({ activity }: { activity: CodingActivityState }) 
   return <>
     {activity.results.map((result, index) => 'command' in result
       ? <details className="file-edit-card file-edit-saved" key={index}>
-          <summary><Icon name={result.passed ? 'check' : 'close'} /><span>{result.no_tests_found ? 'No tests found' : result.passed ? 'Tests passed' : 'Tests failed'}</span><Icon name="chevron" /></summary>
+          <summary><Icon name={result.passed ? 'check' : 'close'} /><span>{result.no_tests_found ? 'No tests found' : `${result.label || 'Tests'} ${result.passed ? 'passed' : 'failed'}`}</span><Icon name="chevron" /></summary>
           <pre className="file-edit-diff">{[result.command, result.stdout, result.stderr].filter(Boolean).join('\n')}</pre>
         </details>
       : <details className="file-edit-card file-edit-saved" key={index}>

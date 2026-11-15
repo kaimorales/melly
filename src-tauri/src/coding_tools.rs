@@ -467,7 +467,12 @@ fn prepare(workspace: &ProjectLink, call: Call) -> Result<Prepared> {
         Call::CreateFile { path, content } => (path, "Create", Some(content), None),
         Call::EditFile { path, edits } => (path, "Edit", None, Some(edits)),
         Call::DeleteFile { path } => (path, "Delete", None, None),
-        Call::RunTests => return Ok(Prepared::Tests(Suite::detect(&workspace.path)?)),
+        Call::RunTests { check } => {
+            return Ok(Prepared::Tests(Suite::detect(
+                &workspace.path,
+                check.as_deref(),
+            )?));
+        }
         _ => bail!("Invalid action"),
     };
     let target = Target::select(

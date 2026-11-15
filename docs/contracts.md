@@ -82,7 +82,7 @@ Enable Project context for a chat in a linked directory to give the selected mod
 
 Ask pauses in the conversation before creating, editing, deleting, or running tests. The existing Auto-apply grant applies those operations to the same chat and link for the current app session. The conversation shows each mutation's diff and the test status and output.
 
-The test tool selects Python unittest discovery or Node's built-in test runner. The macOS test process runs with a clean environment, networking denied, and writes limited to temporary scratch storage. It receives the linked project as read-only input. It times out after 90 seconds and does not provide arbitrary commands.
+The test tool discovers `npm run test` (or Node's built-in runner), `cargo test --offline`, and Python pytest/unittest. The optional `check` argument selects an existing test, build, check, typecheck, or lint script; it cannot supply shell text. Ask reviews the exact command before execution. The app copies eligible project files into a private temporary workspace, mounts existing local dependencies read-only, and allows generated output only in scratch storage. The linked project and files outside the sandbox cannot be modified by checks. The process receives a clean environment, no network access, bounded output, and a five-minute timeout; Stop kills its process group. Check commands are revalidated after approval. Dependencies must already be installed, and suites requiring network access or excluded files report a failure instead of bypassing isolation. The snapshot is bounded to 20,000 files and 200 MiB. Command success is reported separately from the model's explanation.
 
 ## Undo
 
