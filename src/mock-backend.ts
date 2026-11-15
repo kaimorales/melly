@@ -133,6 +133,12 @@ export const mockBackend: Backend = {
     let result: unknown;
     switch (command) {
       case 'bootstrap': result = snapshot(); break;
+      case 'context_preview': {
+        const count = messages.filter(message => message.chatId === args.chatId && message.status === 'complete')
+          .reduce((length, message) => length + message.content.length, 0);
+        result = { estimatedTokens: Math.ceil((count + String(args.draft || '').length) / 4), capacity: null, omittedMessages: 0, draftExceedsLimit: false };
+        break;
+      }
       case 'chat': result = copy(chats.find((chat) => chat.id === args.chatId) || null); break;
       case 'create_chat': result = copy(newChat(args.folderId as string | null)); break;
       case 'rename_chat': findChat(args.chatId as string).title = String(args.title).trim(); break;

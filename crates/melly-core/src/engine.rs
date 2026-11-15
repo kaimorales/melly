@@ -216,6 +216,46 @@ impl Engine {
         providers::validate_connection(&connection)?;
         Ok(connection)
     }
+    pub fn context_preview(
+        &self,
+        chat: Option<&str>,
+        provider: &str,
+        model: &str,
+        draft: &str,
+    ) -> Result<ContextPreview> {
+        ensure!(
+            draft.len() <= 32_000,
+            "Write a message of 32,000 bytes or fewer"
+        );
+        let connection = self.model_connection(provider, model)?;
+        let store = self.store.lock().unwrap();
+        let capacity = store.model_context_window(&connection)?;
+        let system = format!("{}\n\n{}", store.settings()?.system_prompt, TOOL_POLICY);
+        let budget = context_budget(capacity, &system);
+        let (messages, completed) = if let Some(chat) = chat {
+            let remaining = if capacity.is_some() {
+                budget.saturating_sub(draft.len())
+            } else {
+                budget
+            };
+            let messages = store.context_with_budget(chat, remaining)?;
+            (messages, store.completed_message_count(chat)?)
+        } else {
+            (Vec::new(), 0)
+        };
+        let estimate = system.chars().count()
+            + draft.chars().count()
+            + messages
+                .iter()
+                .map(|entry| entry.content.chars().count() + 16)
+                .sum::<usize>();
+        Ok(ContextPreview {
+            estimated_tokens: estimate.div_ceil(4),
+            capacity,
+            omitted_messages: completed.saturating_sub(messages.len()),
+            draft_exceeds_limit: capacity.is_some() && draft.len() > budget,
+        })
+    }
     pub fn bootstrap(&self) -> Result<Bootstrap> {
         let (folders, chats, mut settings, compatible_connections, chat_models) = {
             let s = self.store.lock().unwrap();

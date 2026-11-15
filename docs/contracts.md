@@ -56,3 +56,13 @@ Sidebar pointer gestures, row menus and the header menu all use the existing Rus
 Delete captures the intended chat, requires confirmation and keeps errors in the dialog. Removing another chat preserves the selected chat/draft. SQLite removes the deleted messages and search-index entries; old citations report an unavailable source.
 
 Fenced-code coloring is presentation only. A lazily loaded worker returns text/span tokens for explicit supported languages; source code is never executed or sent to another service. Streaming text does not wait for coloring. Bounds, watchdog behavior and dependency notices are recorded in [code-block design](design/code-blocks.md).
+
+## Context meter
+
+The composer shows an approximate token count for the next prompt and the
+selected model's context limit when available. It flags clipped history and
+drafts that exceed the connection's configured limit. The estimate uses
+characters and can differ from the server's tokenizer, chat template and tool
+overhead. A context limit reserves space for generation and constrains the
+history Melly sends. It describes the connected model and does not increase a
+server's own context window.

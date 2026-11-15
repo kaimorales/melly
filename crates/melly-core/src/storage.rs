@@ -284,6 +284,13 @@ impl Store {
     pub fn context(&self, chat_id: &str) -> Result<Vec<WireMessage>> {
         self.context_with_budget(chat_id, 60_000)
     }
+    pub(crate) fn completed_message_count(&self, chat_id: &str) -> Result<usize> {
+        Ok(self.conn.query_row(
+            "SELECT count(*) FROM messages WHERE chat_id=?1 AND status='complete'",
+            [chat_id],
+            |row| row.get(0),
+        )?)
+    }
     pub(crate) fn context_with_budget(
         &self,
         chat_id: &str,

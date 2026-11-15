@@ -193,3 +193,12 @@ pub struct ChatModel {
     pub provider_id: String,
     pub model_id: String,
 }
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextPreview {
+    pub estimated_tokens: usize,
+    pub capacity: Option<usize>,
+    pub omitted_messages: usize,
+    pub draft_exceeds_limit: bool,
+}

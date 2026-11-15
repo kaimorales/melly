@@ -1,0 +1,11 @@
+.context-meter { display: grid; place-items: center; width: 28px; height: 28px; border: 0; background: transparent; color: var(--muted); border-radius: 50%; flex-shrink: 0; }
+.context-meter:hover { color: var(--ink); background: var(--hover); }
+.context-track, .context-fill { fill: none; stroke-width: 1.7; }
+.context-track { stroke: var(--secondary); opacity: .16; }
+.context-fill { stroke: currentColor; stroke-linecap: round; }
+.dialog.context-dialog { width: 350px; }
+.context-total { margin: 16px 0 8px; font-size: 19px; font-variant-numeric: tabular-nums; }
+.context-total span { font-size: 13px; color: var(--muted); }
+.context-omission { margin-top: 12px; font-size: 12px; color: var(--secondary); }
+.context-bar { height: 4px; border-radius: 4px; background: var(--rule); overflow: hidden; }
+.context-bar span { display: block; height: 100%; border-radius: inherit; background: var(--secondary); }

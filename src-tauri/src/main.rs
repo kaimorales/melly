@@ -465,6 +465,22 @@ async fn stop_chat(s: State<'_, AppState>, chat_id: String) -> Reply<()> {
     Ok(())
 }
 #[tauri::command]
+async fn context_preview(
+    s: State<'_, AppState>,
+    chat_id: Option<String>,
+    provider_id: String,
+    model_id: String,
+    draft: String,
+) -> Reply<ContextPreview> {
+    let engine = s.engine.clone();
+    tokio::task::spawn_blocking(move || {
+        engine.context_preview(chat_id.as_deref(), &provider_id, &model_id, &draft)
+    })
+    .await
+    .map_err(|_| "Context preview interrupted".to_owned())?
+    .map_err(error)
+}
+#[tauri::command]
 async fn demo_seed(s: State<'_, AppState>) -> Reply<Bootstrap> {
     s.engine.store.lock().unwrap().seed_demo().map_err(error)?;
     s.engine.bootstrap().map_err(error)
@@ -550,6 +566,7 @@ fn main() {
             models,
             start_chat,
             stop_chat,
+            context_preview,
             demo_seed,
             open_source
         ]);
