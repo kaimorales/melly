@@ -144,6 +144,15 @@ fn add_reference(messages: &mut [WireMessage], heading: &str, reference: Value) 
     Ok(())
 }
 impl Engine {
+    pub fn with_idle_store<T>(&self, operation: impl FnOnce(&Store) -> Result<T>) -> Result<T> {
+        let active = self.active.lock().unwrap();
+        ensure!(
+            active.is_empty(),
+            "Wait for active replies to finish before changing saved data"
+        );
+        operation(&self.store.lock().unwrap())
+    }
+
     pub fn new(store: Arc<Mutex<Store>>, vault: Arc<dyn SecretStore>) -> Self {
         Self::with_transport(store, vault, Arc::new(CloudTransport))
     }

@@ -3,6 +3,7 @@ mod attachments;
 mod coding_tests;
 mod coding_tools;
 mod file_edits;
+mod file_history;
 mod inline_secret;
 mod linked_projects;
 mod login_state;
@@ -626,6 +627,8 @@ fn main() {
             linked_projects::unlink_project,
             coding_tools::confirm_coding_action,
             coding_tools::coding_activity,
+            file_history::file_changes,
+            file_history::undo_file_changes,
             file_edits::file_edit_mode,
             file_edits::set_file_edit_mode,
             file_edits::applied_file_edit,

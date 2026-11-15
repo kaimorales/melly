@@ -17,3 +17,9 @@
 .file-edit-mode select { border: 0; color: inherit; background: transparent; font-size: 12px; max-width: 104px; }
 .file-edit-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .file-edit-error { color: var(--danger); font-size: 12px; }
+
+.undo-changes { position: relative; }
+.undo-review { position: absolute; z-index: 5; bottom: calc(100% + 8px); left: 0; width: min(340px, 75vw); padding: 12px; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; box-shadow: 0 4px 18px #00000012; display: grid; gap: 10px; max-height: 45vh; overflow-y: auto; }
+.undo-file { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.undo-file code { font-size: 12px; min-width: 0; overflow-wrap: anywhere; }
+.undo-review .file-edit-error { margin: 0; }

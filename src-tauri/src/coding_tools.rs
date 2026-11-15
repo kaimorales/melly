@@ -275,6 +275,8 @@ impl CodingTools for ProjectTools {
                 let app = self.app.clone();
                 let grant = self.grant.clone();
                 let chat = chat.to_owned();
+                let message = message.to_owned();
+                let checkpoint_path = path.clone();
                 tokio::task::spawn_blocking(move || -> Result<()> {
                     let _operation = operations.lock().unwrap();
                     let state = app.state::<AppState>();
@@ -296,11 +298,24 @@ impl CodingTools for ProjectTools {
                         "The linked project changed"
                     );
                     ensure!(!cancel.is_cancelled(), "Action cancelled");
-                    if let Some(updated) = updated {
+                    let id = store.checkpoint_file(
+                        &message,
+                        &workspace,
+                        &checkpoint_path,
+                        target.original(),
+                        updated.as_deref(),
+                        target.original_mode(),
+                    )?;
+                    let result = if let Some(updated) = updated {
                         target.write(&updated)
                     } else {
                         target.delete()
+                    };
+                    if result.is_err() {
+                        store.set_file_change_state(&id, "failed")?;
                     }
+                    result?;
+                    store.set_file_change_state(&id, "applied")
                 })
                 .await??;
                 json!({"ok":true,"action":label,"path":path,"diff":diff})

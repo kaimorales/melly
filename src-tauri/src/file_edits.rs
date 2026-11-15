@@ -95,7 +95,21 @@ impl Pending {
         if applied || !same_link(&link, &self.workspace) {
             return Err("The project changed after review. Review the proposal again.".into());
         }
-        self.target.write(&self.after).map_err(error)?;
+        let id = store
+            .checkpoint_file(
+                message_id,
+                &self.workspace,
+                &self.path,
+                self.target.original(),
+                Some(&self.after),
+                self.target.original_mode(),
+            )
+            .map_err(error)?;
+        if let Err(reason) = self.target.write(&self.after) {
+            let _ = store.set_file_change_state(&id, "failed");
+            return Err(error(reason));
+        }
+        store.set_file_change_state(&id, "applied").map_err(error)?;
         store
             .mark_file_edit_applied(message_id, &self.diff)
             .map_err(error)

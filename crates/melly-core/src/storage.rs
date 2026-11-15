@@ -116,6 +116,7 @@ impl Store {
             UPDATE messages SET status='interrupted' WHERE status='streaming'; PRAGMA user_version=1;")?;
         let store = Self { conn };
         store.initialize_file_edits()?;
+        store.initialize_file_history()?;
         Ok(store)
     }
     fn timestamp(&self) -> Result<i64> {

@@ -83,3 +83,7 @@ Enable Project context for a chat in a linked directory to give the selected mod
 Ask pauses in the conversation before creating, editing, deleting, or running tests. The existing Auto-apply grant applies those operations to the same chat and link for the current app session. The conversation shows each mutation's diff and the test status and output.
 
 The test tool selects Python unittest discovery or Node's built-in test runner. The macOS test process runs with a clean environment, networking denied, and writes limited to temporary scratch storage. It receives the linked project as read-only input. It times out after 90 seconds and does not provide arbitrary commands.
+
+## Undo
+
+File mutations persist before/after snapshots in a local journal before touching disk. `file_changes(chatId,messageId)` returns only path/status metadata; `undo_file_changes(chatId,messageId,changeId?)` reverses one change or the turn. Undo revalidates the original linked directory, all affected file contents, and newer changes before mutation. It cannot overwrite subsequent user edits or run during active replies. A partial filesystem failure preserves per-file recovery state for a retry. Deleted file contents and POSIX permissions can be restored; deleted-file ACLs and extended attributes are not retained. Snapshots are local, excluded from model requests and portable exports, and removed with the owning conversation.

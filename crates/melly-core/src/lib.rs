@@ -5,6 +5,7 @@ pub mod context;
 pub mod credentials;
 pub mod engine;
 pub mod file_edits;
+pub mod file_history;
 pub mod linked;
 pub mod models;
 pub mod projects;

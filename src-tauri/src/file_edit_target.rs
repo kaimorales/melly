@@ -72,6 +72,13 @@ mod macos {
                 .map(|snapshot| snapshot.bytes.as_str())
         }
 
+        pub fn original_mode(&self) -> Option<u32> {
+            self.0
+                .original
+                .as_ref()
+                .map(|snapshot| snapshot.metadata.mode() & 0o777)
+        }
+
         pub fn delete(&self) -> Result<()> {
             let selection = &self.0;
             let original = selection.original.as_ref().context("The file is missing")?;
@@ -122,6 +129,10 @@ mod macos {
         }
 
         pub fn write(&self, updated: &str) -> Result<()> {
+            self.write_restoring_mode(updated, None)
+        }
+
+        pub fn write_restoring_mode(&self, updated: &str, mode: Option<u32>) -> Result<()> {
             let selection = &self.0;
             ensure!(
                 updated.len() <= MAX_FILE_BYTES && !updated.contains('\0'),
@@ -158,6 +169,9 @@ mod macos {
                         check(changed).context("Could not preserve the file group")?;
                     }
                     file.set_permissions(std::fs::Permissions::from_mode(metadata.mode() & 0o777))?;
+                }
+                if let Some(mode) = mode {
+                    file.set_permissions(std::fs::Permissions::from_mode(mode & 0o777))?;
                 }
                 file.sync_all().context("Could not save the staged edit")?;
                 selection.verify_directory()?;
@@ -429,5 +443,11 @@ impl Target {
     }
     pub fn original(&self) -> Option<&str> {
         unreachable!()
+    }
+    pub fn original_mode(&self) -> Option<u32> {
+        unreachable!()
+    }
+    pub fn write_restoring_mode(&self, _: &str, _: Option<u32>) -> Result<()> {
+        anyhow::bail!("File editing requires macOS")
     }
 }

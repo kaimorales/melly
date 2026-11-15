@@ -1,3 +1,4 @@
+import { UndoChanges } from './UndoChanges';
 import { advanceStream, streamRevealWindow } from './stream-reveal';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
@@ -71,6 +72,7 @@ function MessageView({ message, activity, codingActivity, theme, highlight, onSo
       {stopped && <span className="message-status">Response stopped</span>}
       {failed && <span className="message-status">Response interrupted</span>}
       {retryEnabled && <button className={`text-action ${stopped || failed ? '' : 'retry-quiet'}`} aria-label="Retry response" onClick={onRetry}>Retry</button>}
+      {nativeApp && !reply.proposed && <UndoChanges chatId={message.chatId} messageId={message.id} busy={busy} />}
       {message.providerId && <span className="sr-only">{message.providerId === 'mock' ? 'Synthetic Demo reply' : `${message.modelId}, ${message.billingRoute}`}</span>}
     </div>}
   </article>;
