@@ -43,7 +43,7 @@ Native secret input: `src-tauri/src/inline_secret.rs` positions an AppKit secure
 - `remove_search_key()` -> void
 - `frontend_ready()` -> void records one content-free process-to-render timing after bootstrap and two animation frames
 
-Events `chat-stream` -> StreamUpdate: kind delta (text is new chunk), sources, tool (text short activity), done, stopped, error. Done/error/stopped require refresh messages. Events carry chatId/messageId so background streams cannot spill into selected chat. Rust persists final/partial replies. UI batching ≤one update per animation frame; no artificial token delay.
+Events `chat-stream` -> StreamUpdate: kind delta (text is new chunk), sources, tool (text short activity), done, stopped, error. Done/error/stopped require refresh messages. Events carry chatId/messageId so background streams cannot spill into selected chat. Rust persists final/partial replies. The UI reveals bursty answer deltas over at most 120 ms at roughly 30 paints per second. Reduced motion, background replies, Stop, and errors flush immediately.
 
 Denied model tool calls return a bounded denial with no data. Operational external-search failures terminate the reply with a sanitized visible error; they cannot be silently converted into a completed searched answer. Automatic folder permission recognizes only a direct opening request without quoted/multiline/ambiguous text; the explicit composer toggle handles other wording. Retry is unavailable while viewing older history pages.
 

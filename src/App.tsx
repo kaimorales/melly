@@ -1,3 +1,4 @@
+import { advanceStream, streamRevealWindow } from './stream-reveal';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -29,7 +30,8 @@ function requestsFolderContext(value: string) {
   return direct.test(opening) || findIn.test(opening);
 }
 type NameAction = { kind: 'new-folder' | 'rename-folder' | 'rename-chat'; id?: string; title?: string };
-type StreamBuffer = { chatId: string; text: string; sources?: Source[]; activity: string };
+type StreamBuffer = { chatId: string; text: string; sources?: Source[]; activity: string } & StreamReveal;
+type StreamReveal = { visible?: number; deadline?: number; done?: StreamUpdate };
 
 function MessageView({ message, activity, theme, highlight, onSource, onRetry, retryEnabled, report }: { message: Message; activity?: string; theme: string; highlight: boolean; onSource: (source: Source) => void; onRetry: () => void; retryEnabled: boolean; report: (text: string) => void }) {
   const markdown = useMemo(() => message.role === 'assistant' ? normalizeMathDelimiters(message.content) : message.content, [message.content, message.role]);
@@ -109,7 +111,7 @@ export default function App() {
   }, []);
   const mergeStreams = useCallback((messages: Message[]) => messages.map((message) => {
     const buffer = streamBuffers.current.get(message.id);
-    return buffer && message.status === 'streaming' ? { ...message, content: buffer.text || message.content, sources: buffer.sources || message.sources } : message;
+    return buffer && message.status === 'streaming' ? { ...message, content: buffer.text.slice(0, buffer.visible ?? buffer.text.length) || message.content, sources: buffer.sources || message.sources } : message;
   }), []);
   const loadMessages = useCallback(async (chatId: string, target?: string, retainHistory = false) => {
     const request = ++messageRequest.current;
@@ -144,28 +146,63 @@ export default function App() {
   useEffect(() => {
     mounted.current = true;
     const unlisteners: Array<() => void> = [];
+    const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const reducedMotion = () => motionPreference.matches || document.documentElement.dataset.reduceMotion === 'true';
+    let lastPaint = -Infinity;
+    const finishStream = (update: StreamUpdate) => {
+      setRunning((current) => { const next = new Set(current); next.delete(update.chatId); return next; });
+      streamBuffers.current.delete(update.messageId);
+      if (update.chatId === selectedRef.current) {
+        if (update.kind === 'error') setNotice(update.text || 'The response was interrupted. You can retry it.');
+        void loadMessages(update.chatId, undefined, true);
+      }
+      void refresh().catch((reason) => setNotice(errorText(reason)));
+    };
+    const queuePaint = () => {
+      if (frame.current === null) frame.current = requestAnimationFrame(paintStreams);
+    };
+    const paintStreams = (now: number) => {
+      frame.current = null;
+      if (!mounted.current) return;
+      if (now - lastPaint < 30 && !reducedMotion()) { queuePaint(); return; }
+      lastPaint = now;
+      let pending = false;
+      const activities: Record<string, string> = {};
+      for (const [messageId, buffer] of streamBuffers.current) {
+        const visible = buffer.chatId === selectedRef.current;
+        buffer.visible = visible && !reducedMotion()
+          ? advanceStream(buffer.text, buffer.visible ?? buffer.text.length, now, buffer.deadline ?? now)
+          : buffer.text.length;
+        if (buffer.visible < buffer.text.length) pending = true;
+        else if (buffer.done) { finishStream(buffer.done); continue; }
+        if (visible) activities[messageId] = buffer.activity;
+      }
+      setItems(mergeStreams);
+      setActivities(activities);
+      if (pending) queuePaint();
+    };
     const register = async () => {
       const unlisten = await backend.listen<StreamUpdate>('chat-stream', (update) => {
         if (update.kind === 'delta' || update.kind === 'sources' || update.kind === 'tool') {
-          const buffer = streamBuffers.current.get(update.messageId) || { chatId: update.chatId, text: '', activity: '' };
-          if (update.kind === 'delta') buffer.text += update.text;
+          const buffer: StreamBuffer = streamBuffers.current.get(update.messageId) || { chatId: update.chatId, text: '', activity: '' };
+          if (update.kind === 'delta' && update.text) {
+            if ((buffer.visible ?? buffer.text.length) >= buffer.text.length) buffer.deadline = performance.now() + streamRevealWindow;
+            buffer.visible ??= buffer.text.length;
+            buffer.text += update.text;
+          }
           if (update.kind === 'sources') buffer.sources = update.sources;
           if (update.kind === 'tool') buffer.activity = update.text;
           streamBuffers.current.set(update.messageId, buffer);
-          if (frame.current === null) frame.current = requestAnimationFrame(() => {
-            frame.current = null;
-            if (!mounted.current) return;
-            setItems((messages) => mergeStreams(messages));
-            setActivities(Object.fromEntries([...streamBuffers.current.entries()].filter(([, value]) => value.chatId === selectedRef.current).map(([key, value]) => [key, value.activity])));
-          });
+          queuePaint();
         } else if (['done', 'error', 'stopped'].includes(update.kind)) {
-          setRunning((current) => { const next = new Set(current); next.delete(update.chatId); return next; });
-          streamBuffers.current.delete(update.messageId);
-          if (update.chatId === selectedRef.current) {
-            if (update.kind === 'error') setNotice(update.text || 'The response was interrupted. You can retry it.');
-            void loadMessages(update.chatId, undefined, true);
+          const buffer = streamBuffers.current.get(update.messageId);
+          if (update.kind === 'done' && buffer && buffer.chatId === selectedRef.current && !reducedMotion()
+            && (buffer.visible ?? 0) < buffer.text.length) {
+            buffer.done = update;
+            queuePaint();
+          } else {
+            finishStream(update);
           }
-          void refresh().catch((reason) => setNotice(errorText(reason)));
         }
       });
       if (!mounted.current) unlisten(); else unlisteners.push(unlisten);
@@ -184,7 +221,7 @@ export default function App() {
       if (mounted.current) { setData(initial); setSelectedId(initial.chats[0]?.id || null); }
     };
     void register().catch((reason) => { if (mounted.current) setBootError(errorText(reason)); });
-    return () => { mounted.current = false; unlisteners.forEach((unlisten) => unlisten()); if (frame.current !== null) cancelAnimationFrame(frame.current); };
+    return () => { mounted.current = false; unlisteners.forEach((unlisten) => unlisten()); if (frame.current !== null) cancelAnimationFrame(frame.current); frame.current = null; };
   }, [loadMessages, mergeStreams, refresh]);
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)');
