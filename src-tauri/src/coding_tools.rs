@@ -909,3 +909,7 @@ fn searches_later_files_and_pages_large_unicode_files_without_gaps() -> Result<(
     assert_eq!(found.last().unwrap()["line"], 61);
     Ok(())
 }
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "coding_live.rs"]
+mod live;

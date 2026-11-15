@@ -260,3 +260,142 @@ async fn continuation_replays_results_without_deleting_the_interrupted_turn() ->
     );
     Ok(())
 }
+
+#[derive(Default)]
+struct NativeModel(Mutex<usize>);
+#[async_trait]
+impl Transport for NativeModel {
+    async fn stream(
+        &self,
+        request: ProviderRequest,
+        _: Option<String>,
+        sink: ProviderSink,
+        _: CancellationToken,
+    ) -> anyhow::Result<()> {
+        use melly_core::models::ToolCall;
+        let mut round = self.0.lock().unwrap();
+        assert_eq!(
+            request
+                .tools
+                .iter()
+                .filter(|t| melly_core::coding::native_name(
+                    t["function"]["name"].as_str().unwrap_or("")
+                ))
+                .count(),
+            6
+        );
+        match *round {
+            0 => sink(ProviderEvent::ToolCall(ToolCall {
+                id: "read-1".into(),
+                name: "search_repo".into(),
+                arguments: json!({"query":"test"}),
+                provider_data: Some(json!({"signature":"synthetic"})),
+            })),
+            1 => {
+                let result = request.messages.last().unwrap();
+                assert_eq!(result.role, "tool");
+                assert_eq!(result.tool_call_id.as_deref(), Some("read-1"));
+                assert!(result.content.contains("test_example.py"));
+                assert_eq!(
+                    request.messages[request.messages.len() - 2].tool_calls[0].provider_data,
+                    Some(json!({"signature":"synthetic"}))
+                );
+                sink(ProviderEvent::ToolCall(ToolCall {
+                    id: "check-2".into(),
+                    name: "run_tests".into(),
+                    arguments: json!({}),
+                    provider_data: None,
+                }));
+            }
+            _ => {
+                assert_eq!(
+                    request.messages.last().unwrap().tool_call_id.as_deref(),
+                    Some("check-2")
+                );
+                assert!(
+                    request
+                        .messages
+                        .last()
+                        .unwrap()
+                        .content
+                        .contains("synthetic result")
+                );
+                sink(ProviderEvent::Delta(
+                    "Verified the synthetic checks.".into(),
+                ));
+            }
+        }
+        *round += 1;
+        sink(ProviderEvent::Done);
+        Ok(())
+    }
+    async fn web_search(
+        &self,
+        _: &str,
+        _: &str,
+        _: CancellationToken,
+    ) -> anyhow::Result<Vec<Source>> {
+        anyhow::bail!("Unexpected web search")
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn native_coding_calls_keep_ids_signatures_and_real_tool_results() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let store = Store::memory()?;
+    let folder = store.create_folder("Synthetic")?;
+    store.set_project_link(&folder.id, &root.path().canonicalize()?)?;
+    let chat = store.create_chat(Some(&folder.id))?;
+    let model = Arc::new(NativeModel::default());
+    let engine = Arc::new(Engine::with_transport(
+        Arc::new(Mutex::new(store)),
+        Arc::new(MemorySecrets::default()),
+        model.clone(),
+    ));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let reply = engine.start_with_coding_tools(
+        SendInput {
+            chat_id: chat.id,
+            provider_id: "mock".into(),
+            model_id: "melly-demo".into(),
+            content: "Check the synthetic project".into(),
+            web_search: false,
+            folder_context: true,
+            retry: false,
+        },
+        None,
+        Arc::new(move |u| {
+            let _ = tx.send(u);
+        }),
+        Some(Arc::new(Tools)),
+    )?;
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while let Some(u) = rx.recv().await {
+            assert_ne!(u.kind, "error", "{}", u.text);
+            if u.kind == "done" {
+                break;
+            }
+        }
+    })
+    .await?;
+    assert_eq!(*model.0.lock().unwrap(), 3);
+    assert!(
+        engine
+            .store
+            .lock()
+            .unwrap()
+            .message(&reply.id)?
+            .content
+            .contains("Verified")
+    );
+    assert!(
+        melly_core::coding::native_call(
+            "edit_file",
+            &json!({"path":"a","edits":[],"folderId":"other"})
+        )
+        .is_err()
+    );
+    assert!(melly_core::coding::native_call("run_tests", &json!({"command":"arbitrary"})).is_err());
+    Ok(())
+}

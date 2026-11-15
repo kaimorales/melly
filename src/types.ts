@@ -20,7 +20,7 @@ export type ContextLimit = number | 'auto';
 export interface ContextSelection { choice: ContextLimit | null; ceiling: number | null; modelDefault: number | null; effective: number | null }
 export interface ModelInfo { id: string; name: string; contextWindow?: number | null; defaultContextWindow?: number | null }
 export interface ChatModel { providerId: string; modelId: string }
-export interface CompatibleConnection { id: string; name: string; baseUrl: string; models: ModelInfo[] }
+export interface CompatibleConnection { id: string; name: string; baseUrl: string; models: ModelInfo[]; textToolCalls?: boolean }
 export interface Bootstrap { folders: Folder[]; chats: Chat[]; settings: Settings; providers: ProviderView[]; searchConfigured: boolean; compatibleConnections?: CompatibleConnection[]; chatModels?: Record<string, ChatModel> }
 export interface SendInput { chatId: string; content: string; providerId: string; modelId: string; webSearch: boolean; folderContext: boolean; retry: boolean }
 export interface StreamUpdate { chatId: string; messageId: string; kind: string; text: string; sources: Source[] }

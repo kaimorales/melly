@@ -196,17 +196,23 @@ async fn save_compatible_connection(
     name: String,
     base_url: String,
     models: Vec<ModelInfo>,
+    text_tool_calls: Option<bool>,
 ) -> Reply<String> {
     let id = id.unwrap_or_else(|| format!("compatible:{}", uuid::Uuid::new_v4()));
-    s.engine
-        .store
-        .lock()
-        .unwrap()
+    let store = s.engine.store.lock().unwrap();
+    let text_tool_calls = text_tool_calls.unwrap_or(
+        store
+            .compatible_connection(&id)
+            .map_err(error)?
+            .is_some_and(|c| c.text_tool_calls),
+    );
+    store
         .save_compatible_connection(providers::compatible::CompatibleConnection {
             id: id.clone(),
             name,
             base_url,
             models,
+            text_tool_calls,
         })
         .map_err(error)?;
     Ok(id)

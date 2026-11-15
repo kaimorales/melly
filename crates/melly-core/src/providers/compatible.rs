@@ -11,6 +11,8 @@ pub struct CompatibleConnection {
     pub name: String,
     pub base_url: String,
     pub models: Vec<ModelInfo>,
+    #[serde(default)]
+    pub text_tool_calls: bool,
 }
 
 pub fn is_custom(id: &str) -> bool {
@@ -75,6 +77,7 @@ impl CompatibleConnection {
     pub fn spec(&self) -> ProviderSpec {
         let mut spec = wire_spec(&self.connection());
         spec.name = self.name.clone();
+        spec.tools = !self.text_tool_calls;
         spec
     }
 
@@ -163,7 +166,7 @@ pub(super) fn wire_spec(connection: &Connection) -> ProviderSpec {
         default_model: connection.model_id.clone(),
         protocol: "chat-completions".into(),
         native_search: false,
-        tools: false,
+        tools: true,
         disabled_reason: None,
     }
 }

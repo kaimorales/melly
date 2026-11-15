@@ -78,6 +78,7 @@ fn named_compatible_connections_allow_loopback_without_weakening_cloud_routes() 
     let mut connection = CompatibleConnection {
         id: "compatible:00000000-0000-4000-8000-000000000001".into(),
         name: "Local server".into(),
+        text_tool_calls: false,
         base_url: "http://localhost:8123/workspace/v1/".into(),
         models: vec![ModelInfo {
             id: "upstream-id".into(),
@@ -86,6 +87,9 @@ fn named_compatible_connections_allow_loopback_without_weakening_cloud_routes() 
             default_context_window: None,
         }],
     };
+    assert!(connection.spec().tools);
+    connection.text_tool_calls = true;
+    assert!(!connection.spec().tools);
     connection.validate().unwrap();
     assert_eq!(connection.base_url, "http://127.0.0.1:8123/workspace/v1");
     assert_eq!(

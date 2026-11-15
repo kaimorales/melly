@@ -91,6 +91,13 @@ test('custom connections keep the address, actions, and model fields in flow', a
   expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   await dialog.getByRole('button', { name: 'Save model' }).press('Enter');
   await expect(dialog.getByRole('button', { name: 'Synthetic model' })).toBeVisible();
+  await dialog.getByText('Compatibility', { exact: true }).click();
+  const tools = dialog.getByRole('combobox', { name: 'Tool calls', exact: true });
+  await expect(tools).toHaveValue('native');
+  await tools.selectOption('text');
+  await expect(tools).toBeEnabled();
+  await expect(tools).toHaveValue('text');
+  await expect(dialog.getByRole('button', { name: 'Synthetic model' })).toBeVisible();
 });
 
 test('switching Qwen routes replaces and closes the old native field', async ({ page }) => {

@@ -37,11 +37,11 @@ export function CompatibleConnectionDialog({ initial, close, changed, setDefault
     catch (reason) { setError(String(reason)); }
     finally { setBusy(false); }
   };
-  const save = async (models: ModelInfo[]) => {
-    const saved = await backend.invoke<string>('save_compatible_connection', { id: id || null, name, baseUrl, models });
+  const save = async (models: ModelInfo[], textToolCalls = connection?.textToolCalls ?? false) => {
+    const saved = await backend.invoke<string>('save_compatible_connection', { id: id || null, name, baseUrl, models, textToolCalls });
     const fresh = await changed();
     const updated = fresh.compatibleConnections?.find(item => item.id === saved);
-    setConnection(updated || { id: saved, name: name.trim(), baseUrl: baseUrl.trim(), models });
+    setConnection(updated || { id: saved, name: name.trim(), baseUrl: baseUrl.trim(), models, textToolCalls });
     if (updated) { setName(updated.name); setBaseUrl(updated.baseUrl); }
   };
   const edit = (model?: ModelInfo, existing = false) => setDraft({
@@ -95,6 +95,13 @@ export function CompatibleConnectionDialog({ initial, close, changed, setDefault
         }); }}>Remove key</button>}
         <button className="text-action" disabled={busy} onClick={() => setRenaming(true)}>Rename</button>
       </div>}
+      <details className="custom-connection-compatibility">
+        <summary>Compatibility</summary>
+        <label className="field">Tool calls<select aria-label="Tool calls" disabled={busy} value={connection.textToolCalls ? 'text' : 'native'} onChange={event => { void run(() => save(connection.models, event.target.value === 'text')); }}>
+          <option value="native">Native functions</option>
+          <option value="text">Text fallback</option>
+        </select></label>
+      </details>
       <section className="custom-connection-models" aria-label="Models">
         <div className="custom-connection-model-header"><h3>Models</h3>
           {!draft && <button className="text-action" disabled={busy} onClick={() => edit()}>Add model</button>}
