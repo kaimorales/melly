@@ -143,7 +143,11 @@ async fn search_chats(s: State<'_, AppState>, query: String) -> Reply<Vec<Chat>>
 }
 #[tauri::command]
 async fn save_settings(s: State<'_, AppState>, settings: Settings) -> Reply<()> {
-    if !settings.default_provider.is_empty()
+    if providers::compatible::is_custom(&settings.default_provider) {
+        s.engine
+            .model_connection(&settings.default_provider, &settings.default_model)
+            .map_err(error)?;
+    } else if !settings.default_provider.is_empty()
         && !providers::catalog()
             .iter()
             .any(|p| p.id == settings.default_provider && p.disabled_reason.is_none())
@@ -159,6 +163,9 @@ async fn save_settings(s: State<'_, AppState>, settings: Settings) -> Reply<()> 
 }
 #[tauri::command]
 async fn save_connection(s: State<'_, AppState>, connection: Connection) -> Reply<()> {
+    if providers::compatible::is_custom(&connection.provider_id) {
+        return Err("Edit the named connection in Settings".into());
+    }
     providers::validate_connection(&connection).map_err(error)?;
     s.engine
         .store
@@ -166,6 +173,89 @@ async fn save_connection(s: State<'_, AppState>, connection: Connection) -> Repl
         .unwrap()
         .save_connection(&connection)
         .map_err(error)
+}
+#[tauri::command]
+async fn save_compatible_connection(
+    s: State<'_, AppState>,
+    id: Option<String>,
+    name: String,
+    base_url: String,
+    models: Vec<ModelInfo>,
+) -> Reply<String> {
+    let id = id.unwrap_or_else(|| format!("compatible:{}", uuid::Uuid::new_v4()));
+    s.engine
+        .store
+        .lock()
+        .unwrap()
+        .save_compatible_connection(providers::compatible::CompatibleConnection {
+            id: id.clone(),
+            name,
+            base_url,
+            models,
+        })
+        .map_err(error)?;
+    Ok(id)
+}
+
+#[tauri::command]
+async fn save_chat_model(
+    s: State<'_, AppState>,
+    chat_id: String,
+    provider_id: String,
+    model_id: String,
+) -> Reply<()> {
+    s.engine
+        .model_connection(&provider_id, &model_id)
+        .map_err(error)?;
+    s.engine
+        .store
+        .lock()
+        .unwrap()
+        .save_chat_model(
+            &chat_id,
+            &ChatModel {
+                provider_id,
+                model_id,
+            },
+        )
+        .map_err(error)
+}
+
+#[tauri::command]
+async fn has_compatible_key(s: State<'_, AppState>, provider_id: String) -> Reply<bool> {
+    if !providers::compatible::is_custom(&provider_id) {
+        return Err("Choose a compatible connection".into());
+    }
+    let connection = s.engine.connection(&provider_id).map_err(error)?;
+    s.engine
+        .vault
+        .contains(&providers::credential_id(&connection))
+        .map_err(error)
+}
+
+#[tauri::command]
+async fn enter_compatible_key(
+    app: tauri::AppHandle,
+    s: State<'_, AppState>,
+    provider_id: String,
+) -> Reply<bool> {
+    if !providers::compatible::is_custom(&provider_id) {
+        return Err("Choose a custom connection".into());
+    }
+    let saved = s
+        .engine
+        .store
+        .lock()
+        .unwrap()
+        .compatible_connection(&provider_id)
+        .map_err(error)?
+        .ok_or("Unknown custom connection")?;
+    let credential = providers::credential_id(&saved.connection());
+    let Some(key) = secure_input::prompt_secret(app, format!("{} API", saved.name)).await? else {
+        return Ok(false);
+    };
+    s.engine.vault.set(&credential, &key).map_err(error)?;
+    Ok(true)
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
@@ -441,6 +531,10 @@ fn main() {
             search_chats,
             save_settings,
             save_connection,
+            save_compatible_connection,
+            save_chat_model,
+            has_compatible_key,
+            enter_compatible_key,
             open_provider_key_field,
             update_provider_key_field,
             focus_provider_key_field,

@@ -37,7 +37,7 @@ export function ProviderIcon({ id, theme, small = false }: { id: string; theme: 
   const className = small ? 'provider-logo' : 'provider-icon';
   if (id === 'ollama') return <span className={`${className} provider-ollama`}><img src="/providers/ollama.svg" alt="" /></span>;
   if (file[id]) return <img className={className} src={`/providers/${file[id]}`} alt="" />;
-  if (id === 'custom' || id === 'mock') return <Icon name={id === 'custom' ? 'tune' : 'spark'} className={`${className} provider-icon-custom`} />;
+  if (id === 'custom' || id.startsWith('compatible:') || id === 'mock') return <Icon name={id === 'mock' ? 'spark' : 'tune'} className={`${className} provider-icon-custom`} />;
   const initials: Record<string, string> = { claude: 'C', gemini: 'G', 'muse-api': 'M', deepseek: 'D', moonshot: 'K' };
   return <span aria-hidden="true" className={`${className} provider-letter`} style={small ? { fontSize: 15 } : undefined}>{id.startsWith('qwen') ? 'Q' : initials[id] || id[0].toUpperCase()}</span>;
 }

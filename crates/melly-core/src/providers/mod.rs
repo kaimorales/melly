@@ -10,7 +10,9 @@ mod network;
 mod protocol;
 mod sse;
 mod transport;
+pub(crate) use catalog::spec;
 pub use catalog::{catalog, credential_id, supports_native_search, validate_connection};
+pub mod compatible;
 pub use network::public_url;
 pub async fn list_models(
     connection: &Connection,
@@ -23,14 +25,16 @@ pub async fn list_models(
         return Ok(vec![ModelInfo {
             id: "melly-demo".into(),
             name: "Melly demo · Mock".into(),
+            context_window: None,
         }]);
     }
     let url = model_list_url(connection)?;
-    let request = authenticated(
-        network::client()?.get(url),
-        &connection.provider_id,
-        credential,
-    )?;
+    let client = if compatible::is_custom(&connection.provider_id) {
+        compatible::client(&url)?
+    } else {
+        network::client()?
+    };
+    let request = authenticated(client.get(url), &connection.provider_id, credential)?;
     let response = transport::send(request, &connection.provider_id, &cancel).await?;
     protocol::models(
         &connection.provider_id,
@@ -39,6 +43,9 @@ pub async fn list_models(
 }
 
 fn model_list_url(connection: &Connection) -> Result<url::Url> {
+    if compatible::is_custom(&connection.provider_id) {
+        return compatible::endpoint(&connection.base_url, "models");
+    }
     if connection.provider_id == "ollama" {
         return public_url("https://ollama.com/api/tags");
     }
@@ -79,8 +86,13 @@ pub async fn stream(
     }
     let (url, body, protocol) = protocol::request(&request)?;
     let provider = &request.connection.provider_id;
-    let http = authenticated(
+    let client = if compatible::is_custom(provider) {
+        compatible::client(&url)?
+    } else {
         network::client()?
+    };
+    let http = authenticated(
+        client
             .post(url)
             .json(&body)
             .header("Accept", "text/event-stream"),
@@ -96,7 +108,7 @@ fn authenticated(
     provider: &str,
     credential: Option<&str>,
 ) -> Result<reqwest::RequestBuilder> {
-    if provider != "custom" {
+    if provider != "custom" && !compatible::is_custom(provider) {
         ensure!(
             credential.is_some_and(|key| !key.trim().is_empty()),
             "{provider} credential is not configured"

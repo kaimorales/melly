@@ -73,6 +73,41 @@ fn ollama_cloud_is_a_fixed_key_route_not_a_local_runtime_or_plan_fallback() {
 }
 
 #[test]
+fn named_compatible_connections_allow_loopback_without_weakening_cloud_routes() {
+    use providers::compatible::{CompatibleConnection, endpoint, parse_base};
+    let mut connection = CompatibleConnection {
+        id: "compatible:00000000-0000-4000-8000-000000000001".into(),
+        name: "Local server".into(),
+        base_url: "http://localhost:8123/workspace/v1/".into(),
+        models: vec![ModelInfo {
+            id: "upstream-id".into(),
+            name: "Model name".into(),
+            context_window: Some(32768),
+        }],
+    };
+    connection.validate().unwrap();
+    assert_eq!(connection.base_url, "http://127.0.0.1:8123/workspace/v1");
+    assert_eq!(
+        endpoint(&connection.base_url, "models").unwrap().path(),
+        "/workspace/v1/models"
+    );
+    providers::validate_connection(&connection.connection()).unwrap();
+    assert!(providers::public_url(&connection.base_url).is_err());
+    for invalid in [
+        "http://192.168.1.10:8080/v1",
+        "https://169.254.169.254/v1",
+        "http://example.com/v1",
+        "http://user@127.0.0.1/v1",
+        "http://127.0.0.1/v1?q=1",
+        "file:///tmp/test",
+    ] {
+        assert!(parse_base(invalid).is_err(), "accepted {invalid}");
+    }
+    connection.models.push(connection.models[0].clone());
+    assert!(connection.validate().is_err());
+}
+
+#[test]
 fn fixed_endpoints_cannot_be_replaced() {
     for p in providers::catalog()
         .into_iter()

@@ -297,6 +297,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .field input, .search-input { display: block; width: 100%; border: 1px solid var(--rule); border-radius: 8px; padding: 9px 11px; background: var(--panel); color: var(--ink); font-size: 13px; margin-top: 7px; }
 .field input:read-only { color: var(--secondary); }
 .field small { display: block; margin-top: 6px; font-size: 11px; color: var(--muted); }
+.custom-connection-dialog .dialog-header h2 { min-width: 0; overflow-wrap: anywhere; }
+.custom-connection-address { margin: 10px 0 14px; font-size: 12px; color: var(--secondary); overflow-wrap: anywhere; }
+.custom-connection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.custom-connection-models { margin-top: 18px; border-top: 1px solid var(--rule); padding-top: 12px; }
+.custom-connection-model-header, .custom-connection-model { display: flex; justify-content: space-between; align-items: baseline; gap: 8px 12px; flex-wrap: wrap; }
+.custom-connection-model-header h3 { font-size: 13px; font-weight: 500; margin: 0; }
+.custom-connection-model { padding: 8px 0; font-size: 12px; color: var(--secondary); }
+.custom-connection-model button:first-child { min-width: 0; text-align: left; overflow-wrap: anywhere; }
+.custom-connection-dialog .field select { display: block; width: 100%; min-width: 0; margin-top: 7px; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); color: var(--ink); font-size: 13px; }
 .native-key-slot { display: block; width: 100%; height: 36px; margin-top: 7px; padding: 9px 11px; border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); color: var(--muted); font-size: 13px; text-align: left; }
 .native-key-slot-active { color: transparent; }
 .dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 22px; }

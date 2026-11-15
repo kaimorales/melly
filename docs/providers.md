@@ -41,6 +41,23 @@ Ollama Cloud uses a key created in the user's Ollama account and runs remotely, 
 
 Model listing is explicit, never startup work. It returns at most the first 1,000 valid models from the first response page. Claude and Gemini are asked for their documented maximum page size instead of their smaller default pages. Gemini entries explicitly reporting no content-generation method are omitted; entries with unknown capability and manually entered IDs remain available. Discovery does not prove inference access or that every returned model supports the selected chat protocol. Initial model hints are documented examples, not promises of availability. [Claude models](https://platform.claude.com/docs/en/api/models/list), [Gemini models](https://ai.google.dev/api/models).
 
+## OpenAI-compatible connections
+
+In the desktop app, choose **Settings → Custom connection → Add**. Enter a connection
+name and the server's API base URL, including its `/v1` prefix if required.
+Use **Add API key** to enter a key in the native secure dialog if required.
+Use **Test connection** to fetch the model list.
+Choose a discovered model or enter its API ID manually. The display name appears
+in the picker, and an optional context limit overrides discovered metadata.
+
+Connections support streaming Chat Completions. They accept public HTTPS or
+loopback HTTP/HTTPS and use endpoint-bound Keychain credentials if configured.
+The app keeps the server URL fixed per connection, refuses redirects and
+environment proxies, and does not start servers or fall back to another route.
+Tool calling is unavailable on this generic route. Use **Use as default** for
+new chats or change a specific chat through the model picker. Matching display
+names appear together with the connection names available beneath them.
+
 ## Search and sources
 
 Native search is enabled only for exact model IDs in `supports_native_search`; provider-level `native_search` is descriptive, not a substitute for this model check. Native search activity is reported separately from client tool calls. Citation events become bounded `Source` records with public HTTPS URLs. Native search errors remain errors. A model can decline to search even when the tool is offered; no search claim is fabricated.

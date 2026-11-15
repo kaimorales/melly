@@ -176,6 +176,15 @@ impl Engine {
         self.store.lock().unwrap().delete_chat(id)
     }
     pub fn connection(&self, id: &str) -> Result<Connection> {
+        if providers::compatible::is_custom(id) {
+            return Ok(self
+                .store
+                .lock()
+                .unwrap()
+                .compatible_connection(id)?
+                .context("Unknown compatible connection")?
+                .connection());
+        }
         let p = providers::catalog()
             .into_iter()
             .find(|p| p.id == id)
@@ -191,10 +200,32 @@ impl Engine {
                 model_id: p.default_model,
             }))
     }
+    pub fn model_connection(&self, provider: &str, model: &str) -> Result<Connection> {
+        let mut connection = self.connection(provider)?;
+        if providers::compatible::is_custom(provider) {
+            let store = self.store.lock().unwrap();
+            let saved = store
+                .compatible_connection(provider)?
+                .context("Unknown compatible connection")?;
+            ensure!(
+                saved.models.iter().any(|item| item.id == model),
+                "Choose a saved model on this connection"
+            );
+        }
+        connection.model_id = model.to_owned();
+        providers::validate_connection(&connection)?;
+        Ok(connection)
+    }
     pub fn bootstrap(&self) -> Result<Bootstrap> {
-        let (folders, chats, mut settings) = {
+        let (folders, chats, mut settings, compatible_connections, chat_models) = {
             let s = self.store.lock().unwrap();
-            (s.folders()?, s.chats()?, s.settings()?)
+            (
+                s.folders()?,
+                s.chats()?,
+                s.settings()?,
+                s.compatible_connections()?,
+                s.chat_models()?,
+            )
         };
         // A saved subscription choice cannot authorize the metered API.
         if settings.default_provider == "muse" {
@@ -231,16 +262,35 @@ impl Engine {
                 status: status.into(),
             });
         }
+        for item in &compatible_connections {
+            let configured = !item.models.is_empty();
+            views.push(ProviderView {
+                spec: item.spec(),
+                configured,
+                connection: item.connection(),
+                status: if configured {
+                    "Saved connection"
+                } else {
+                    "Add a model"
+                }
+                .into(),
+            });
+        }
         Ok(Bootstrap {
             folders,
             chats,
             settings,
             providers: views,
             search_configured: self.vault.contains(SEARCH_KEY_ID).unwrap_or(false),
+            compatible_connections,
+            chat_models,
         })
     }
     pub async fn credential(&self, connection: &Connection) -> Result<Option<String>> {
         providers::validate_connection(connection)?;
+        if providers::compatible::is_custom(&connection.provider_id) {
+            return self.vault.get(&providers::credential_id(connection));
+        }
         match connection.provider_id.as_str() {
             "mock" => Ok(None),
             "chatgpt" => {
@@ -273,10 +323,8 @@ impl Engine {
             input.retry || (!input.content.trim().is_empty() && input.content.len() <= 32_000),
             "Write a message of 32,000 bytes or fewer"
         );
-        let spec = providers::catalog()
-            .into_iter()
-            .find(|p| p.id == input.provider_id)
-            .context("Unknown provider")?;
+        let connection = self.model_connection(&input.provider_id, input.model_id.trim())?;
+        let spec = providers::spec(&connection)?;
         if let Some(reason) = spec.disabled_reason {
             bail!("{reason}")
         }
@@ -288,8 +336,6 @@ impl Engine {
             );
             file.validate()?;
         }
-        let mut connection = self.connection(&input.provider_id)?;
-        connection.model_id = input.model_id.trim().into();
         ensure!(
             !connection.model_id.is_empty() && connection.model_id.len() <= 200,
             "Choose a model or enter its model ID in Settings"
@@ -332,6 +378,13 @@ impl Engine {
         } else {
             input.content.trim().to_owned()
         };
+        let mut prompt = format!("{}\n\n{}", store.settings()?.system_prompt, TOOL_POLICY);
+        let capacity = store.model_context_window(&connection)?;
+        let budget = context_budget(capacity, &prompt);
+        ensure!(
+            capacity.is_none() || content.len() <= budget,
+            "This message exceeds the configured context limit. Shorten the message or choose a larger context."
+        );
         if !input.retry {
             store.insert_message(
                 &input.chat_id,
@@ -355,8 +408,11 @@ impl Engine {
                     .collect::<String>(),
             )?;
         }
-        let mut messages = store.context(&input.chat_id)?;
-        let mut prompt = format!("{}\n\n{}", store.settings()?.system_prompt, TOOL_POLICY);
+        let mut messages = if capacity.is_some() {
+            store.context_with_budget(&input.chat_id, budget)?
+        } else {
+            store.context(&input.chat_id)?
+        };
         if client_web && input.web_search {
             prompt.push_str("\nMelly runs the web search before your reply and supplies the results as reference data. Cite results you use. An empty list means Melly found no usable sources.");
         }
@@ -549,8 +605,13 @@ impl Engine {
                     });
                 }
             });
+            let timeout = if providers::compatible::is_custom(&turn.connection.provider_id) {
+                480
+            } else {
+                180
+            };
             let stream_result = tokio::time::timeout(
-                Duration::from_secs(180),
+                Duration::from_secs(timeout),
                 self.transport.stream(
                     turn.request.clone(),
                     credential.clone(),
@@ -759,6 +820,13 @@ fn append_sources(target: &mut Vec<Source>, sources: &[Source]) {
         }
     }
 }
+fn context_budget(capacity: Option<usize>, system: &str) -> usize {
+    capacity
+        .map(|n| n.saturating_sub((n / 4).min(4096) + 256) * 3)
+        .map(|bytes| bytes.min(512 * 1024).saturating_sub(system.len()))
+        .unwrap_or(60_000)
+}
+
 fn safe_web_sources(sources: Vec<Source>) -> Vec<Source> {
     sources
         .into_iter()

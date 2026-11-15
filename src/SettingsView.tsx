@@ -2,12 +2,14 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { backend, nativeApp } from './backend';
 import { ApiKeyField, type ApiKeyFieldHandle } from './ApiKeyField';
 import { Dialog } from './dialogs';
+import { CompatibleConnectionDialog } from './CompatibleConnections';
 import { Icon, ProviderIcon } from './icons';
 import { discoverModels, invalidateModelCatalog, useModelCatalog } from './model-catalog';
 import type { Bootstrap, Connection, ProviderView, Settings } from './types';
 
 export const providerName = (provider: ProviderView) => provider.id === 'mock' ? 'Demo' : provider.id === 'custom' ? 'Custom' : provider.id === 'moonshot' ? 'Kimi / Moonshot' : provider.name;
 export function routeLabel(provider: ProviderView) {
+  if (provider.id.startsWith('compatible:')) return provider.billingRoute === 'On this Mac' ? 'Local' : 'API';
   if (provider.id === 'mock') return 'Mock';
   if (provider.id === 'chatgpt') return 'Plan';
   if (provider.id === 'muse-api') return 'Metered API';
@@ -95,10 +97,12 @@ function ProviderDialog({ initialId, data, theme, onClose, refresh }: { initialI
 
 export function SettingsView({ data, theme, onSettings, refresh, onSeed, report }: { data: Bootstrap; theme: string; onSettings: (settings: Settings) => Promise<void>; refresh: () => Promise<Bootstrap>; onSeed: () => Promise<void>; report: (message: string) => void }) {
   const [providerId, setProviderId] = useState<string | null>(null);
+  const [connectionId, setConnectionId] = useState<string | null>(null);
+  const compatible = data.compatibleConnections || [];
   const [prompt, setPrompt] = useState(data.settings.systemPrompt); const [promptSaved, setPromptSaved] = useState(false);
   const providerGroup = useRef<HTMLDivElement>(null);
   const update = (patch: Partial<Settings>) => { void onSettings({ ...data.settings, ...patch }).catch((reason) => report(String(reason))); };
-  const providers = [...data.providers.filter((provider) => provider.id !== 'mock' && provider.id !== 'qwen-token-plan'), ...data.providers.filter((provider) => !nativeApp && provider.id === 'mock')];
+  const providers = [...data.providers.filter((provider) => provider.id !== 'mock' && provider.id !== 'qwen-token-plan' && !provider.id.startsWith('compatible:') && (provider.id !== 'custom' || !nativeApp || provider.configured)), ...data.providers.filter((provider) => !nativeApp && provider.id === 'mock')];
   const tokenPlanConfigured = data.providers.some((provider) => provider.id === 'qwen-token-plan' && provider.configured);
   const configured: ReactNode[] = [];
   const available: ReactNode[] = [];
@@ -140,11 +144,25 @@ export function SettingsView({ data, theme, onSettings, refresh, onSeed, report 
   return <div className="settings-scroll"><div className="settings-content">
     <section className="settings-section" aria-labelledby="providers-title"><h2 id="providers-title">Providers</h2><div className="provider-group" ref={providerGroup}>
       {configured}
+      {compatible.map(connection => <div className="provider-row" key={connection.id}>
+        <Icon name="tune" className="provider-icon provider-icon-custom" />
+        <div className="provider-copy"><div className="provider-name">{connection.name}</div><div className="provider-description">{connection.baseUrl}</div></div>
+        <button className="provider-action" aria-label={`Manage ${connection.name}`} onClick={() => setConnectionId(connection.id)}>Manage<Icon name="chevron" /></button>
+      </div>)}
+      {nativeApp && <div className="provider-row">
+        <Icon name="tune" className="provider-icon provider-icon-custom" />
+        <div className="provider-copy"><div className="provider-name">Custom connection</div><div className="provider-description">OpenAI-compatible</div></div>
+        <button className="provider-action" aria-label="Add custom connection" onClick={() => setConnectionId('new')}>Add<Icon name="plus" /></button>
+      </div>}
       {available.length > 0 && <details className="provider-disclosure">
         <summary><Icon name="plus" className="provider-disclosure-icon" />Browse providers<Icon name="chevron" className="provider-disclosure-chevron" /></summary>
         {available}
       </details>}
     </div></section>
+    {connectionId !== null && <CompatibleConnectionDialog key={connectionId} initial={compatible.find(item => item.id === connectionId) || null}
+      close={() => setConnectionId(null)} changed={refresh}
+      defaultRoute={{ providerId: data.settings.defaultProvider, modelId: data.settings.defaultModel }}
+      setDefault={(id, modelId) => onSettings({ ...data.settings, defaultProvider: id, defaultModel: modelId })} />}
     <section className="settings-section" aria-labelledby="appearance-title"><h2 id="appearance-title">Appearance</h2><div className="settings-group">
       <div className="settings-row"><span className="settings-row-label">Theme</span><div className="theme-options" role="group" aria-label="Theme">{['system', 'light', 'dark'].map((value) => <button key={value} aria-pressed={data.settings.theme === value} onClick={() => update({ theme: value })}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div></div>
       <div className="settings-row"><span className="settings-row-label">Text size</span><div className="theme-options" role="group" aria-label="Text size">{[14, 16, 18].map((value) => <button key={value} aria-pressed={data.settings.fontSize === value} onClick={() => update({ fontSize: value })}>{value}</button>)}</div></div>

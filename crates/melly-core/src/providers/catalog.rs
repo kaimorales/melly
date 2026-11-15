@@ -167,6 +167,9 @@ pub fn catalog() -> Vec<ProviderSpec> {
 }
 
 pub(crate) fn spec(connection: &Connection) -> Result<ProviderSpec> {
+    if super::compatible::is_custom(&connection.provider_id) {
+        return Ok(super::compatible::wire_spec(connection));
+    }
     catalog()
         .into_iter()
         .find(|p| p.id == connection.provider_id)
@@ -174,6 +177,10 @@ pub(crate) fn spec(connection: &Connection) -> Result<ProviderSpec> {
 }
 
 pub fn validate_connection(connection: &Connection) -> Result<()> {
+    if super::compatible::is_custom(&connection.provider_id) {
+        super::compatible::parse_base(&connection.base_url)?;
+        return Ok(());
+    }
     let provider = spec(connection)?;
     if provider.disabled_reason.is_some() {
         bail!("Provider is unavailable");

@@ -110,6 +110,8 @@ impl Store {
             CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE OF content ON messages BEGIN INSERT INTO messages_fts(messages_fts,rowid,content) VALUES('delete',old.rowid,old.content); INSERT INTO messages_fts(rowid,content) VALUES(new.rowid,new.content); END;
             CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS connections(provider_id TEXT PRIMARY KEY,base_url TEXT NOT NULL,model_id TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS compatible_connections(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS chat_models(chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE, provider_id TEXT NOT NULL, model_id TEXT NOT NULL);
             UPDATE messages SET status='interrupted' WHERE status='streaming'; PRAGMA user_version=1;")?;
         Ok(Self { conn })
     }
@@ -280,8 +282,14 @@ impl Store {
         Ok(rows)
     }
     pub fn context(&self, chat_id: &str) -> Result<Vec<WireMessage>> {
+        self.context_with_budget(chat_id, 60_000)
+    }
+    pub(crate) fn context_with_budget(
+        &self,
+        chat_id: &str,
+        mut budget: usize,
+    ) -> Result<Vec<WireMessage>> {
         let messages = self.messages(chat_id, None)?;
-        let mut budget = 60_000;
         let mut wire = Vec::new();
         for m in messages
             .into_iter()
@@ -426,6 +434,89 @@ impl Store {
             "Model ID is required and must be 200 characters or fewer"
         );
         self.conn.execute("INSERT INTO connections VALUES(?1,?2,?3) ON CONFLICT(provider_id) DO UPDATE SET base_url=excluded.base_url,model_id=excluded.model_id",params![c.provider_id,c.base_url,c.model_id])?;
+        Ok(())
+    }
+    pub fn compatible_connections(
+        &self,
+    ) -> Result<Vec<crate::providers::compatible::CompatibleConnection>> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT data FROM compatible_connections ORDER BY rowid")?;
+        statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .map(|row| Ok(serde_json::from_str(&row?)?))
+            .collect()
+    }
+    pub fn compatible_connection(
+        &self,
+        id: &str,
+    ) -> Result<Option<crate::providers::compatible::CompatibleConnection>> {
+        let row: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT data FROM compatible_connections WHERE id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        row.map(|value| Ok(serde_json::from_str(&value)?))
+            .transpose()
+    }
+    pub(crate) fn model_context_window(&self, connection: &Connection) -> Result<Option<usize>> {
+        if !crate::providers::compatible::is_custom(&connection.provider_id) {
+            return Ok(None);
+        }
+        Ok(self
+            .compatible_connection(&connection.provider_id)?
+            .and_then(|entry| {
+                entry
+                    .models
+                    .into_iter()
+                    .find(|model| model.id == connection.model_id)
+                    .and_then(|model| model.context_window)
+            }))
+    }
+    pub fn save_compatible_connection(
+        &self,
+        mut connection: crate::providers::compatible::CompatibleConnection,
+    ) -> Result<()> {
+        connection.validate()?;
+        if let Some(saved) = self.compatible_connection(&connection.id)? {
+            ensure!(
+                saved.base_url == connection.base_url,
+                "Add a new connection for a different address"
+            );
+        } else {
+            let count: usize =
+                self.conn
+                    .query_row("SELECT count(*) FROM compatible_connections", [], |r| {
+                        r.get(0)
+                    })?;
+            ensure!(count < 50, "Up to 50 compatible connections can be saved");
+        }
+        self.conn.execute("INSERT INTO compatible_connections(id,data) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+            params![connection.id, serde_json::to_string(&connection)?])?;
+        Ok(())
+    }
+    pub fn chat_models(&self) -> Result<std::collections::HashMap<String, ChatModel>> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT chat_id,provider_id,model_id FROM chat_models")?;
+        Ok(statement
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    ChatModel {
+                        provider_id: row.get(1)?,
+                        model_id: row.get(2)?,
+                    },
+                ))
+            })?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+    pub fn save_chat_model(&self, chat: &str, model: &ChatModel) -> Result<()> {
+        self.conn.execute("INSERT INTO chat_models(chat_id,provider_id,model_id) VALUES(?1,?2,?3) ON CONFLICT(chat_id) DO UPDATE SET provider_id=excluded.provider_id,model_id=excluded.model_id",
+            params![chat, model.provider_id, model.model_id])?;
         Ok(())
     }
     pub fn seed_demo(&self) -> Result<()> {

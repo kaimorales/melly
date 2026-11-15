@@ -85,10 +85,14 @@ pub(crate) fn request(input: &ProviderRequest) -> Result<(url::Url, Value, Proto
         }
         _ => bail!("Provider protocol is unavailable"),
     };
-    let mut url = super::public_url(&format!(
-        "{}/{path}",
-        super::catalog::normalized_base(&input.connection.base_url)
-    ))?;
+    let mut url = if super::compatible::is_custom(&spec.id) {
+        super::compatible::endpoint(&input.connection.base_url, path)?
+    } else {
+        super::public_url(&format!(
+            "{}/{path}",
+            super::catalog::normalized_base(&input.connection.base_url)
+        ))?
+    };
     if matches!(protocol, Protocol::Interactions) {
         url.query_pairs_mut().append_pair("alt", "sse");
     }
@@ -292,6 +296,13 @@ pub(crate) fn models(provider: &str, value: Value) -> Result<Vec<ModelInfo>> {
             result.push(ModelInfo {
                 id: id.into(),
                 name: name.unwrap_or(id).chars().take(256).collect(),
+                context_window: model["context_length"]
+                    .as_u64()
+                    .or_else(|| model["inputTokenLimit"].as_u64())
+                    .or_else(|| model["context_window"].as_u64())
+                    .or_else(|| model["max_model_len"].as_u64())
+                    .filter(|n| (1024..=100_000_000).contains(n))
+                    .map(|n| n as usize),
             });
         }
     }

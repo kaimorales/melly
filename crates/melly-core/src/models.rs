@@ -90,6 +90,8 @@ pub struct ProviderView {
 pub struct ModelInfo {
     pub id: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<usize>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -181,4 +183,13 @@ pub struct Bootstrap {
     pub settings: Settings,
     pub providers: Vec<ProviderView>,
     pub search_configured: bool,
+    pub compatible_connections: Vec<crate::providers::compatible::CompatibleConnection>,
+    pub chat_models: std::collections::HashMap<String, ChatModel>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatModel {
+    pub provider_id: String,
+    pub model_id: String,
 }
