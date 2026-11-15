@@ -4,7 +4,7 @@ import { Diff, type DiffLine } from './InlineFileEdit';
 import { Icon } from './icons';
 
 export type CodingApproval = { id: string; label: string; path: string | null; diff: DiffLine[] };
-type CodingResult = { action: string; path: string; diff: DiffLine[] }
+type CodingResult = { action: string; reused?: boolean; path: string; diff: DiffLine[] }
   | { command: string; label?: string; passed: boolean; no_tests_found: boolean; exit_code: number | null; stdout: string; stderr: string };
 export type CodingActivityState = { approval?: CodingApproval; results: CodingResult[] };
 
@@ -25,7 +25,7 @@ export function CodingActivity({ activity }: { activity: CodingActivityState }) 
           <pre className="file-edit-diff">{[result.command, result.stdout, result.stderr].filter(Boolean).join('\n')}</pre>
         </details>
       : <details className="file-edit-card file-edit-saved" key={index}>
-          <summary><Icon name="check" /><span>{result.action === 'Create' ? 'Created' : result.action === 'Delete' ? 'Deleted' : 'Edited'} <code>{result.path}</code></span><Icon name="chevron" /></summary>
+          <summary><Icon name="check" /><span>{result.reused ? 'Already completed' : result.action === 'Create' ? 'Created' : result.action === 'Delete' ? 'Deleted' : 'Edited'} <code>{result.path}</code></span><Icon name="chevron" /></summary>
           <Diff lines={result.diff} />
         </details>)}
     {activity.approval && <section className="file-edit-card file-edit-review" aria-label="Permission requested">

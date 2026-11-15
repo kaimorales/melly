@@ -59,3 +59,35 @@ test('a coding action pauses for inline approval and shows its result', async ({
   await expect(page.locator('summary').getByText('example.py')).toBeVisible();
   expect(await page.evaluate(() => (window as unknown as { __approval: unknown }).__approval)).toEqual({ id: 'pending-tool', approved: true });
 });
+
+test('an interrupted coding reply offers Continue and preserves its previous result', async ({ page }) => {
+  await page.route('**/src/backend.ts*', async route => {
+    await route.fulfill({ contentType: 'application/javascript', body: `
+      import { mockBackend } from './mock-backend.ts';
+      export const nativeApp = true;
+      let continued = false;
+      let stream;
+      const prior = {id:'prior',chatId:'fixture',role:'assistant',content:'Saved the synthetic file.',status:'interrupted',createdAt:2,sources:[]};
+      export const backend = {
+        async invoke(command,args={}) {
+          if(command==='bootstrap') {const data=await mockBackend.invoke(command,args);const provider=data.providers.find(p=>p.id==='muse-api');return {...data,providers:[{...provider,configured:true}],settings:{...data.settings,defaultProvider:provider.id,defaultModel:provider.connection.modelId},chats:[{id:'fixture',title:'Continuation fixture',folderId:null,updatedAt:1}]};}
+          if(command==='messages') return continued ? [prior,{...prior,id:'continued',content:'Continued the task.',status:'complete',createdAt:4}] : [prior];
+          if(command==='coding_activity') return {prior:[{action:'Create',path:'example.py',diff:[{kind:'+',text:'print(42)'}]}]};
+          if(command==='start_chat') {
+            if(!args.input.retry) throw new Error('Expected continuation');
+            continued=true;
+            const reply={...prior,id:'continued',content:'',status:'streaming',createdAt:4};
+            setTimeout(()=>stream?.({chatId:'fixture',messageId:'continued',kind:'done',text:'',sources:[]}),30);
+            return reply;
+          }
+          return mockBackend.invoke(command,args);
+        },listen:(event,callback)=>{if(event==='chat-stream')stream=callback;return mockBackend.listen(event,callback);}
+      };`
+    });
+  });
+  await page.goto('/');
+  await page.getByRole('button',{name:'Continue task',exact:true}).click();
+  await expect(page.getByText('Continued the task.',{exact:true})).toBeVisible();
+  await expect(page.getByText('Saved the synthetic file.',{exact:true})).toBeVisible();
+  await expect(page.locator('summary').getByText('example.py')).toBeVisible();
+});

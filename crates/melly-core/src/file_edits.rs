@@ -14,7 +14,7 @@ pub struct Proposal {
     content: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Replacement {
     old: String,

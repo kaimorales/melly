@@ -91,3 +91,7 @@ File mutations persist before/after snapshots in a local journal before touching
 ## Saved composer drafts
 
 `composer_draft(chatId?)` restores the unsent text, selected attachment metadata, and edit target for that chat (or the new-chat composer). `save_composer_draft(chatId?,draft)` persists bounded content locally as input changes, with serialized writes and no idle polling. Switching chats preserves each draft. Send flushes pending saves and consumes only the matching accepted draft; a failed send retains it. Draft-owned attachment bytes survive restart, remain local until Send, and are removed when discarded. Drafts and undo snapshots are excluded from portable exports.
+
+## Continuing interrupted coding tasks
+
+Coding replies expose Continue instead of destructive Retry. A continuation preserves the earlier reply, its undo journal, and recorded checks, and appends a new turn tied to the original task. Bounded action/check results are replayed as untrusted data; file snapshots stay private. Each mutation is associated with a durable operation receipt before writing. Repeated identical operations in the same task reuse the verified on-disk result, including recovery after interruption between the write and its completion record. If the file changed, the model must read it again; a new user task has independent receipts. Pending approvals are not restored as permissions, and Ask remains the restart default.

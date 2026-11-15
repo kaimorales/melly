@@ -72,7 +72,7 @@ function MessageView({ message, activity, codingActivity, theme, highlight, onSo
       {reply.text && <button className="icon-button" aria-label="Copy response" title="Copy response" onClick={() => { void navigator.clipboard.writeText(reply.text).then(() => report('Response copied.')).catch(() => report('Could not copy the response.')); }}><Icon name="copy" /></button>}
       {stopped && <span className="message-status">Response stopped</span>}
       {failed && <span className="message-status">Response interrupted</span>}
-      {retryEnabled && <button className={`text-action ${stopped || failed ? '' : 'retry-quiet'}`} aria-label="Retry response" onClick={onRetry}>Retry</button>}
+      {retryEnabled && <button className={`text-action ${stopped || failed ? '' : 'retry-quiet'}`} aria-label={codingActivity ? 'Continue task' : 'Retry response'} onClick={onRetry}>{codingActivity ? 'Continue' : 'Retry'}</button>}
       {nativeApp && !reply.proposed && <UndoChanges chatId={message.chatId} messageId={message.id} busy={busy} />}
       {message.providerId && <span className="sr-only">{message.providerId === 'mock' ? 'Synthetic Demo reply' : `${message.modelId}, ${message.billingRoute}`}</span>}
     </div>}

@@ -209,6 +209,42 @@ impl CodingTools for ProjectTools {
         cancel: CancellationToken,
     ) -> Result<Value> {
         self.check_workspace(chat)?;
+        let operation = linked::revision(&serde_json::to_vec(&call)?);
+        if matches!(
+            call,
+            Call::CreateFile { .. } | Call::EditFile { .. } | Call::DeleteFile { .. }
+        ) {
+            let state = self.app.state::<AppState>();
+            let receipt = state
+                .engine
+                .store
+                .lock()
+                .unwrap()
+                .file_operation_receipt(message, &operation)?;
+            if let Some(receipt) = receipt
+                && let Some(result) = reused_change(&self.workspace, &receipt)?
+            {
+                state
+                    .engine
+                    .store
+                    .lock()
+                    .unwrap()
+                    .set_file_change_state(&receipt.id, "applied")?;
+                state
+                    .engine
+                    .store
+                    .lock()
+                    .unwrap()
+                    .record_coding_activity(message, &result)?;
+                self.emit(
+                    chat,
+                    message,
+                    "coding-result",
+                    serde_json::to_string(&result)?,
+                );
+                return Ok(result);
+            }
+        }
         if let Call::SearchRepo { query } = call {
             let workspace = self.workspace.clone();
             self.emit(chat, message, "tool", "Searching project files".into());
@@ -226,18 +262,19 @@ impl CodingTools for ProjectTools {
             self.reads.lock().unwrap().insert(path, revision);
             return Ok(result);
         }
-        let expected_revision = if let Call::DeleteFile { path } = &call {
-            Some(
-                self.reads
-                    .lock()
-                    .unwrap()
-                    .get(path)
-                    .cloned()
-                    .context("Read this file in the current turn before deleting it")?,
-            )
-        } else {
-            None
-        };
+        let expected_revision =
+            if let Call::DeleteFile { path } | Call::EditFile { path, .. } = &call {
+                Some(
+                    self.reads
+                        .lock()
+                        .unwrap()
+                        .get(path)
+                        .cloned()
+                        .context("Read this file in the current turn before changing it")?,
+                )
+            } else {
+                None
+            };
         let workspace = self.workspace.clone();
         let action = tokio::task::spawn_blocking(move || {
             let event = prepare(&workspace, call)?;
@@ -306,6 +343,7 @@ impl CodingTools for ProjectTools {
                         updated.as_deref(),
                         target.original_mode(),
                     )?;
+                    store.bind_file_operation(&message, &operation, &id)?;
                     let result = if let Some(updated) = updated {
                         target.write(&updated)
                     } else {
@@ -351,6 +389,31 @@ impl CodingTools for ProjectTools {
         }
         Ok(result)
     }
+}
+
+fn reused_change(
+    workspace: &ProjectLink,
+    receipt: &melly_core::file_history::Change,
+) -> Result<Option<Value>> {
+    if !matches!(receipt.state.as_str(), "prepared" | "applied")
+        || receipt.folder != workspace.folder_id
+        || receipt.root != workspace.path
+        || (receipt.device, receipt.inode) != (workspace.device, workspace.inode)
+    {
+        return Ok(None);
+    }
+    let target = Target::select(
+        &workspace.path,
+        (workspace.device, workspace.inode),
+        relative(&receipt.path)?,
+        true,
+    )?;
+    if target.original() != receipt.after.as_deref() {
+        return Ok(None);
+    }
+    Ok(Some(
+        json!({"ok":true,"reused":true,"action":if receipt.before.is_none(){"Create"}else if receipt.after.is_none(){"Delete"}else{"Edit"},"path":receipt.path,"diff":[],"note":"This action already completed. The current file matches its recorded result; no additional write was performed."}),
+    ))
 }
 
 fn relative(path: &str) -> Result<&Path> {
@@ -565,5 +628,49 @@ fn project_tools_search_read_create_edit_and_delete_scoped_files() -> Result<()>
     })?;
     assert!(!scope.join("sample.py").exists());
     assert_eq!(std::fs::read_to_string(outside)?, "PRIVATE_NEEDLE");
+    Ok(())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+fn a_completed_write_is_reused_without_changing_the_file_again() -> Result<()> {
+    use melly_core::storage::Store;
+    let root = tempfile::tempdir()?;
+    let store = Store::memory()?;
+    let folder = store.create_folder("Synthetic")?;
+    store.set_project_link(&folder.id, &root.path().canonicalize()?)?;
+    let link = store.project_link(&folder.id)?.unwrap();
+    let chat = store.create_chat(Some(&folder.id))?;
+    let message = store.insert_message(
+        &chat.id,
+        "assistant",
+        "Interrupted",
+        "interrupted",
+        None,
+        None,
+        None,
+    )?;
+    store.register_coding_turn(&message.id, None)?;
+    let change = store.checkpoint_file(
+        &message.id,
+        &link,
+        "a.py",
+        Some("old"),
+        Some("new"),
+        Some(0o600),
+    )?;
+    store.bind_file_operation(&message.id, "operation", &change)?;
+    let file = root.path().join("a.py");
+    std::fs::write(&file, "new")?;
+    let receipt = store
+        .file_operation_receipt(&message.id, "operation")?
+        .unwrap();
+    let before = std::fs::metadata(&file)?.modified()?;
+    let result = reused_change(&link, &receipt)?.unwrap();
+    assert_eq!(result["reused"], true);
+    assert_eq!(std::fs::metadata(&file)?.modified()?, before);
+    std::fs::write(&file, "user's later edit")?;
+    assert!(reused_change(&link, &receipt)?.is_none());
+    assert_eq!(std::fs::read_to_string(file)?, "user's later edit");
     Ok(())
 }

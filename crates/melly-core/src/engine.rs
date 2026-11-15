@@ -460,7 +460,14 @@ impl Engine {
             !input.folder_context || chat.folder_id.is_some(),
             "Move this chat into a folder to search its other chats"
         );
-        let content = if input.retry {
+        let resume = if input.retry {
+            store.resumable_coding_reply(&input.chat_id)?
+        } else {
+            None
+        };
+        let content = if let Some(previous) = &resume {
+            store.coding_goal(previous)?
+        } else if input.retry {
             store.retry_user_message(&input.chat_id)?
         } else {
             input.content.trim().to_owned()
@@ -525,6 +532,33 @@ impl Engine {
         } else {
             store.context(&input.chat_id)?
         };
+        if let Some(previous) = &resume {
+            let prior = store.message(previous)?;
+            if prior.status != "complete" && !prior.content.is_empty() {
+                messages.push(WireMessage::text(
+                    "assistant",
+                    prior.content.chars().take(6000).collect::<String>(),
+                ));
+            }
+            messages.push(WireMessage::text("user", format!("Continue the previous task: {content}. Use recorded results and inspect current files; do not repeat completed changes.")));
+        }
+        if (coding.is_some() || resume.is_some())
+            && let Some(last) = messages.last_mut()
+        {
+            last.content
+                .push_str(&store.coding_context(&input.chat_id)?);
+        }
+        if resume.is_some() {
+            store.insert_message(
+                &input.chat_id,
+                "user",
+                "Continue the previous task.",
+                "complete",
+                None,
+                None,
+                None,
+            )?;
+        }
         if client_web && input.web_search {
             prompt.push_str("\nMelly runs the web search before your reply and supplies the results as reference data. Cite results you use. An empty list means Melly found no usable sources.");
         }
@@ -558,6 +592,9 @@ impl Engine {
         )?;
         if let Some(link) = &edit_link {
             store.record_file_edit_scope(&message.id, link)?;
+        }
+        if coding.is_some() || resume.is_some() {
+            store.register_coding_turn(&message.id, resume.as_deref())?;
         }
         drop(store);
         let mut tools = vec![];

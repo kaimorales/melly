@@ -151,3 +151,112 @@ async fn coding_rounds_hide_tool_requests_and_use_test_results() -> anyhow::Resu
     );
     Ok(())
 }
+
+struct ContinuationModel;
+#[async_trait]
+impl Transport for ContinuationModel {
+    async fn stream(
+        &self,
+        request: ProviderRequest,
+        _: Option<String>,
+        sink: ProviderSink,
+        _: CancellationToken,
+    ) -> anyhow::Result<()> {
+        let context = request
+            .messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(context.contains("Fix the original synthetic bug"));
+        assert!(context.contains("Already changed the file"));
+        assert!(context.contains("synthetic check failed"));
+        assert!(context.contains("do not repeat completed changes"));
+        sink(ProviderEvent::Delta(
+            "Continuing from the recorded result.".into(),
+        ));
+        sink(ProviderEvent::Done);
+        Ok(())
+    }
+    async fn web_search(
+        &self,
+        _: &str,
+        _: &str,
+        _: CancellationToken,
+    ) -> anyhow::Result<Vec<Source>> {
+        anyhow::bail!("Unexpected search")
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn continuation_replays_results_without_deleting_the_interrupted_turn() -> anyhow::Result<()>
+{
+    let root = tempfile::tempdir()?;
+    let store = Store::memory()?;
+    let folder = store.create_folder("Synthetic")?;
+    store.set_project_link(&folder.id, &root.path().canonicalize()?)?;
+    let chat = store.create_chat(Some(&folder.id))?;
+    store.insert_message(
+        &chat.id,
+        "user",
+        "Fix the original synthetic bug",
+        "complete",
+        None,
+        None,
+        None,
+    )?;
+    let prior = store.insert_message(
+        &chat.id,
+        "assistant",
+        "Already changed the file",
+        "interrupted",
+        None,
+        None,
+        None,
+    )?;
+    store.register_coding_turn(&prior.id, None)?;
+    store.record_coding_activity(
+        &prior.id,
+        &json!({"command":"python3 -m unittest","passed":false,"stderr":"synthetic check failed"}),
+    )?;
+    let engine = Arc::new(Engine::with_transport(
+        Arc::new(Mutex::new(store)),
+        Arc::new(MemorySecrets::default()),
+        Arc::new(ContinuationModel),
+    ));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let reply = engine.start_with_coding_tools(
+        SendInput {
+            chat_id: chat.id.clone(),
+            provider_id: "mock".into(),
+            model_id: "melly-demo".into(),
+            content: String::new(),
+            web_search: false,
+            folder_context: true,
+            retry: true,
+        },
+        None,
+        Arc::new(move |u| {
+            let _ = tx.send(u);
+        }),
+        Some(Arc::new(Tools)),
+    )?;
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while let Some(u) = rx.recv().await {
+            assert_ne!(u.kind, "error", "{}", u.text);
+            if u.kind == "done" {
+                break;
+            }
+        }
+    })
+    .await?;
+    let store = engine.store.lock().unwrap();
+    assert!(store.message(&prior.id).is_ok());
+    assert_eq!(store.messages(&chat.id, None)?.len(), 4);
+    assert_eq!(
+        store.coding_goal(&reply.id)?,
+        "Fix the original synthetic bug"
+    );
+    Ok(())
+}

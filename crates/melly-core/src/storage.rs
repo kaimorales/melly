@@ -117,6 +117,7 @@ impl Store {
         let store = Self { conn };
         store.initialize_file_edits()?;
         store.initialize_file_history()?;
+        store.initialize_coding_resume()?;
         store.initialize_drafts()?;
         Ok(store)
     }
@@ -344,8 +345,10 @@ impl Store {
             .rev()
             .find(|m| m.role == "user")
             .context("No user message to retry")?;
-        self.conn
-            .execute("DELETE FROM messages WHERE id=?1", [&last.id])?;
+        if self.resumable_coding_reply(chat_id)?.is_none() {
+            self.conn
+                .execute("DELETE FROM messages WHERE id=?1", [&last.id])?;
+        }
         Ok(user.content.clone())
     }
     pub fn search_folder(
