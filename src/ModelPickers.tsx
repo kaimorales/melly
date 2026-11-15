@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Icon, ProviderIcon } from './icons';
 import { discoverModels, modelCatalogKey, useModelCatalog } from './model-catalog';
 import { modelLabel, providerName, routeLabel } from './SettingsView';
-import type { ProviderView } from './types';
+import type { ChatModel, CompatibleConnection, ProviderView } from './types';
 
 function usePicker(close: () => void) {
   const ref = useRef<HTMLDivElement>(null);
@@ -60,5 +60,43 @@ export function ModelPicker({ provider, selected, close, choose }: { provider: P
     </div>
     {error && <div className="picker-error" role="alert">{error}</div>}
     {manual ? <form className="manual-model" onSubmit={(event) => { event.preventDefault(); if (modelId.trim()) void select(modelId.trim()); }}><label>Model ID<input ref={input} value={modelId} maxLength={200} placeholder="Enter a model ID" spellCheck={false} onChange={(event) => setModelId(event.target.value)} /></label><button className="button" disabled={!modelId.trim() || busy}>Use model</button></form> : provider.id !== 'mock' && <button className="menu-footer" onClick={() => setManual(true)}>Enter model ID</button>}
+  </div>;
+}
+
+export function CompatibleModelPicker({ connections, selected, close, choose }: {
+  connections: CompatibleConnection[]; selected: ChatModel; close: () => void; choose: (model: ChatModel) => Promise<void>;
+}) {
+  const { ref, keydown } = usePicker(close);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const groups = new Map<string, { modelId: string; modelName: string; providerId: string; connectionName: string }[]>();
+  for (const connection of connections) {
+    for (const model of connection.models) {
+      const key = model.name.toLocaleLowerCase();
+      const group = groups.get(key) || [];
+      group.push({ modelId: model.id, modelName: model.name, providerId: connection.id, connectionName: connection.name });
+      groups.set(key, group);
+    }
+  }
+  const select = async (model: ChatModel) => {
+    setBusy(true); setError('');
+    try { await choose(model); } catch (reason) { setError(String(reason)); setBusy(false); }
+  };
+  return <div className="menu model-menu" ref={ref} onKeyDown={keydown}>
+    <div className="menu-label">Models</div>
+    <div role="listbox" aria-label="Models">
+      {[...groups].map(([key, group]) => <div key={key} role="group" aria-label={group[0].modelName}>
+        {group.length > 1 && <div className="model-group-name">{group[0].modelName}</div>}
+        {group.map(entry => {
+          const active = entry.providerId === selected.providerId && entry.modelId === selected.modelId;
+          return <button key={`${entry.providerId}/${entry.modelId}`} role="option" aria-selected={active} disabled={busy}
+            aria-label={group.length > 1 ? `${entry.modelName} via ${entry.connectionName}` : entry.modelName}
+            className={`model-option${group.length > 1 ? ' model-route-option' : ''}`} onClick={() => { void select(entry); }}>
+            <span className="model-option-copy"><span>{group.length > 1 ? entry.connectionName : entry.modelName}</span></span>{active && <Icon name="check" />}
+          </button>;
+        })}
+      </div>)}
+    </div>
+    {error && <div className="picker-error" role="alert">{error}</div>}
   </div>;
 }

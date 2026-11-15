@@ -286,6 +286,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .settings-save { display: flex; align-items: center; gap: 12px; padding: 0 18px 16px; color: var(--secondary); font-size: 12px; }
 .dialog-backdrop { position: fixed; inset: 0; z-index: 30; background: #0005; display: flex; justify-content: center; align-items: center; padding: 32px; }
 .dialog { width: 460px; max-width: 100%; max-height: calc(100vh - 64px); overflow-y: auto; background: var(--canvas); border: 1px solid var(--rule); border-radius: 16px; padding: 24px; box-shadow: 0 20px 80px #0005; }
+.model-group-name { padding: 9px 10px 4px; color: var(--ink); font-size: 13px; }
+.model-route-option .model-option-copy { padding-left: 9px; color: var(--secondary); font-size: 12px; }
 .dialog-header { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
 .dialog-header h2 { font-size: 17px; font-weight: 400; margin: 0; flex: 1; }
 .dialog-header .provider-icon { width: 26px; flex-basis: 26px; }

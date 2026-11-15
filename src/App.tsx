@@ -11,9 +11,9 @@ import { MarkdownInlineCode } from './MathFormula';
 import { normalizeMathDelimiters, remarkMathPresentation } from './math-markdown';
 import { Icon, ProviderIcon } from './icons';
 import { modelLabel, providerName, routeLabel, SettingsView } from './SettingsView';
-import { ModelPicker, ProviderPicker } from './ModelPickers';
+import { CompatibleModelPicker, ModelPicker, ProviderPicker } from './ModelPickers';
 import { discoverModels, invalidateModelCatalog } from './model-catalog';
-import type { Bootstrap, Chat, Folder, Message, ProviderView, Settings, Source, StreamUpdate } from './types';
+import type { Bootstrap, Chat, ChatModel, Folder, Message, ProviderView, Settings, Source, StreamUpdate } from './types';
 
 const errorText = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
 function requestsFolderContext(value: string) {
@@ -82,6 +82,7 @@ export default function App() {
   const [moving, setMoving] = useState<Set<string>>(new Set()); const movingIds = useRef(new Set<string>());
   const removedChatIds = useRef(new Set<string>());
   const [chatMenu, setChatMenu] = useState(false); const [picker, setPicker] = useState<'providers' | 'models' | null>(null);
+  const [draftModel, setDraftModel] = useState<ChatModel | null>(null);
   const [searchOpen, setSearchOpen] = useState(false); const [nameAction, setNameAction] = useState<NameAction | null>(null); const [deleteTarget, setDeleteTarget] = useState<Chat | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null); const jump = useRef<{ chatId: string; messageId: string } | null>(null);
   const [systemDark, setSystemDark] = useState(window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -230,8 +231,13 @@ export default function App() {
   const selectedFolder = data?.folders.find((folder) => folder.id === selectedChat?.folderId);
   const visibleProviders = data?.providers.filter((entry) => !nativeApp || entry.id !== 'mock') || [];
   const connectedProviders = visibleProviders.filter((entry) => entry.configured && !entry.disabledReason);
-  const provider = visibleProviders.find((entry) => entry.id === data?.settings.defaultProvider && (!nativeApp || (entry.configured && !entry.disabledReason))) || (!nativeApp ? visibleProviders[0] : undefined);
-  const model = provider && data?.settings.defaultProvider === provider.id ? data.settings.defaultModel || provider.connection.modelId : provider?.connection.modelId || '';
+  const defaultModel = { providerId: data?.settings.defaultProvider || '', modelId: data?.settings.defaultModel || '' };
+  const chosen = (selectedId ? data?.chatModels?.[selectedId] : draftModel) || defaultModel;
+  const provider = visibleProviders.find((entry) => entry.id === chosen.providerId && (!nativeApp || (entry.configured && !entry.disabledReason))) || (!nativeApp ? visibleProviders[0] : undefined);
+  const model = provider?.id === chosen.providerId ? chosen.modelId || provider.connection.modelId : provider?.connection.modelId || '';
+  const compatible = data?.compatibleConnections || [];
+  const namedConnection = compatible.find(item => item.id === provider?.id);
+  const displayModel = namedConnection?.models.find(item => item.id === model)?.name || (provider ? modelLabel(provider, model) : '');
   const activeRun = !!selectedId && running.has(selectedId);
   const explicitFolder = requestsFolderContext(draft);
   const folderContext = !!selectedFolder && !!provider?.tools && (manualFolder === true || (explicitFolder && manualFolder !== false));
@@ -255,6 +261,7 @@ export default function App() {
   };
 
   const selectChat = (chat: Chat, preserveAttachment = false) => {
+    setDraftModel(null);
     if (!preserveAttachment && chat.id !== selectedRef.current) clearAttachment();
     selectedRef.current = chat.id; setSelectedId(chat.id);
     setData((current) => current && !current.chats.some((entry) => entry.id === chat.id) ? { ...current, chats: [...current.chats, chat] } : current);
@@ -264,15 +271,23 @@ export default function App() {
   const createChat = async (folderId: string | null = null, preserveAttachment = false) => { const chat = await backend.invoke<Chat>('create_chat', { folderId }); await refresh(); selectChat(chat, preserveAttachment); setDraft(''); requestAnimationFrame(() => textarea.current?.focus()); return chat; };
   const seed = async () => { const fresh = await backend.invoke<Bootstrap>('demo_seed'); setData(fresh); const chat = fresh.chats.find((entry) => entry.title === 'Interview prep') || fresh.chats[0]; if (chat) selectChat(chat); setWebSearch(true); };
   const saveSettings = async (settings: Settings) => { await backend.invoke('save_settings', { settings }); await refresh(); };
+  const chooseChatModel = async (route: ChatModel) => {
+    if (selectedId) { await backend.invoke('save_chat_model', { chatId: selectedId, ...route }); await refresh(); }
+    else setDraftModel(route);
+    setWebSearch(false);
+  };
   const chooseProvider = async (next: ProviderView) => {
     if (!data || (!next.configured && next.id !== 'mock') || next.disabledReason) return;
-    await saveSettings({ ...data.settings, defaultProvider: next.id, defaultModel: next.connection.modelId || next.defaultModel });
+    const modelId = next.connection.modelId || next.defaultModel;
+    if (next.id.startsWith('compatible:') || namedConnection || draftModel || (selectedId && data.chatModels?.[selectedId])) await chooseChatModel({ providerId: next.id, modelId });
+    else await saveSettings({ ...data.settings, defaultProvider: next.id, defaultModel: modelId });
     clearAttachment(); setWebSearch(false); setManualFolder(null); setPicker('models');
   };
   const chooseModel = async (modelId: string) => {
     if (!data || !provider || !modelId.trim()) return;
     await backend.invoke('save_connection', { connection: { ...provider.connection, modelId: modelId.trim() } });
-    await saveSettings({ ...data.settings, defaultProvider: provider.id, defaultModel: modelId.trim() });
+    if (draftModel || (selectedId && data.chatModels?.[selectedId])) await chooseChatModel({ providerId: provider.id, modelId: modelId.trim() });
+    else await saveSettings({ ...data.settings, defaultProvider: provider.id, defaultModel: modelId.trim() });
     setWebSearch(false); closePicker();
   };
   const send = async (retry = false) => {
@@ -281,6 +296,7 @@ export default function App() {
     let chatId = selectedId;
     try {
       if (!chatId) { const chat = await createChat(null, true); chatId = chat.id; }
+      if (draftModel || namedConnection) await backend.invoke('save_chat_model', { chatId, providerId: provider.id, modelId: model });
       selectedRef.current = chatId;
       setRunning((current) => new Set(current).add(chatId!));
       await backend.invoke<Message>('start_chat', { input: { chatId, content: draft.trim(), providerId: provider.id, modelId: model, webSearch: webSearch && webAvailable, folderContext, retry }, attachmentId: !retry && museRoute ? attachment?.id : undefined });
@@ -398,14 +414,16 @@ export default function App() {
               {provider ? <div className="model-pill" role="group" aria-label="Provider and model">
                 <button ref={providerButton} type="button" className="provider-picker-trigger" aria-label="Choose provider" title={`${providerName(provider)} · choose provider`} aria-expanded={picker === 'providers'} aria-haspopup="listbox" onClick={() => setPicker(picker === 'providers' ? null : 'providers')}><ProviderIcon id={provider.id} theme={theme} small /></button>
                 <span className="provider-divider" aria-hidden="true" />
-                <button ref={modelButton} type="button" className="model-picker-trigger" aria-label="Choose model" title="Choose model" aria-expanded={picker === 'models'} aria-haspopup="listbox" onClick={() => setPicker(picker === 'models' ? null : 'models')}><span className="model-name">{modelLabel(provider, model)}</span><span className="divider" /><span className="route">{routeLabel(provider)}</span><Icon name="down" /></button>
+                <button ref={modelButton} type="button" className="model-picker-trigger" aria-label="Choose model" title="Choose model" aria-expanded={picker === 'models'} aria-haspopup="listbox" onClick={() => setPicker(picker === 'models' ? null : 'models')}><span className="model-name">{displayModel}</span><span className="divider" /><span className="route">{routeLabel(provider)}</span><Icon name="down" /></button>
               </div> : <button ref={providerButton} type="button" className="button" onClick={() => { if (connectedProviders.length) setPicker('providers'); else setView('settings'); }}>{connectedProviders.length ? 'Choose provider' : 'Connect provider'}</button>}
               {activeRun ? <button type="button" className="round-control stop" aria-label="Stop response" title="Stop response" onClick={() => { if (selectedId) void backend.invoke('stop_chat', { chatId: selectedId }).catch((reason) => setNotice(errorText(reason))); }}><span className="stop-square" /></button> : <button type="submit" className="round-control send" aria-label="Send message" disabled={!draft.trim() || starting || pickingAttachment || !sendAvailable}><Icon name="up" /></button>}
             </div>
           </form>
           {!sendAvailable && provider && <p className="composer-note">{providerName(provider)} is not connected. <button onClick={() => setView('settings')}>Open Settings</button></p>}
           {picker === 'providers' && <ProviderPicker providers={visibleProviders} selected={provider?.id || ''} theme={theme} close={closePicker} choose={chooseProvider} settings={() => { setPicker(null); setView('settings'); }} />}
-          {picker === 'models' && provider && <ModelPicker key={provider.id} provider={provider} selected={model} close={closePicker} choose={chooseModel} />}
+          {picker === 'models' && provider && (namedConnection
+            ? <CompatibleModelPicker connections={compatible} selected={{ providerId: provider.id, modelId: model }} close={closePicker} choose={async route => { await chooseChatModel(route); closePicker(); }} />
+            : <ModelPicker key={provider.id} provider={provider} selected={model} close={closePicker} choose={chooseModel} />)}
         </div>
       </>}
     </main>
