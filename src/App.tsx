@@ -63,7 +63,7 @@ function MessageView({ message, activity, codingActivity, theme, highlight, onSo
       pre: MarkdownCodeBlock,
       code: MarkdownInlineCode,
     }}>{markdown}</ReactMarkdown></div> : null}
-    {codingActivity && <CodingActivity activity={codingActivity} />}
+    {codingActivity && <CodingActivity activity={codingActivity} settled={message.status === 'complete'} />}
     {nativeApp && reply.proposed && message.status === 'complete' && <InlineFileEdit chatId={message.chatId} messageId={message.id} busy={!canChange} />}
     <ResponseReferences sources={message.sources} onSource={onSource} />
     {message.status !== 'streaming' && <div className="message-tools">

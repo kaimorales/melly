@@ -56,6 +56,8 @@ test('a coding action pauses for inline approval and shows its result', async ({
   expect(await page.evaluate(() => (window as unknown as { __approval: unknown }).__approval)).toBeNull();
   await approval.getByRole('button', { name: 'Allow' }).press('Enter');
   await expect(approval).toHaveCount(0);
+  await expect(page.locator('.completed-work > summary')).toHaveText('1 file changed');
+  await page.locator('.completed-work > summary').press('Enter');
   await expect(page.locator('summary').getByText('example.py')).toBeVisible();
   expect(await page.evaluate(() => (window as unknown as { __approval: unknown }).__approval)).toEqual({ id: 'pending-tool', approved: true });
 });

@@ -30,3 +30,14 @@
 .file-edit-diff { min-width: 0; max-width: 100%; }
 
 .file-edit-path { margin: 6px 0; font-size: 12px; overflow-wrap: anywhere; }
+
+.completed-work { margin-top: 14px; color: var(--secondary); font-size: 12px; }
+.completed-work > summary { display: flex; align-items: center; gap: 7px; width: fit-content; max-width: 100%; cursor: pointer; list-style: none; border-radius: 5px; }
+.completed-work > summary::-webkit-details-marker { display: none; }
+.completed-work > summary > .icon { width: 14px; height: 14px; }
+.completed-work > summary > span { min-width: 0; }
+.completed-work > summary > .icon:last-child { width: 12px; transition: transform var(--motion-fast) var(--motion-ease); }
+.completed-work[open] > summary > .icon:last-child { transform: rotate(90deg); }
+.completed-work-details { margin: 10px 0 2px 7px; padding-left: 14px; border-left: 1px solid var(--rule); }
+.completed-work-details .file-edit-card { font-size: 12px; }
+.completed-work[open] > .completed-work-details { animation: detail-enter var(--motion-fast) ease-out; }
