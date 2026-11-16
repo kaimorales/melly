@@ -114,6 +114,7 @@ test('deletes a background chat from its row without changing the selected chat 
   await expect(folder(page, 'Job search').getByRole('button', { name: 'My experience', exact: true })).toHaveCount(0);
   await expect(page.locator('.chat-title')).toHaveText('Interview prep');
   await expect(page.getByRole('textbox', { name: 'Message' })).toHaveValue('Keep this draft');
+  await page.locator('.response-references > summary').click();
   await page.getByRole('button', { name: 'Open source My experience', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('source chat is no longer available');
 });

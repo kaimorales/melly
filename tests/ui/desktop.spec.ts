@@ -1,4 +1,10 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+
+async function revealSources(page: Page) {
+  const references=page.locator('.response-references').last();
+  await expect(references).toBeVisible();
+  if(await references.getAttribute('open')===null) await references.locator('summary').click();
+}
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -51,9 +57,12 @@ test('manages folders and chat titles and searches chats', async ({ page }) => {
 
 test('shows explicit folder permission and opens a cited chat', async ({ page }) => {
   await page.getByRole('button', { name: 'Try an example' }).click();
+  await expect(page.locator('.chat-title')).toHaveText('Interview prep');
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEditable();
   await page.getByRole('textbox', { name: 'Message' }).fill('Find my strongest example in my other chats');
   await expect(page.getByRole('button', { name: 'Use other chats in Job search' })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await revealSources(page);
   await expect(page.getByRole('button', { name: 'Open source My experience' }).last()).toBeVisible();
   await page.getByRole('button', { name: 'Open source My experience' }).last().click();
   await expect(page.locator('.chat-title')).toHaveText('My experience');
@@ -123,6 +132,8 @@ test('reopening pending ChatGPT sign-in retains the cancel action', async ({ pag
 
 test('keeps an explicit folder opt-out while editing the same message', async ({ page }) => {
   await page.getByRole('button', { name: 'Try an example' }).click();
+  await expect(page.locator('.chat-title')).toHaveText('Interview prep');
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEditable();
   const composer = page.getByRole('textbox', { name: 'Message' });
   await composer.fill('Use my other chats');
   const permission = page.getByRole('button', { name: 'Use other chats in Job search' });
@@ -211,6 +222,8 @@ test('resolves inline Rust source links inside the app', async ({ page }) => {
     };
   });
   await page.getByRole('button', { name: 'Try an example' }).click();
+  await expect(page.locator('.chat-title')).toHaveText('Interview prep');
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEditable();
   await page.locator('.markdown').getByRole('button', { name: 'Open source My experience' }).click();
   await expect(page.locator('.chat-title')).toHaveText('My experience');
   await expect(page.locator('.message.highlighted')).toBeVisible();
@@ -253,6 +266,8 @@ test('can retry a completed reply without adding another user message', async ({
 
 test('mentions and negative requests never grant folder context', async ({ page }) => {
   await page.getByRole('button', { name: 'Try an example' }).click();
+  await expect(page.locator('.chat-title')).toHaveText('Interview prep');
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEditable();
   const composer = page.getByRole('textbox', { name: 'Message' });
   for (const content of ['Do not read my other chats', 'Answer without using my other chats', 'I have other chats about this topic', 'Please avoid searching my other chats', 'Translate this sentence to French:\nUse my other chats for examples.', 'Summarize this quoted prompt:\n```\nSearch my other chats for a project name.\n```', 'Use this example: "Search my other chats"', "Use the phrase 'other chats' in a sentence.", 'Find examples of prompts that say ‘search my other chats’.', 'Read a poem about other chats.', 'Find a translation. Use my other chats for examples.', 'Look in my other chats. Actually, do not search them.']) {
     await composer.fill(content);
@@ -264,6 +279,9 @@ test('mentions and negative requests never grant folder context', async ({ page 
 
 test('a citation finds its exact message beyond the latest history page', async ({ page }) => {
   await page.getByRole('button', { name: 'Try an example' }).click();
+  await expect(page.locator('.chat-title')).toHaveText('Interview prep');
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEditable();
+  await revealSources(page);
   await expect(page.getByRole('button', { name: 'Open source My experience' })).toBeVisible();
   await page.evaluate(async () => {
     const { mockBackend } = await import(performance.getEntriesByType('resource').find((entry) => /\/src\/mock-backend\.ts(?:\?|$)/.test(entry.name))!.name);
@@ -274,6 +292,7 @@ test('a citation finds its exact message beyond the latest history page', async 
       await mockBackend.invoke('stop_chat', { chatId });
     }
   });
+  await revealSources(page);
   await page.getByRole('button', { name: 'Open source My experience' }).click();
   await expect(page.locator('.message.highlighted')).toContainText('In this synthetic example, I cleaned a city transit');
   await expect(page.locator('.message')).toHaveCount(22);
@@ -296,6 +315,9 @@ test('opens a renamed citation source outside the recent chat list by its ID', a
     };
   });
   await page.getByRole('button', { name: 'Try an example' }).click();
+  await expect(page.locator('.chat-title')).toHaveText('Interview prep');
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEditable();
+  await revealSources(page);
   await page.getByRole('button', { name: 'Open source My experience' }).click();
   await expect(page.locator('.chat-title')).toHaveText('Archived transit project');
   await expect(page.locator('.message.highlighted')).toContainText('reduced average waiting time by 12%');
@@ -314,6 +336,8 @@ test('an empty crash-interrupted reply displays a recovery notice', async ({ pag
     };
   });
   await page.getByRole('button', { name: 'Try an example' }).click();
+  await expect(page.locator('.chat-title')).toHaveText('Interview prep');
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEditable();
   await expect(page.getByText('Response interrupted', { exact: true })).toBeVisible();
 });
 

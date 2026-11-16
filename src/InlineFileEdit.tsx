@@ -26,6 +26,10 @@ export function splitFileEdit(text: string, streaming: boolean) {
   return { text, proposed: false };
 }
 
+export function compactPath(path: string) {
+  return path.length > 72 ? `${path.slice(0, 24)}…${path.slice(-40)}` : path;
+}
+
 export type DiffLine = { kind: ' ' | '+' | '-' | '…'; text: string };
 type Preview = { status: 'review'; ticket: string; path: string; diff: DiffLine[] } | { status: 'applied'; path: string; diff: DiffLine[] };
 
@@ -105,9 +109,9 @@ export function InlineFileEdit({ chatId, messageId, busy }: { chatId: string; me
   }
 
   if (preview?.status === 'applied') {
-    const title = <><Icon name="check" /><span>Saved <code>{preview.path}</code></span></>;
+    const title = <><Icon name="check" /><span>Saved <code title={preview.path}>{compactPath(preview.path)}</code></span></>;
     return preview.diff.length
-      ? <details className="file-edit-card file-edit-saved"><summary>{title}<Icon name="chevron" /></summary><Diff lines={preview.diff} /><UndoChanges chatId={chatId} messageId={messageId} busy={busy} /></details>
+      ? <details className="file-edit-card file-edit-saved"><summary>{title}<Icon name="chevron" /></summary><p className="file-edit-path">{preview.path}</p><Diff lines={preview.diff} /><UndoChanges chatId={chatId} messageId={messageId} busy={busy} /></details>
       : <div className="file-edit-card" role="status">{title}</div>;
   }
   if (!preview) return <div className="file-edit-card">

@@ -23,3 +23,10 @@
 .undo-file { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .undo-file code { font-size: 12px; min-width: 0; overflow-wrap: anywhere; }
 .undo-review .file-edit-error { margin: 0; }
+
+.file-edit-card .icon { flex-shrink: 0; }
+.file-edit-review header > code, .file-edit-saved summary > span { min-width: 0; overflow-wrap: anywhere; }
+.file-edit-saved summary { max-width: 100%; min-width: 0; }
+.file-edit-diff { min-width: 0; max-width: 100%; }
+
+.file-edit-path { margin: 6px 0; font-size: 12px; overflow-wrap: anywhere; }

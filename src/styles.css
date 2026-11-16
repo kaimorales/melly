@@ -358,3 +358,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
 [data-reduce-motion='true'] *, [data-reduce-motion='true'] *::before, [data-reduce-motion='true'] *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+
+.response-references { margin-top: 14px; color: var(--secondary); font-size: 12px; }
+.response-references > summary { display: flex; align-items: center; gap: 5px; cursor: pointer; width: fit-content; list-style: none; }
+.response-references > summary::-webkit-details-marker { display: none; }
+.response-references > summary .icon { width: 12px; height: 12px; }
+.response-references[open] > summary .icon { transform: rotate(90deg); }
+.response-references .source-row { display: grid; justify-items: start; gap: 6px; margin: 9px 0 0; min-width: 0; }
+.response-references .source { min-width: 0; max-width: 100%; }
+.response-references .source .icon { flex-shrink: 0; }
+.custom-connection-compatibility { margin-top: 14px; font-size: 12px; color: var(--secondary); }
+.custom-connection-compatibility > summary { cursor: pointer; }

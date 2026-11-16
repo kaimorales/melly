@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { backend } from './backend';
-import { Diff, type DiffLine } from './InlineFileEdit';
+import { compactPath, Diff, type DiffLine } from './InlineFileEdit';
 import { Icon } from './icons';
 
 export type CodingApproval = { id: string; label: string; path: string | null; diff: DiffLine[] };
@@ -25,8 +25,8 @@ export function CodingActivity({ activity }: { activity: CodingActivityState }) 
           <pre className="file-edit-diff">{[result.command, result.stdout, result.stderr].filter(Boolean).join('\n')}</pre>
         </details>
       : <details className="file-edit-card file-edit-saved" key={index}>
-          <summary><Icon name="check" /><span>{result.reused ? 'Already completed' : result.action === 'Create' ? 'Created' : result.action === 'Delete' ? 'Deleted' : 'Edited'} <code>{result.path}</code></span><Icon name="chevron" /></summary>
-          <Diff lines={result.diff} />
+          <summary><Icon name="check" /><span>{result.reused ? 'Already completed' : result.action === 'Create' ? 'Created' : result.action === 'Delete' ? 'Deleted' : 'Edited'} <code title={result.path}>{compactPath(result.path)}</code></span><Icon name="chevron" /></summary>
+          <p className="file-edit-path">{result.path}</p><Diff lines={result.diff} />
         </details>)}
     {activity.approval && <section className="file-edit-card file-edit-review" aria-label="Permission requested">
       <header><Icon name="lock" />{activity.approval.label} {activity.approval.path && <code>{activity.approval.path}</code>}</header>

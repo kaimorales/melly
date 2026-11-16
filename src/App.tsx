@@ -1,3 +1,4 @@
+import { ResponseReferences } from './ResponseReferences';
 import { useComposerDraft } from './useComposerDraft';
 import { UndoChanges } from './UndoChanges';
 import { advanceStream, streamRevealWindow } from './stream-reveal';
@@ -40,18 +41,13 @@ type StreamReveal = { visible?: number; deadline?: number; done?: StreamUpdate }
 function MessageView({ message, activity, codingActivity, theme, highlight, onSource, onRetry, busy, retryEnabled, report }: { message: Message; activity?: string; codingActivity?: CodingActivityState; theme: string; highlight: boolean; onSource: (source: Source) => void; onRetry: () => void; busy: boolean; retryEnabled: boolean; report: (text: string) => void }) {
   const reply = message.role === 'assistant' ? splitFileEdit(message.content, message.status === 'streaming') : { text: message.content, proposed: false };
   const markdown = useMemo(() => message.role === 'assistant' ? normalizeMathDelimiters(reply.text) : reply.text, [reply.text, message.role]);
-  const folderSources = message.sources.filter((source) => source.kind === 'chat');
-  const webSources = message.sources.filter((source) => source.kind === 'web');
   if (message.role === 'user') return <div id={`message-${message.id}`} className={`message user-message ${highlight ? 'highlighted' : ''}`}>{message.content}</div>;
   if (message.role !== 'assistant') return null;
   const stopped = message.status === 'stopped' || message.status === 'cancelled';
   const failed = ['error', 'failed', 'interrupted'].includes(message.status);
+  const keptChanges = codingActivity?.results.some(result => 'action' in result);
   return <article id={`message-${message.id}`} className={`message assistant ${highlight ? 'highlighted' : ''}`} aria-label="Melly response">
-    {(folderSources.length > 0 || webSources.length > 0) && <div className="retrieval-line">
-      {folderSources.length > 0 && <><Icon name="folder" /><span>{folderSources.length} {folderSources.length === 1 ? 'snippet' : 'snippets'} from other chats</span></>}
-      {folderSources.length > 0 && webSources.length > 0 && <span className="dot">·</span>}
-      {webSources.length > 0 && <><Icon name="globe" /><span>{webSources.length} web {webSources.length === 1 ? 'source' : 'sources'}</span></>}
-    </div>}
+
     {activity && message.status === 'streaming' && <div className="stream-activity" role="status">{activity}</div>}
     {reply.text ? <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm, remarkMath, remarkMathPresentation]} urlTransform={(url) => url.startsWith('melly-source:') ? url : defaultUrlTransform(url)} components={{
       a: ({ href, children }) => {
@@ -67,11 +63,12 @@ function MessageView({ message, activity, codingActivity, theme, highlight, onSo
     }}>{markdown}</ReactMarkdown></div> : message.status === 'streaming' ? <span className="stream-pending" aria-label="Preparing response" /> : null}
     {codingActivity && <CodingActivity activity={codingActivity} />}
     {nativeApp && reply.proposed && message.status === 'complete' && <InlineFileEdit chatId={message.chatId} messageId={message.id} busy={busy} />}
-    {message.sources.some((source) => !reply.text.includes(`melly-source:${source.id}`)) && <div className="source-row">{message.sources.filter((source) => !reply.text.includes(`melly-source:${source.id}`)).map((source) => <button key={source.id || `${source.title}-${source.url}`} className="source" aria-label={`Open source ${source.title}`} title={source.snippet || source.title} onClick={() => onSource(source)}><Icon name={source.kind === 'chat' ? 'message' : 'globe'} /><span>{source.title}</span><Icon name={source.kind === 'chat' ? 'right' : 'external'} /></button>)}</div>}
+    <ResponseReferences sources={message.sources} onSource={onSource} />
     {message.status !== 'streaming' && <div className="message-tools">
       {reply.text && <button className="icon-button" aria-label="Copy response" title="Copy response" onClick={() => { void navigator.clipboard.writeText(reply.text).then(() => report('Response copied.')).catch(() => report('Could not copy the response.')); }}><Icon name="copy" /></button>}
       {stopped && <span className="message-status">Response stopped</span>}
-      {failed && <span className="message-status">Response interrupted</span>}
+      {failed && <span className="message-status">{message.status === 'interrupted' ? 'Response interrupted' : 'Response failed'}</span>}
+      {(stopped || failed) && keptChanges && <span className="message-status">Changes kept</span>}
       {retryEnabled && <button className={`text-action ${stopped || failed ? '' : 'retry-quiet'}`} aria-label={codingActivity ? 'Continue task' : 'Retry response'} onClick={onRetry}>{codingActivity ? 'Continue' : 'Retry'}</button>}
       {nativeApp && !reply.proposed && <UndoChanges chatId={message.chatId} messageId={message.id} busy={busy} />}
       {message.providerId && <span className="sr-only">{message.providerId === 'mock' ? 'Synthetic Demo reply' : `${message.modelId}, ${message.billingRoute}`}</span>}
