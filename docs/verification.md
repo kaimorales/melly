@@ -1,4 +1,102 @@
-# Verification record
+# Current verification — November 15, 2026
+
+The daily-use work now passes 200 Rust tests (zero failed; five opt-in tests ignored), 84 browser UI tests, seven installer regressions, TypeScript, Rust formatting and all-target Clippy. The current source is committed and pushed directly to main in feature checkpoints. Historical environment restrictions and test counts below describe earlier builds and no longer describe this session.
+
+Coverage includes journal restart/conflict recovery and Undo; draft text and attachment ownership; real Python, Node and offline Cargo checks in disposable projects; denied network/outside writes; test cancellation/timeouts; native tool schemas and continuation; paged large-file search; changed/missing reference handling; context compaction and cancellation; and light/dark narrow-window UI behavior. Pytest was separately exercised in an opt-in disposable virtual environment. Standard test runs skip live models and platform-dependent OCR/semantic service checks.
+
+A local synthetic Qwen3.8-27B coding smoke test used four native tool calls, edited a disposable Python fixture, and reached independently verified passing tests in 10.3 seconds. A separate synthetic compaction request retained an exact key and pending task in 6.47 seconds, preserving all twelve original messages and four recent raw messages. These are smoke checks, not 32K/64K coding benchmarks or evidence for untested cloud providers. No real repository content or credentials were sent to a cloud model.
+
+The 14.75 MiB ad-hoc Mac app was built, strictly signature-verified, installed at `/Applications/Melly.app` and reopened with the existing profile. The native management commands passed without opening a profile. An unsent synthetic draft was saved, verified in SQLite, restored after quitting and reopening, and cleared afterward; no chat message was sent. The context ring exposed Compact context in the native app. The current conversation and history stayed in place.
+
+The macOS CI workflow runs checks, synthetic tests, packaging and local bundle verification. Its remote status is separate from the completed local checks. Developer ID signing and notarization remain blocked by the absent signing identity/credentials. No release, Homebrew tap or feed was published. Finder file-drop gestures on the final build and the historical cloud-provider entitlement/billing cases remain unverified. Upstream `block 0.1.6` still emits a future-compatibility notice; current compilation and Clippy pass.
+
+## Historical records
+
+
+## One installed app and terminal updates — 2026-11-14
+
+Consolidated the current production build at `/Applications/Melly.app`, retaining `com.melly.desktop`. Removed the two obsolete provider-update bundles and the isolated `MellyQA.app`; moving the current build into Applications consumed the build copy. A scan of Desktop, user/system Applications and this checkout's target directory found only the installed production bundle afterward. Opened that installed app natively and verified existing history remained available. No profile or Keychain records were removed.
+
+The existing `~/.local/bin/melly` was the retired terminal app. Moved it to `target/retired-cli/melly` as a recoverable backup, verified its SHA-256, and replaced the command with a symbolic link to `/Applications/Melly.app/Contents/MacOS/melly-desktop`. Both the app and command now use the same binary. The installed command passed `--version` and `--help`; both update aliases correctly refused this unmanaged installation with local-update instructions and a nonzero exit. Unknown options also exit nonzero. Actual Homebrew metadata was readable and contained no installed Melly cask; no package was upgraded or installed.
+
+`npm run install:local` now validates, stages and replaces the production app, rolls back a failed promotion, consumes the successful build artifact, and retains the existing profile. It refuses running apps, conflicting identities and Homebrew ownership. The Homebrew cask template and preparation command generate versioned, checksummed metadata without publishing anything. `melly --update` and `melly --upgrade` delegate only to the intended installed Homebrew cask; they do not implement a second updater or change channels.
+
+Validation for this checkpoint:
+
+- `npm run check`: passed TypeScript, Rust formatting and all-target Clippy.
+- Selected Rust suite: **134 passed, zero failed, two ignored, 35 excluded**, using the same socket-free selection documented below. Four new CLI regressions cover alias parsing, the running-app gate, missing/wrong cask ownership and propagation of Homebrew failures.
+- `npm run test:install`: **six passed**, covering replacement, rollback, staged-signature failure, running-app rejection, path aliases, conflicting launchers, persistent launcher targets and cask metadata validation.
+- First install and replacement of the actual signed bundle passed in a temporary destination using real `ditto` and signature inspection. This isolated check supplied the running-state function; it does not establish an end-to-end run of the system installer or its process lookup in this restricted runner. The temporary bundles were removed.
+- `npm run build`: passed, producing a 13.93 MiB local ad-hoc-signed app. Strict signature verification passed before and after its move to Applications. The final installed launcher target and retained old CLI hash were checked directly.
+
+The native running-app lookup and a real Homebrew-managed upgrade still need distribution-environment verification; the running-app gate is unit-tested. Full browser/network suites remain blocked as described below and were not represented as passing. No tap, cask, release or public update feed was published. Git metadata remains read-only in this session, so these changes are saved as pending recovery patches rather than commits or pushes. Evidence is in `target/feature-checkpoints`: `update-check.log`, `update-rust-tests.log`, `install-tests.log`, `update-build.log`, `update-native-cli.log`, `app-cleanup.json` and `launcher-cleanup.json`.
+
+## Attachments, continuity, portable data and usage — 2026-11-14
+
+Implemented managed-file replacement/removal, Branch/Edit, native chat picker/drop handling, text/PDF/image OCR attachments, bounded context selection, same-chat earlier references, optional on-device semantic ranking, context/token UI, a usage ledger, explicit OpenRouter key usage, Markdown/project exports and additive backup/restore. The context ring sits beside the model selector; per-connection Usage & costs stays in Settings. Images provide recognized text only. Subscription percentages stay unavailable when the provider does not expose an allowance API.
+
+### Automated checks
+
+- `npm run check`: passed TypeScript, Rust formatting and all-target Clippy with warnings denied.
+- Selected Rust suite: **130 passed, zero failed, two ignored, 35 excluded**. The exclusions are the auth/transport fixture modules and one loopback-dependent auth-namespace case, including some tests that do not themselves bind sockets. The ignored tests are the opt-in Keychain roundtrip and shell-only Vision integration. Native Vision was separately verified below.
+- `node scripts/test-thinking.mjs`: passed. This checks rendering/state markup, not browser interaction.
+- Full `npm test`: attempted; localhost fixture binding failed with `Operation not permitted`. A shutdown case then waited without completing and was stopped. The separate Playwright attempt failed because Vite could not bind `127.0.0.1:1420`. These suites did **not** pass. New browser cases in `tests/ui/continuity-usage.spec.ts` remain unrun here.
+- New regressions cover one-use native drop tickets, failed-batch cleanup, attachment ownership across branch/delete/restart, export/restore identity and citation rewriting, replacement/removal boundaries, earlier-chat scope, synthetic vector ranking, usage-only fragmented SSE, cumulative counters, unknown/estimated/reported costs, usage admission and cancellation, oversized-draft preflight, and oversized tool/native-continuation metadata.
+
+Logs are under `target/feature-checkpoints`: `final-next-check.log`, `rust-next-tests.log`, `thinking-next-check.log`, `full-next-tests.log` and `ui-next-tests.log`. The socket-free selected command is shown in the preceding-work record below and remains reproducible.
+
+### Native checks
+
+Used a separately identified `MellyQA.app` and isolated profile with synthetic files/conversations and the installed Ollama model `lfm2.5-8b-abliterated:latest`:
+
+- Branch and Edit created new conversations. A revised 42-to-43 prompt returned 43 while the original conversation stayed intact. Branches and replies survived ordinary Quit/relaunch.
+- The context dialog displayed an approximate input estimate and the reported local capacity of 8,192. Provider-reported input/output totals appeared in both the chat and the connection panel; they remained distinct from the input estimate.
+- Native file selection imported a synthetic README and attached it to a saved message. A fresh conversation’s live reply used the extracted port 4343. The file picker remained responsive and cancellation worked.
+- PNG and scanned-PDF attachments both produced the synthetic receipt amount 42 and reference 4343 through Apple Vision. Ollama used the extracted text; the completed follow-up returned “42 dollars.” One earlier attempt exhausted the 1,024-token output budget during reasoning. The final code raises the local reserve to 2,048 at 8,192 capacity; that change has a regression assertion and a production build, but was not rerun natively.
+- Exported an isolated Aurora project containing two chats and two managed files, then restored it through the native picker and explicit count confirmation. Both projects remained available. The restored project’s context was off. Its rewritten PDF citation opened the correct second-page December 17 passage.
+
+The native walkthrough found an Open-panel configuration issue. Explicit Cocoa Boolean selection flags and file-type reset fixed it; subsequent text/image/PDF selections worked. Final hardening also prevents file-drop acceptance behind dialogs, counts tool metadata before every provider round, and retains unknown ledger entries when a process exits before usage arrives. Native walkthrough evidence predates those final hardening changes.
+
+The Finder-to-chat drag gesture itself is still unverified. Ticket validation and the shared import backend passed automated tests; picker success does not establish native drop delivery. Full-backup attachment roundtrips have Rust coverage; the native walkthrough used a project export. Managed-file removal/replacement and deletion recovery have Rust coverage; native destructive project deletion was not performed. Apple’s English sentence-embedding asset was unavailable on this machine, so native semantic-ranking quality remains unverified; keyword fallback and synthetic ranking/scope checks passed. New cloud cost/account-allowance calls remain fixture-tested, without live billing verification.
+
+### Performance and delivery
+
+The synthetic in-memory SQLite probe used 10,000 messages and 100 samples: schema open 2.576 ms; insert p50/p95 0.097/0.185 ms; folder search 15.820/17.562 ms; 60-message history page 0.083/0.186 ms. This measures storage operations, not native launch, disk I/O, OCR, semantic ranking or provider latency.
+
+`npm run build` produced the 13.91 MiB ad-hoc-signed production bundle at `target/release/bundle/macos/Melly.app`. Strict `codesign --verify --deep --strict` verification passed. No release was published. The working tree retains concurrent provider-settings/artwork changes. This session cannot create `.git/index.lock`, so **no feature commits or pushes were made**. Numbered recovery patches are saved under `target/feature-checkpoints`; the module groups and final integration patch are not independently tested commits. Complete the unrestricted suite and reconstruct the feature commits before pushing.
+
+The older entries below are historical and do not establish verification of this final tree.
+
+## Completed-thinking indicator follow-up — 2026-11-14
+
+The nine-square activity mark now disappears when reasoning ends, including answer streaming, completion, Stop, error and interruption. Completed reasoning remains available through the text disclosure. The existing markup checks now require the indicator to be absent in those states. `npm run check`, `node scripts/test-thinking.mjs`, the production rebuild and strict bundle-signature verification pass. The Playwright assertions were updated but remain unrun under this session's browser restrictions. The native walkthrough below predates this small display follow-up.
+
+## Projects, local Ollama and Thinking — 2026-11-14
+
+Implemented managed project directories and imports, text/PDF retrieval with citations, archive/restore and recoverable Trash-based project deletion, remembered project context across providers, read-only linked folders, and a distinct local Ollama connection. Existing folder IDs and chats migrate without a destructive schema rewrite. File editing, command execution, OCR and background folder watching are not implemented.
+
+Readable provider reasoning now has a separate persisted channel and muted, expandable Thinking section. Leading `<think>` / `<thinking>` blocks are separated even when tags cross stream chunks. The waiting indicator is a small monochrome 3×3 grid with a clockwise opacity pulse; motion is CSS-only and respects both app and system reduced-motion settings. Thinking opens during reasoning, collapses when the answer starts unless the user chose otherwise, and stays out of copied answers, chat search and subsequent model context. Existing stored replies are not rewritten.
+
+`npm run check` passes TypeScript, Rust formatting and Clippy with warnings denied. The selected Rust run passes **114 tests**, including 7 project integration tests, 19 engine tests, 3 local-provider tests and 10 desktop tests. One opt-in Keychain test remains ignored. The command excludes 35 tests in total: auth/transport fixture modules plus one loopback-dependent auth-namespace case; this selection also excludes some tests that do not themselves open sockets. The native PDFKit test verifies text and page extraction from a synthetic PDF. Linked-folder tests cover exclusions, cancellation, changed files, root identity and symlink/path boundaries; deletion tests cover Trash failure and retry after an interrupted transaction. Reasoning regressions cover fragmented tags and UTF-8, native thinking fields, mixed reasoning/answer chunks, encrypted-metadata exclusion, output limits, Stop/error, persistence and context/search exclusion. `node scripts/test-thinking.mjs` also passes component markup/state checks; it is not a browser interaction test. Fixtures contain no real credentials or conversations.
+
+```sh
+node scripts/rust.mjs test --workspace -- --skip auth::tests --skip providers::transport::tests --skip rebuilt_app_can_open_browser_without_reading_denied_active_or_legacy_records
+```
+
+Native WKWebView testing used the installed `lfm2.5-8b-abliterated:latest` model through Ollama Local. The new display was first checked in the normal app with synthetic arithmetic prompts; subsequent project tests used a separately identified `MellyQA.app` and isolated application profile. Verified directly:
+
+- New replies keep reasoning in Thinking, with no `<think>` block in the answer. Waiting and reasoning grid states, manual collapse during streaming, Stop with retained partial reasoning, Retry, auto-collapse on answer, reopening completed reasoning, and answer-only Copy worked. Reasoning and answers survived ordinary Quit and relaunch. Light and Dark were visually inspected; the app's reduced-motion preference was exercised in Light.
+- Project creation, text import, two-page PDF import, native picker cancellation, managed files in Finder, and read-only folder linking worked. A hidden synthetic `.env` was skipped. Text retrieval returned the synthetic 18% fact; a sibling chat inherited Project context and retrieved December 17 from PDF page 2. The citation dialog and native PDF viewer opened that exact page.
+- Linked README retrieval returned port 4242. Editing the synthetic source caused the old citation to show a changed-file notice. Explicit Refresh indexed port 4343, and the next live reply used it. Unlink removed the link while the external README and hidden fixture stayed intact.
+- Archive hid the project; Restore retained its chats, imports and link. The delete confirmation clearly distinguished permanent chat deletion, managed files moved to Trash, and untouched linked files. Cancel preserved the project. Actual deletion/recovery is covered by Rust tests; irreversible native chat deletion was not performed.
+
+Native testing found a main-loop freeze after selection in the original blocking file picker. File, project-import and linked-folder pickers now use an asynchronous AppKit sheet. Repeated cancellation, text/PDF selection and folder selection passed in the rebuilt isolated QA app. The original already-frozen process could not be terminated under this session's process permissions; if it is still open, force-quit that older instance before opening the rebuilt app.
+
+This session denies localhost socket binding. `npm test`, the Playwright suite and `npm run dev` therefore cannot complete here; their results must not be represented as passing. A socket-free Chromium attempt was also blocked by the session's browser-process/MachPort restrictions. New UI coverage is in `tests/ui/projects.spec.ts` and `tests/ui/thinking.spec.ts`, but those browser tests remain unrun here. Cloud reasoning routes are fixture-tested, not newly live-tested. The final `npm run build` produced the 13.36 MiB production bundle at `target/release/bundle/macos/Melly.app`, and `codesign --verify --deep --strict` passed. The isolated native QA bundle is at `target/release/bundle/macos/MellyQA.app`.
+
+Git cannot create `.git/index.lock` in this session, so **these features are not committed or pushed**. Incremental feature patches are saved under `target/feature-checkpoints`, including separate Thinking and native-picker follow-ups. They preserve this work separately from concurrent provider-settings/artwork changes. The patches are pending checkpoints, not independently verified Git commits; verify the complete suite in an unrestricted session before committing/pushing.
+
+The older records below describe their own earlier builds and do not establish verification of these changes.
 
 Local verification on 2026-11-13, Apple Silicon macOS. The desktop uses Rust and the system WKWebView. No product release was published. Git checkpoints are pushed to `main` as requested.
 

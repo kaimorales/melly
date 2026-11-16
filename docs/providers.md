@@ -61,7 +61,7 @@ Connections support streaming Chat Completions. They accept public HTTPS or
 loopback HTTP/HTTPS and use endpoint-bound Keychain credentials if configured.
 The app keeps the server URL fixed per connection, refuses redirects and
 environment proxies, and does not start servers or fall back to another route.
-Tool calling is unavailable on this generic route. Use **Use as default** for
+Native functions are enabled by default for named compatible connections. Use the explicit **Compatibility → Tool calls → Text fallback** setting when the server does not support functions. Use **Use as default** for
 new chats or change a specific chat through the model picker. Matching display
 names appear together with the connection names available beneath them.
 

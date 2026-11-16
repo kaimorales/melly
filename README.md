@@ -1,6 +1,6 @@
 # Melly
 
-A quiet, fast Mac app for local and cloud conversations. Tauri uses the system WebKit view; Rust owns streaming, cancellation, SQLite history/search, provider protocols, tool permissions, and Keychain credentials. Local inference runs in an external Ollama installation. Melly does not bundle Chromium, a Node server, a model runtime, a coding host, or model downloads.
+A quiet, fast Mac app for local and cloud conversations. Tauri uses the system WebKit view; Rust owns streaming, cancellation, SQLite history/search, provider protocols, tool permissions, and Keychain credentials. Local inference runs in an explicitly configured local server, including OpenAI-compatible engines and Ollama. Melly does not bundle Chromium, a Node server, a model runtime, a coding host, or model downloads.
 
 ## Run
 
@@ -27,7 +27,7 @@ The bundled CLI supports `melly`, `--help`, `--version`, `--update`, and `--upgr
 
 ## Projects and local models
 
-Create a project from the sidebar. Its menu opens **Project files**, where **Add file** imports a managed copy of text, Markdown or a PDF with selectable text. **Replace** updates an imported file and its index; **Remove** moves its managed copy to Trash. The original selected file stays in place. **Show in Finder** opens the real project directory. **Link folder** instead reads an existing folder without copying or changing it; use **Refresh files** after edits.
+Create a project from the sidebar. Its menu opens **Project files**, where **Add file** imports a managed copy of text, Markdown or a PDF with selectable text. **Replace** updates an imported file and its index; **Remove** moves its managed copy to Trash. The original selected file stays in place. **Show in Finder** opens the real project directory. **Link folder** instead reads an existing folder without copying or changing it; selected text files refresh when used; **Refresh files** rescans the linked tree.
 
 Enable **Project context** in the composer to remember permission across that project's chats. Matching file and past-chat excerpts can then accompany messages to the selected provider. The composer identifies the recipient, and source links open the cited passage or PDF page. Text extraction and retrieval run locally. On-device OCR supports PNG/JPEG images and up to 20 scanned PDF pages; native tests verified both a synthetic image and a scanned PDF through a live Ollama reply. Images currently contribute recognized text, not pixels sent to a vision model. Optional on-device sentence embeddings improve file ranking when Apple’s English language asset is already available; keyword retrieval remains available without that asset.
 
@@ -45,8 +45,13 @@ The small ring beside the model selector opens **Context**: approximate input si
 
 Each connection’s Settings panel has **Usage & costs**. It shows this month’s usage recorded in Melly, reported charges where available, and clearly separated estimates from optional per-model rates. Incomplete usage and unpriced requests remain marked unknown. OpenRouter has an explicit refresh for the current API key’s usage and configured budget. Subscription allowance is unavailable unless exposed by the provider; token totals cannot stand in for a subscription percentage.
 
-
 Use a chat’s menu to export Markdown, **Project files → Export project** for a portable project, and **Settings → Your data** for backup/restore. Backups contain readable chats, managed files and attachments, but exclude credentials, linked directories and billing records. Restore adds new identities alongside existing data, with project context off.
+
+## Coding and continuity
+
+In a linked project chat, enable Project context and ask for a change. Search, read, create, edit, delete and discovered test/build/lint commands stay in chat. **Ask** reviews mutations and checks; **Auto-apply** grants the current chat and linked folder permission for the app session. Completed operations have a compact diff and **Undo**. Undo refuses to overwrite later edits. Checks use a bounded private copy with installed dependencies, no network and a five-minute timeout.
+
+Drafts save locally per chat, including attachment selections. **Continue** resumes interrupted coding without deleting earlier work. The context ring offers **Compact context**, retained task notes and **Undo compaction**; original messages remain available. Sources and detailed check output expand only when wanted.
 
 ## Browser preview without credentials
 
@@ -54,7 +59,7 @@ The browser preview starts empty and selects **Demo · Mock**. The native deskto
 
 1. Create **Job search**. In a chat named **My experience**, send “My transit project improved forecast accuracy by 18%.”
 2. Create **Interview prep** in the same project. Send “Look in my other Job search chats for the project result.” The composer visibly enables project context for this turn. The reply receives only matching snippets; click **My experience** beneath it to open the exact source message.
-3. Send **Demonstrate streaming and Stop**, then click Stop. That exact phrase (or **Write a longer answer**) selects a deliberately paced synthetic fixture so cancellation can be demonstrated. Ordinary Mock and every live route have no artificial token delay. Retry replaces the last assistant reply without duplicating the user message.
+3. Send **Demonstrate streaming and Stop**, then click Stop. That exact phrase (or **Write a longer answer**) selects a deliberately paced synthetic fixture so cancellation can be demonstrated. Ordinary Mock and every live route have no artificial token delay. Ordinary Retry replaces the latest assistant attempt. Interrupted coding exposes Continue and retains earlier actions and undo records.
 4. Enable **Search the web** and ask about transit planning. Mock returns a clearly synthetic public source. Live search requires a supported native provider tool or a separately configured Tavily key.
 5. Open Settings. Try System, Light, Dark, text size, Enter/⌘ Enter, reduced motion, and your system instructions. Provider connections and model IDs are configured in their own small panels.
 
@@ -73,7 +78,7 @@ See the [native screenshot walkthrough](docs/demo.md) and [verification record](
 - **ChatGPT:** Continue with ChatGPT opens official app-owned authorization and requests plan-use consent. Native verification passed for sign-in, account model discovery, multi-turn replies, Stop, folder-tool continuation and use after relaunch. Built-in web search with a citation also passed on `gpt-6.1-sol`, without an external search key. Renewal, revocation, usage-limit failures and other account/model combinations remain pending. No API-key fallback exists on this route.
 - **Claude, Gemini, Grok, OpenRouter, DeepSeek, Kimi/Moonshot:** API-key routes. Kimi uses Moonshot's general API, not Kimi Code membership.
 - **QwenCloud:** Standard API and Token Plan are separate Singapore endpoints, separate credentials, and explicit billing routes. A plan error cannot switch to metered Standard API.
-- **Custom:** Public HTTPS OpenAI-compatible base URL, API key, and manual model ID. Text streaming only; unknown tool capabilities are disabled.
+- **Custom connections:** Public HTTPS or loopback OpenAI-compatible servers, endpoint-bound credentials, and discovered or manual model IDs. Native function calling is the default; **Compatibility → Tool calls → Text fallback** supports servers without it.
 - **Meta Model API:** An explicitly metered API-key connection. It uses text chat and optional separately billed web search; no Muse Code host is started.
 
 Provider keys are entered in native secure fields; the web-search key uses a native secure dialog. Keys are saved in macOS Keychain. The webview receives only success/cancel and connection state. OAuth refresh tokens also stay in Keychain. Melly never asks for your Mac password: inaccessible credentials fail without opening authentication UI, and fresh ChatGPT sign-in avoids protected records from earlier development builds. Provider credentials never go to web search, another provider, or an HTTP redirect.
@@ -82,7 +87,7 @@ Provider keys are entered in native secure fields; the web-search key uses a nat
 
 Chats and preferences live at `~/Library/Application Support/com.melly.desktop/melly.sqlite3`. The containing directory is mode 700 and database mode 600; transcripts are local SQLite, not separately encrypted. Credentials use Keychain service `app.melly.desktop.credentials`.
 
-Project context is opt-in and remembered per project; the composer captures the effective permission for each turn. Rust derives scope from the current chat and rejects model-supplied project IDs. Project retrieval excludes other projects, returns bounded file and sibling-chat excerpts, and retains source citations. Earlier-message retrieval is separately confined to the current conversation. Changing or deleting an active chat or project is blocked until Stop completes. Retrieved files, chats and web results are untrusted references. File editing and command execution are unavailable.
+Project context is opt-in and remembered per project; the composer captures the effective permission for each turn. Rust derives scope from the current chat and rejects model-supplied project IDs. Project retrieval excludes other projects, returns bounded file and sibling-chat excerpts, and retains source citations. Earlier-message retrieval is separately confined to the current conversation. Changing or deleting an active chat or project is blocked until Stop completes. Retrieved files, chats and web results are untrusted references. Linked-project coding uses scoped search, reads, writes, deletes, and isolated checks with per-chat Ask or Auto-apply. It never exposes arbitrary shell execution.
 
 Startup does no network discovery. SQLite uses WAL, FTS5, and indexed timestamps. The UI batches streamed text per animation frame and bounds rendered history. HTTP connection setup and reads are cancellable; an interrupted stream is never recorded as completed. Token renewal already started is allowed to save its rotated result even when the chat is stopped.
 
@@ -95,6 +100,6 @@ Startup does no network discovery. SQLite uses WAL, FTS5, and indexed timestamps
 
 No real account data or conversations belong in fixtures, screenshots, logs, or bug reports. Never add credential fallback, arbitrary URL-fetch tools, shell tools, or inferred cross-folder memory.
 
-## Previous CLI
+## Development checks
 
-The original CLI checkout and Git history were preserved before the user-authorized empty-main reset. Local recovery artifacts are at `/Users/kaimorales/.codex/backups/melly-before-desktop-2026-11-13/`: a verified all-ref Git bundle, full working-tree archive, status and patch. Main's empty-tree reset is `4e9c5593de0f2046253490c132b29f55782eadd2`. Feature-sized commits to `main` are the requested workflow; see the verification record for any current uncommitted work or environment restrictions. No force push or release publication is used.
+macOS CI runs type/format/lint checks, synthetic Rust and browser suites, an app build, and bundle verification. Live provider fixtures are opt-in and use disposable data. `npm run verify:app -- --distribution` additionally requires Developer ID, a stapled notarization ticket and Gatekeeper acceptance. See [updates](docs/updates.md) for release prerequisites.

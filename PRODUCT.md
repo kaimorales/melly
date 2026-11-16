@@ -18,7 +18,7 @@ Quiet, precise, confident. Follow the approved Ollama-inspired restraint: system
 
 ## Anti-references
 
-Dashboards, heavy cards, decorative gradients, oversized headings, noisy status badges, silver icon frames and coding tools inside ordinary chat. Projects support imported files, read-only linked folders, citations and shared context. File editing, command execution and a knowledge graph remain future work.
+Dashboards, heavy cards, decorative gradients, oversized headings, noisy status badges, silver icon frames and separate coding dashboards. Projects support imported files, linked folders, citations and shared context. Coding stays in chat, with compact approvals, diffs, undo and test results. A knowledge graph remains future work.
 
 ## Design Principles
 

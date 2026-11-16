@@ -32,3 +32,11 @@ Run `npm run prepare:homebrew -- /path/to/Melly-VERSION-macos-arm64.zip` to gene
 Sources: [Homebrew app and binary artifacts](https://docs.brew.sh/Cask-Cookbook), [Homebrew upgrade and installed-package metadata](https://docs.brew.sh/Manpage), [Tauri signing for macOS](https://v2.tauri.app/distribute/sign/macos/). Direct-download updates would be a separate future feature using [Tauri’s signed updater](https://v2.tauri.app/plugin/updater/), not unsigned download-and-replace code.
 
 `CARGO_TARGET_DIR` is shared by the build and installer. Relative paths resolve from the checkout root so Tauri changing its working directory cannot select a different artifact.
+
+## Build verification
+
+`npm run verify:app` checks the built bundle identity, strict signature, version, and native management commands without opening the profile. `npm run verify:app -- --distribution` also rejects ad-hoc signatures, validates the stapled notarization ticket and asks Gatekeeper to assess the app. No security setting is changed.
+
+The macOS CI workflow uses synthetic fixtures and a local ad-hoc build; it has read-only repository permission and no provider or signing credentials. It does not run live-model tests, publish releases, or install an app into a user's profile.
+
+For public distribution, provide a Developer ID Application identity through `APPLE_SIGNING_IDENTITY` and the notarization variables described in the [official Tauri macOS signing guide](https://v2.tauri.app/distribute/sign/macos/), then build and run the distribution verification. Never put signing credentials in source, command history, logs, or the frontend. This machine currently has no Developer ID identity, so the tested bundle remains a local ad-hoc build.

@@ -17,7 +17,8 @@
     "install:local": "npm run build && node scripts/install-local.mjs",
     "test:install": "node --test scripts/test-install-local.mjs",
     "prepare:homebrew": "node scripts/prepare-homebrew.mjs",
-    "perf": "node scripts/rust.mjs run --release -p melly-core --example performance"
+    "perf": "node scripts/rust.mjs run --release -p melly-core --example performance",
+    "verify:app": "node scripts/verify-app.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.0",
