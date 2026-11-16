@@ -2,14 +2,14 @@ import type { Page } from '@playwright/test';
 
 // Synthetic only. Explicit packets let tests exercise rendering independently
 // of provider timing, without sending a model request.
-export async function streamFixture(page: Page, history = 0) {
+export async function streamFixture(page: Page, history = 0, citation = false) {
   await page.route('**/src/backend.ts*', route => route.fulfill({ contentType: 'application/javascript', body: `
     import {mockBackend} from './mock-backend.ts';
     export const nativeApp=false;
     const chat={id:'stream-fixture',title:'Synthetic streaming',folderId:null,updatedAt:1};
     const sources=[{id:'ref',kind:'web',title:'Synthetic reference',url:'https://example.com',chatId:null,messageId:null,snippet:'Reference details. '.repeat(100)}];
     const messages=Array.from({length:${history}},(_,i)=>({id:'history-'+i,chatId:chat.id,role:'assistant',content:Array.from({length:5},(_,j)=>'Paragraph '+i+'.'+j+' — '+ 'Synthetic reading text. '.repeat(14)).join('\\n\\n'),status:'complete',sources:i===${history}-1?sources:[],createdAt:i}));
-    const answer={id:'stream-answer',chatId:chat.id,role:'assistant',content:'',status:'streaming',sources:[],createdAt:100};
+    const answer={id:'stream-answer',chatId:chat.id,role:'assistant',content:'',status:'streaming',sources:${citation ? JSON.stringify([{id:'jump',kind:'chat',title:'Earlier paragraph',url:null,chatId:'stream-fixture',messageId:'history-0',snippet:'Synthetic earlier text'}]) : '[]'},createdAt:100};
     messages.push(answer);
     let listener;
     window.fixtureStream=(kind,text='')=>{

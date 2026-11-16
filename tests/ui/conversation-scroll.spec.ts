@@ -41,3 +41,17 @@ test('opening details keeps the disclosure in place, including with the keyboard
   expect(await summary.evaluate(node=>node.getBoundingClientRect().top)).toBeCloseTo(before,0);
   await expect(page.getByRole('button',{name:'Jump to latest'})).toBeVisible();
 });
+
+
+test('the same citation can be reopened after scrolling away from its highlight', async ({page}) => {
+  await streamFixture(page,12,true);
+  await packet(page,'delta','See [the earlier paragraph](melly-source:jump).');
+  const source=page.getByRole('button',{name:'Open source Earlier paragraph',exact:true}).first();
+  const target=page.locator('#message-history-0');
+  for(let visit=0;visit<2;visit++) {
+    await page.locator('.conversation-scroll').evaluate(node=>{node.scrollTop=node.scrollHeight;});
+    await source.click();
+    await expect(target).toBeInViewport();
+    await expect(target).toHaveClass(/highlighted/);
+  }
+});

@@ -99,7 +99,8 @@ export default function App() {
   const [compactingChat, setCompactingChat] = useState<string | null>(null);
   const savingContext = useRef(false);
   const [searchOpen, setSearchOpen] = useState(false); const [nameAction, setNameAction] = useState<NameAction | null>(null); const [deleteTarget, setDeleteTarget] = useState<Chat | null>(null);
-  const [highlight, setHighlight] = useState<string | null>(null); const jump = useRef<{ chatId: string; messageId: string } | null>(null);
+  const [highlight, setHighlight] = useState<string | null>(null);
+  const [highlightRevision, setHighlightRevision] = useState(0); const jump = useRef<{ chatId: string; messageId: string } | null>(null);
   const [systemDark, setSystemDark] = useState(window.matchMedia('(prefers-color-scheme: dark)').matches);
   const [codingActivities, setCodingActivities] = useState<Record<string, CodingActivityState>>({});
   const [activities, setActivities] = useState<Record<string, string>>({});
@@ -171,7 +172,7 @@ export default function App() {
         return mergeStreams(result.slice(-240));
       });
       if (!retainHistory) { setHasOlder(page.length === 60); setViewingOlder(olderPage); }
-      if (target && page.some((message) => message.id === target)) { followBottom.current = false; setHighlight(target); }
+      if (target && page.some((message) => message.id === target)) { followBottom.current = false; setHighlight(target); setHighlightRevision(revision => revision + 1); }
       else if (target) setNotice('The source message is no longer available.');
     } catch (reason) { if (selectedRef.current === chatId) setNotice(errorText(reason)); }
     finally { if (selectedRef.current === chatId && messageRequest.current === request && mounted.current) setLoading(false); }
@@ -321,7 +322,7 @@ export default function App() {
       document.getElementById(`message-${highlight}`)?.scrollIntoView({ block: 'center', behavior: 'auto' });
       conversation.pause();
     }
-  }, [highlight, conversation.pause]);
+  }, [highlight, highlightRevision, conversation.pause]);
   useLayoutEffect(() => { if (textarea.current) { textarea.current.style.height = '24px'; textarea.current.style.height = `${Math.min(180, textarea.current.scrollHeight)}px`; } }, [draft]);
   const closePicker = () => { setPicker(null); (picker === 'providers' ? providerButton : modelButton).current?.focus(); };
   useEffect(() => {
