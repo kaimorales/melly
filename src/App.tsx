@@ -51,7 +51,7 @@ function MessageView({ message, activity, codingActivity, theme, highlight, onSo
   return <article id={`message-${message.id}`} className={`message assistant ${highlight ? 'highlighted' : ''}`} aria-label="Melly response">
 
     <Thinking message={message} activity={activity} />
-    {reply.text && <MarkdownAnswer text={reply.text} sources={message.sources} onSource={openSource} />}
+    {reply.text && <MarkdownAnswer text={reply.text} status={message.status} sources={message.sources} onSource={openSource} />}
     {codingActivity && <CodingActivity activity={codingActivity} settled={message.status === 'complete'} />}
     {nativeApp && reply.proposed && message.status === 'complete' && <InlineFileEdit chatId={message.chatId} messageId={message.id} busy={!canChange} />}
     <ResponseReferences sources={message.sources} onSource={onSource} />

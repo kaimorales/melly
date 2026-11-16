@@ -431,3 +431,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .jump-latest { position: absolute; left: 50%; top: -42px; transform: translateX(-50%); width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 1px solid var(--floating-edge); border-radius: 50%; background: var(--floating-surface); color: var(--muted); box-shadow: var(--shadow-menu); z-index: 2; transition: color var(--motion-fast), border-color var(--motion-fast); }
 .jump-latest:hover { color: var(--ink); border-color: var(--muted); }
 .jump-latest .icon { width: 16px; height: 16px; }
+
+/* Only newly received prose changes opacity. No movement, blur, or reflow.
+   The global reduced-motion rules also disable this brief arrival fade. */
+@keyframes word-arrival { from { opacity: .18; } to { opacity: 1; } }
+.arriving-word { animation: word-arrival 180ms ease-out both; }
