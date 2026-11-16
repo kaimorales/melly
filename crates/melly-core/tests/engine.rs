@@ -888,7 +888,7 @@ async fn context_preflight_rejects_oversized_drafts_without_consuming_files_or_h
 
 #[cfg(unix)]
 #[tokio::test]
-async fn unavailable_project_excerpts_do_not_interrupt_a_new_file_proposal() {
+async fn changed_text_is_refreshed_and_missing_excerpts_do_not_interrupt_a_turn() {
     use melly_core::{
         file_edits::Proposal,
         linked,
@@ -959,13 +959,25 @@ async fn unavailable_project_excerpts_do_not_interrupt_a_new_file_proposal() {
     assert_eq!(proposal.path, "example.py");
     assert_eq!(proposal.apply_to(None).unwrap(), "print(42)\n");
     assert!(!root.join("example.py").exists());
-    assert_eq!(reply.sources.len(), 1);
-    assert!(reply.sources[0].snippet.contains("CURRENT_CANARY"));
+    assert_eq!(reply.sources.len(), 2);
+    assert!(
+        reply
+            .sources
+            .iter()
+            .any(|source| source.snippet.contains("CURRENT_CANARY"))
+    );
+    assert!(
+        reply
+            .sources
+            .iter()
+            .any(|source| source.snippet.contains("modified on disk"))
+    );
 
     let calls = fake.calls.lock().unwrap();
     assert_eq!(calls.len(), 1);
     let forwarded = &calls[0].messages.last().unwrap().content;
     assert!(forwarded.contains("CURRENT_CANARY"));
+    assert!(forwarded.contains("modified on disk"));
     assert!(!forwarded.contains("OUTDATED_CANARY"));
     assert!(!forwarded.contains("MISSING_CANARY"));
     assert!(
@@ -974,6 +986,7 @@ async fn unavailable_project_excerpts_do_not_interrupt_a_new_file_proposal() {
             .unwrap()
             .iter()
             .flat_map(|update| &update.sources)
-            .all(|source| source.snippet.contains("CURRENT_CANARY"))
+            .all(|source| source.snippet.contains("CURRENT_CANARY")
+                || source.snippet.contains("modified on disk"))
     );
 }

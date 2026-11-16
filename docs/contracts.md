@@ -154,6 +154,10 @@ Tool-capable provider routes receive six named project functions. Rust validates
 
 The context ring offers **Compact context**. It uses only the currently selected provider/model, with tools and web disabled, to summarize older conversation into bounded task notes. At most eight sequential model requests are admitted and recorded as usage; Stop or failure leaves the prior context unchanged. The newest four messages stay verbatim. Summaries retain a durable prefix boundary; ordinary context selection omits only that prefix and includes its notes. All original messages, attachments, and undo records remain untouched. **Task notes** exposes the actual summary and **Undo compaction** restores normal history selection. Summaries are references, not instructions, and are excluded from exports; originals are exported normally.
 
+## Fresh linked references
+
+Before a turn sends selected references, a blocking worker checks at most five relevant linked files. Changed UTF-8 text up to 2 MiB is reindexed locally, then the references are selected and revision-checked again. Missing, binary, replaced-root, or symlinked files are omitted without interrupting the reply. Imported copies and PDFs retain their explicit refresh/reimport flow. This performs no startup/background scan and no remote embedding call.
+
 ## Compact response details
 
 Each reply exposes its sources in one closed, keyboard-accessible disclosure; inline citations remain direct links. Completed file operations abbreviate long paths in the summary and retain the full path beside the expanded diff. Interrupted coding replies retain their changes and expose Continue. Narrow layouts and both themes keep permissions, diffs, and source controls inside the message column.

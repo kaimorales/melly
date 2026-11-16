@@ -109,6 +109,7 @@ struct Turn {
     sink: UpdateSink,
     search_query: Option<String>,
     project_sources: Vec<Source>,
+    project_query: String,
     coding: Option<Arc<dyn crate::coding::CodingTools>>,
 }
 #[derive(serde::Deserialize)]
@@ -732,7 +733,7 @@ impl Engine {
         let cancel = CancellationToken::new();
         active.insert(input.chat_id.clone(), cancel.clone());
         drop(active);
-        let search_query = (client_web && input.web_search).then_some(content);
+        let search_query = (client_web && input.web_search).then_some(content.clone());
         let turn = Turn {
             input,
             message: message.clone(),
@@ -744,6 +745,7 @@ impl Engine {
             sink,
             search_query,
             project_sources,
+            project_query: content,
             coding,
         };
         let engine = self.clone();
@@ -801,6 +803,37 @@ impl Engine {
         );
     }
     async fn prepare_project_sources(&self, turn: &mut Turn, output: &Mutex<Output>) -> Result<()> {
+        if turn.input.folder_context
+            && turn
+                .project_sources
+                .iter()
+                .any(|source| source.kind == "file")
+        {
+            let store = self.store.clone();
+            let chat = turn.input.chat_id.clone();
+            let sources = turn.project_sources.clone();
+            let cancel = turn.cancel.clone();
+            let refreshed = tokio::task::spawn_blocking(move || {
+                crate::projects::refresh_selected_linked_files(&store, &chat, &sources, &cancel)
+            })
+            .await??;
+            ensure!(!turn.cancel.is_cancelled(), "Request cancelled");
+            if refreshed {
+                let fresh = self
+                    .store
+                    .lock()
+                    .unwrap()
+                    .project_references(&turn.input.chat_id, &turn.project_query)?;
+                turn.project_sources.retain(|source| source.kind != "file");
+                append_sources(&mut turn.project_sources, &fresh);
+                if turn.connection.provider_id == "ollama-local" {
+                    turn.project_sources.truncate(3);
+                    for source in &mut turn.project_sources {
+                        source.snippet = source.snippet.chars().take(400).collect();
+                    }
+                }
+            }
+        }
         if turn
             .project_sources
             .iter()

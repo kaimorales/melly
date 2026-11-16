@@ -737,3 +737,98 @@ impl Store {
         Ok(Vec::new())
     }
 }
+
+/// Refresh only text files already selected for this turn. No background scan or network.
+pub(crate) fn refresh_selected_linked_files(
+    store: &std::sync::Mutex<Store>,
+    chat: &str,
+    sources: &[Source],
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Result<bool> {
+    let candidates = {
+        let store = store.lock().unwrap();
+        let folder = store.chat(chat)?.folder_id;
+        let mut seen = std::collections::HashSet::new();
+        let mut candidates = Vec::new();
+        for source in sources.iter().filter(|s| s.kind == "file").take(5) {
+            let Ok(citation) = store.file_source(&source.id) else {
+                continue;
+            };
+            if !seen.insert(citation.file_id.clone()) {
+                continue;
+            }
+            let Ok(file) = store.project_file(&citation.file_id) else {
+                continue;
+            };
+            if file.linked_path.is_none()
+                || matches!(
+                    Path::new(&file.name)
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .map(str::to_ascii_lowercase)
+                        .as_deref(),
+                    Some("pdf" | "png" | "jpg" | "jpeg")
+                )
+                || folder.as_deref() != Some(&file.folder_id)
+            {
+                continue;
+            }
+            if let Ok(read) = store.project_read(&file) {
+                candidates.push((file, read));
+            }
+        }
+        candidates
+    };
+    let mut refreshed = false;
+    for (file, read) in candidates {
+        if cancel.is_cancelled() {
+            break;
+        }
+        let Ok(bytes) = crate::linked::read_scoped_with_limit(
+            &read.root,
+            read.identity,
+            &read.relative,
+            2 * 1024 * 1024,
+        ) else {
+            continue;
+        };
+        let revision = crate::linked::revision(&bytes);
+        if revision == read.revision {
+            continue;
+        }
+        let Ok(text) = std::str::from_utf8(&bytes) else {
+            continue;
+        };
+        if text.contains('\0') {
+            continue;
+        }
+        let passages = text_passages(text, None);
+        if cancel.is_cancelled() {
+            break;
+        }
+        let store = store.lock().unwrap();
+        let Ok(current) = store.project_file(&file.id) else {
+            continue;
+        };
+        if store.project_read(&current).ok().as_ref() != Some(&read) {
+            continue;
+        }
+        if store.chat(chat)?.folder_id.as_deref() != Some(&file.folder_id) {
+            continue;
+        }
+        store.ensure_active_project(&file.folder_id)?;
+        let tx = store.conn.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE project_files SET revision=?2,bytes=?3 WHERE id=?1",
+            params![file.id, revision, bytes.len() as u64],
+        )?;
+        tx.execute("DELETE FROM project_chunks WHERE file_id=?1", [&file.id])?;
+        for passage in passages {
+            tx.execute("INSERT INTO project_chunks(id,file_id,page,first_line,last_line,content) VALUES(?1,?2,NULL,?3,?4,?5)",params![Uuid::new_v4().to_string(),file.id,passage.first_line,passage.last_line,passage.text])?;
+        }
+        tx.commit()?;
+        refreshed = true;
+        // Cascaded old vectors stay gone until the next explicit full refresh.
+    }
+    Ok(refreshed)
+}
