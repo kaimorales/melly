@@ -422,3 +422,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .response-references .source .icon { flex-shrink: 0; }
 .custom-connection-compatibility { margin-top: 14px; font-size: 12px; color: var(--secondary); }
 .custom-connection-compatibility > summary { cursor: pointer; }
+
+/* Preserve the reading anchor ourselves, including WebKit, without competing
+   with native scroll anchoring. The return control appears only off the end. */
+.conversation-scroll { overflow-anchor: none; }
+.conversation-content { min-height: 100%; }
+.conversation-content.is-empty { height: 100%; }
+.jump-latest { position: absolute; left: 50%; top: -42px; transform: translateX(-50%); width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 1px solid var(--floating-edge); border-radius: 50%; background: var(--floating-surface); color: var(--muted); box-shadow: var(--shadow-menu); z-index: 2; transition: color var(--motion-fast), border-color var(--motion-fast); }
+.jump-latest:hover { color: var(--ink); border-color: var(--muted); }
+.jump-latest .icon { width: 16px; height: 16px; }

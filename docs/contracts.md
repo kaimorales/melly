@@ -161,3 +161,7 @@ Before a turn sends selected references, a blocking worker checks at most five r
 ## Compact response details
 
 Each reply exposes its sources in one closed, keyboard-accessible disclosure; inline citations remain direct links. Completed file operations abbreviate long paths in the summary and retain the full path beside the expanded diff. Interrupted coding replies retain their changes and expose Continue. Narrow layouts and both themes keep permissions, diffs, and source controls inside the message column.
+
+## Conversation position
+
+The transcript follows new content while the reader is at the end. Scrolling up or opening a disclosure preserves the visible reading anchor, including late code/math layout. A small **Jump to latest** control resumes following; older history and citation jumps keep their existing bounded reads. Resize observation is scoped to the mounted conversation, with no idle polling or animated scrolling.

@@ -1,5 +1,6 @@
 import { ResponseReferences } from './ResponseReferences';
 import { useComposerDraft } from './useComposerDraft';
+import { useConversationScroll } from './useConversationScroll';
 import { UndoChanges } from './UndoChanges';
 import { advanceStream, streamRevealWindow } from './stream-reveal';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
@@ -117,6 +118,7 @@ export default function App() {
   const streamBuffers = useRef(new Map<string, StreamBuffer>()); const frame = useRef<number | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null); const scroll = useRef<HTMLDivElement>(null); const modelButton = useRef<HTMLButtonElement>(null); const providerButton = useRef<HTMLButtonElement>(null);
   const followBottom = useRef(true); const mounted = useRef(true);
+  const conversation = useConversationScroll(scroll, followBottom, selectedId, !!data && view === 'chat');
   const messageRequest = useRef(0);
   const readySent = useRef(false);
   selectedRef.current = selectedId;
@@ -302,9 +304,11 @@ export default function App() {
     void loadMessages(selectedId, target);
   }, [selectedId, loadMessages]);
   useLayoutEffect(() => {
-    if (highlight) document.getElementById(`message-${highlight}`)?.scrollIntoView({ block: 'center', behavior: 'auto' });
-    else if (followBottom.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [items, highlight]);
+    if (highlight) {
+      document.getElementById(`message-${highlight}`)?.scrollIntoView({ block: 'center', behavior: 'auto' });
+      conversation.pause();
+    }
+  }, [highlight, conversation.pause]);
   useLayoutEffect(() => { if (textarea.current) { textarea.current.style.height = '24px'; textarea.current.style.height = `${Math.min(180, textarea.current.scrollHeight)}px`; } }, [draft]);
   const closePicker = () => { setPicker(null); (picker === 'providers' ? providerButton : modelButton).current?.focus(); };
   useEffect(() => {
@@ -480,14 +484,13 @@ export default function App() {
   const older = async () => {
     if (!selectedId || !items.length || loading) return;
     const chatId = selectedId; const request = ++messageRequest.current; setLoading(true); followBottom.current = false; setHighlight(null);
-    const previousHeight = scroll.current?.scrollHeight || 0; const previousTop = scroll.current?.scrollTop || 0;
+    conversation.pause();
     try {
       const page = await backend.invoke<Message[]>('messages', { chatId, before: items[0].createdAt });
       if (selectedRef.current === chatId && messageRequest.current === request) {
         if (page.length + items.length > 240) setViewingOlder(true);
         setItems((current) => mergeStreams([...page, ...current].slice(0, 240)));
         setHasOlder(page.length === 60);
-        requestAnimationFrame(() => { if (scroll.current) scroll.current.scrollTop = previousTop + scroll.current.scrollHeight - previousHeight; });
       }
     } catch (reason) { setNotice(errorText(reason)); } finally { if (messageRequest.current === request) setLoading(false); }
   };
@@ -570,14 +573,17 @@ export default function App() {
       </header>
       {notice && <div className="notice" role="alert"><span>{notice}</span><button className="icon-button" aria-label="Dismiss notification" onClick={() => setNotice('')}><Icon name="close" className="small" /></button></div>}
       {view === 'settings' ? <SettingsView data={data} theme={theme} onSettings={saveSettings} refresh={refresh} onSeed={seed} report={setNotice} /> : <>
-        <div className="conversation-scroll" ref={scroll} onScroll={() => { const element = scroll.current; if (element) followBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 100; }}>
+        <div className="conversation-scroll" ref={scroll} onScroll={conversation.onScroll} onWheel={event => { if (event.deltaY < 0) conversation.pause(); }} onClickCapture={conversation.onInteract} onKeyDown={event => { if (['ArrowUp', 'PageUp', 'Home'].includes(event.key)) conversation.pause(); }}>
+          <div ref={conversation.content} className={`conversation-content ${!items.length && !loading ? 'is-empty' : ''}`}>
           {!items.length && !loading ? <div className="empty-state"><h1>{selectedFolder ? `A new thought in ${selectedFolder.title}` : 'What’s on your mind?'}</h1>{!nativeApp && provider?.id === 'mock' && <><p>Try a synthetic conversation, or connect a provider in Settings.</p><button className="text-action" onClick={() => { void seed().catch((reason) => setNotice(errorText(reason))); }}>Try an example</button></>}</div> : <div className={`transcript ${hasOlder || viewingOlder ? 'has-older' : ''}`} aria-label="Conversation">
             {hasOlder && <button className="load-older" disabled={loading} onClick={() => { void older(); }}>{loading ? 'Loading…' : 'Load older messages'}</button>}
             {viewingOlder && <button className="load-older" onClick={() => { if (selectedId) { setHighlight(null); followBottom.current = true; void loadMessages(selectedId); } }}>Back to latest messages</button>}
             {items.map((message, index) => <MessageView key={message.id} message={message} theme={theme} activity={activities[message.id]} codingActivity={codingActivities[message.id]} highlight={highlight === message.id} onSource={(value) => { void source(value).catch((reason) => setNotice(errorText(reason))); }} onRetry={() => { void send(true); }} onBranch={() => { void branchMessage(message); }} onEdit={() => { clearAttachment(); setEditing(message); setDraft(message.content); if (message.attachments?.length) void receiveFiles('copy_message_files', { messageId: message.id }); textarea.current?.focus(); }} canChange={!activeRun && !starting && !loading && !pickingAttachment} retryEnabled={index === items.length - 1 && !viewingOlder && !loading && !activeRun && !starting} report={setNotice} />)}
           </div>}
+          </div>
         </div>
         <div className="composer-area" data-menu-root>
+          {conversation.away && <button type="button" className="jump-latest" aria-label="Jump to latest" title="Jump to latest" onClick={() => { setHighlight(null); conversation.latest(); if (viewingOlder && selectedId) void loadMessages(selectedId); textarea.current?.focus({ preventScroll: true }); }}><Icon name="up" style={{ transform: 'rotate(180deg)' }} /></button>}
           {draggingFiles && <div className="file-drop-overlay" aria-hidden="true"><Icon name="plus" /><span>Add files to this conversation</span><small>Shared when you send</small></div>}
           {selectedFolder && folderContext && <div className="folder-consent"><span>Project files and matching chats may be sent to {provider ? providerName(provider) : 'the selected provider'}.</span></div>}
           {!selectedFolder && explicitFolder && <div className="folder-consent"><Icon name="folder" /><span>Move this chat into a project to use its files and other chats.</span></div>}
