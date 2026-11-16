@@ -8,12 +8,13 @@ export type ChatActionsProps = {
   folders: Folder[];
   busy: boolean;
   onRename: (chat: Chat) => void;
+  onExport: (chat: Chat) => void;
   onDelete: (chat: Chat) => void;
   onMove: (chat: Chat, folderId: string | null) => void;
   onClose: () => void;
 };
 
-export function ChatActions({ chat, folders, busy, onRename, onDelete, onMove, onClose, showMove = true }: ChatActionsProps & { showMove?: boolean }) {
+export function ChatActions({ chat, folders, busy, onRename, onExport, onDelete, onMove, onClose, showMove = true }: ChatActionsProps & { showMove?: boolean }) {
   return <>
     <button className="menu-item" role="menuitem" onClick={() => { onClose(); onRename(chat); }}>Rename chat</button>
     {showMove && <label className="menu-field">Move to project
@@ -21,6 +22,7 @@ export function ChatActions({ chat, folders, busy, onRename, onDelete, onMove, o
         <option value="">No project</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.title}</option>)}
       </select>
     </label>}
+    <button className="menu-item" role="menuitem" disabled={busy} onClick={() => { onClose(); onExport(chat); }}>Export conversation…</button>
     <button className="menu-item danger" role="menuitem" disabled={busy} title={busy ? 'Stop the response before deleting this chat' : undefined} onClick={() => { onClose(); onDelete(chat); }}>Delete chat</button>
   </>;
 }

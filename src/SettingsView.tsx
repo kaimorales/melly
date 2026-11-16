@@ -3,6 +3,7 @@ import { backend, nativeApp } from './backend';
 import { ApiKeyField, type ApiKeyFieldHandle } from './ApiKeyField';
 import { Dialog } from './dialogs';
 import { ProviderUsage } from './Usage';
+import { DataSettings } from './DataSettings';
 import { CompatibleConnectionDialog } from './CompatibleConnections';
 import { Icon, ProviderIcon } from './icons';
 import { discoverModels, invalidateModelCatalog, useModelCatalog } from './model-catalog';
@@ -179,6 +180,7 @@ export function SettingsView({ data, theme, onSettings, refresh, onSeed, report 
       <div className="settings-save"><button className="button" disabled={prompt === data.settings.systemPrompt} onClick={() => { void onSettings({ ...data.settings, systemPrompt: prompt }).then(() => setPromptSaved(true)).catch((reason) => report(String(reason))); }}>Save prompt</button>{promptSaved && <span role="status">Saved</span>}</div>
     </div></section>
     <section className="settings-section" aria-labelledby="search-title"><h2 id="search-title">Web search</h2><div className="settings-group"><div className="settings-row"><div><div className="settings-row-label">External search</div><div className="settings-row-description">{data.searchConfigured ? 'Tavily · search key saved' : 'Tavily · optional for providers without built-in search'}</div></div><div className="search-key-actions">{data.searchConfigured && <button className="button quiet" onClick={() => { void backend.invoke('remove_search_key').then(refresh).then(() => report('Search key removed.')).catch((reason) => report(String(reason))); }}>Remove key</button>}<button className="button" onClick={() => { void backend.invoke<boolean>('enter_search_key').then(async (saved) => { await refresh(); if (saved) report('Search key saved in Keychain.'); }).catch((reason) => report(String(reason))); }}>{data.searchConfigured ? 'Replace key' : 'Add key'}</button></div></div></div><p className="settings-note">Search runs only when you enable it for a message. External search uses its own billing.</p></section>
+    <DataSettings refresh={refresh} report={report} />
     {!nativeApp && <section className="settings-section" aria-labelledby="demo-title"><h2 id="demo-title">Try Melly</h2><div className="settings-group"><div className="settings-row"><div><div className="settings-row-label">Example conversations</div><div className="settings-row-description">Synthetic chats, folder references and citations</div></div><button className="button" onClick={() => { void onSeed().catch((reason) => report(String(reason))); }}>Try an example</button></div></div></section>}
   </div>{providerId && <ProviderDialog key={providerId} initialId={providerId} data={data} theme={theme} onClose={closeProvider} refresh={refresh} />}</div>;
 }

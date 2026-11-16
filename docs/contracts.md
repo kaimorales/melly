@@ -110,6 +110,10 @@ Settings shows recorded usage for each supported connection and model.
 
 `provider_usage(providerId,modelId)` returns current UTC-month connection totals, missing-usage/unpriced-request counts, reported and estimated charges, and selected model rates. `save_usage_rates(providerId,modelId,rates)` stores validated optional USD-per-million input/output rates. Estimates exclude cache discounts, tool charges and taxes. `account_usage(providerId)` currently supports only the explicit OpenRouter route and calls its fixed `/api/v1/key` endpoint on demand. It returns reported key usage and optional budget/remaining values; no cross-provider credential use or fallback exists. Other subscription limits remain unavailable.
 
+## Portable data
+
+`export_data(chatId?,folderId?)` writes Markdown for one chat or version-1 JSON for a project/full backup through a native save panel. Export rejects active replies. `prepare_restore()` reads and validates a native-selected backup and returns a one-use ticket plus counts; `finish_restore(ticket,confirm)` cancels or adds the prepared content. Restore never replaces existing identities. Payloads are bounded to 96 MiB JSON / 48 MiB decoded content, 500 projects, 5,000 chats/files, 20,000 messages and 2,000 attachments. UUIDs, timestamps, references and filenames are validated, new UUIDs/citations assigned, and new private files cleaned up on failure. Keys, settings, external directory contents/paths and usage history are excluded. Restored project permissions default off.
+
 ## File changes in linked chats
 
 - `review_file_edit(chatId, messageId)` resolves a proposal from a completed assistant reply against its linked project. It returns a compact diff and a short-lived review ticket.

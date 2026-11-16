@@ -458,6 +458,7 @@ export default function App() {
     } catch (reason) { setNotice(errorText(reason)); if (chatId) setRunning((current) => { const next = new Set(current); next.delete(chatId!); return next; }); }
     finally { sendingRef.current = false; setStarting(false); textarea.current?.focus(); }
   };
+  const exportChat = (chat: Chat) => { void backend.invoke<boolean>('export_data', { chatId: chat.id, folderId: null }).then(saved => { if (saved) setNotice('Conversation exported.'); }).catch(reason => setNotice(errorText(reason))); };
   const branchMessage = async (message: Message) => {
     if (sendingRef.current) return;
     sendingRef.current = true; setStarting(true);
@@ -553,7 +554,7 @@ export default function App() {
     {sidebar && <aside className="sidebar" aria-label="Chats">
       <div className="chrome" data-tauri-drag-region><span className="preview-brand" data-tauri-drag-region>Melly</span><button className="icon-button" aria-label="Hide sidebar" onClick={() => setSidebar(false)}><Icon name="sidebar" /></button></div>
       <nav className="nav" aria-label="Main"><button className="nav-row" onClick={() => { void createChat().catch((reason) => setNotice(errorText(reason))); }}><Icon name="edit" />New Chat</button><button className={`nav-row ${view === 'settings' ? 'selected' : ''}`} onClick={() => { setView('settings'); setNotice(''); }}><Icon name="settings" />Settings</button>{view === 'chat' && <button className="nav-row chat-search" onClick={() => setSearchOpen(true)}><Icon name="search" />Search chats</button>}</nav>
-      {view === 'chat' && <ChatList onArchive={archiveProject} onDeleteProject={setDeleteProject} onArchived={() => setArchivedOpen(true)} onFiles={setProjectFiles} chats={data.chats} folders={data.folders} selectedId={selectedId} busy={new Set([...running, ...moving])}
+      {view === 'chat' && <ChatList onExport={exportChat} onArchive={archiveProject} onDeleteProject={setDeleteProject} onArchived={() => setArchivedOpen(true)} onFiles={setProjectFiles} chats={data.chats} folders={data.folders} selectedId={selectedId} busy={new Set([...running, ...moving])}
         onSelect={selectChat} onMove={moveChat} onDelete={setDeleteTarget} onRename={(chat) => setNameAction({ kind: 'rename-chat', id: chat.id, title: chat.title })}
         onNewChat={(folderId) => { void createChat(folderId).catch((reason) => setNotice(errorText(reason))); }} onNewFolder={() => setNameAction({ kind: 'new-folder' })}
         onRenameFolder={(folder) => setNameAction({ kind: 'rename-folder', id: folder.id, title: folder.title })} />}
@@ -565,7 +566,7 @@ export default function App() {
         {view === 'settings' && <button className="icon-button" aria-label="Back to chat" title="Back to chat" onClick={() => { setView('chat'); setNotice(''); }}><Icon name="right" style={{ transform: 'rotate(180deg)' }} /></button>}
         {view === 'settings' ? <h1 data-tauri-drag-region>Settings</h1> : selectedChat ? <div className="chat-heading" data-tauri-drag-region><span className="chat-title" data-tauri-drag-region>{selectedChat.title}</span><span className="chat-location" data-tauri-drag-region>{selectedFolder?.title || 'No project'}</span></div> : <span />}
         {!sidebar && !nativeApp && <span className="preview-badge">Browser preview · Mock</span>}
-        {view === 'chat' && selectedChat && <div className="chat-menu-button" data-menu-root><button className="icon-button" aria-label="Chat options" aria-expanded={chatMenu} onClick={() => setChatMenu(!chatMenu)}><Icon name="more" /></button>{chatMenu && <div className="menu chat-menu" role="menu"><ChatActions chat={selectedChat} folders={data.folders} busy={activeRun || moving.has(selectedChat.id)} onRename={(chat) => setNameAction({ kind: 'rename-chat', id: chat.id, title: chat.title })} onDelete={setDeleteTarget} onMove={moveChat} onClose={() => setChatMenu(false)} /></div>}</div>}
+        {view === 'chat' && selectedChat && <div className="chat-menu-button" data-menu-root><button className="icon-button" aria-label="Chat options" aria-expanded={chatMenu} onClick={() => setChatMenu(!chatMenu)}><Icon name="more" /></button>{chatMenu && <div className="menu chat-menu" role="menu"><ChatActions onExport={exportChat} chat={selectedChat} folders={data.folders} busy={activeRun || moving.has(selectedChat.id)} onRename={(chat) => setNameAction({ kind: 'rename-chat', id: chat.id, title: chat.title })} onDelete={setDeleteTarget} onMove={moveChat} onClose={() => setChatMenu(false)} /></div>}</div>}
       </header>
       {notice && <div className="notice" role="alert"><span>{notice}</span><button className="icon-button" aria-label="Dismiss notification" onClick={() => setNotice('')}><Icon name="close" className="small" /></button></div>}
       {view === 'settings' ? <SettingsView data={data} theme={theme} onSettings={saveSettings} refresh={refresh} onSeed={seed} report={setNotice} /> : <>

@@ -8,13 +8,13 @@ import type { Chat, Folder } from './types';
 type Props = {
   chats: Chat[]; folders: Folder[]; selectedId: string | null; busy: Set<string>;
   onSelect: (chat: Chat) => void; onMove: (chat: Chat, folderId: string | null) => void;
-  onDelete: (chat: Chat) => void; onRename: (chat: Chat) => void;
+  onExport: (chat: Chat) => void; onDelete: (chat: Chat) => void; onRename: (chat: Chat) => void;
   onArchive: (folder: Folder) => void; onDeleteProject: (folder: Folder) => void; onArchived: () => void;
   onFiles: (folder: Folder) => void;
   onNewChat: (folderId: string) => void; onNewFolder: () => void; onRenameFolder: (folder: Folder) => void;
 };
 
-export function ChatList({ chats, folders, selectedId, busy, onSelect, onMove, onDelete, onRename, onNewChat, onNewFolder, onRenameFolder, onFiles, onArchive, onDeleteProject, onArchived }: Props) {
+export function ChatList({ chats, folders, selectedId, busy, onSelect, onMove, onDelete, onExport, onRename, onNewChat, onNewFolder, onRenameFolder, onFiles, onArchive, onDeleteProject, onArchived }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [folderMenu, setFolderMenu] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ id: string; anchor: HTMLElement; point?: { x: number; y: number } } | null>(null);
@@ -58,6 +58,6 @@ export function ChatList({ chats, folders, selectedId, busy, onSelect, onMove, o
     </div>
     {dragging && createPortal(<div ref={preview} className="chat-drag-preview" aria-hidden="true"><Icon name="chat" /><span>{chats.find((chat) => chat.id === dragging)?.title}</span></div>, document.body)}
     <span className="sr-only" role="status">{dragging ? destinationTitle ? `Move to ${destinationTitle}` : 'Drag onto a project, or Recent to remove from a project. Escape cancels.' : ''}</span>
-    {menu && menuChat && <ChatActionsMenu chat={menuChat} folders={folders} busy={busy.has(menuChat.id)} anchor={menu.anchor} point={menu.point} onRename={onRename} onDelete={onDelete} onMove={onMove} onClose={() => setMenu(null)} />}
+    {menu && menuChat && <ChatActionsMenu chat={menuChat} folders={folders} busy={busy.has(menuChat.id)} anchor={menu.anchor} point={menu.point} onRename={onRename} onExport={onExport} onDelete={onDelete} onMove={onMove} onClose={() => setMenu(null)} />}
   </div>;
 }

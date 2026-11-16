@@ -13,6 +13,7 @@ mod linked_projects;
 mod login_state;
 mod ocr;
 mod pdf;
+mod portable;
 mod project_files;
 mod secure_input;
 mod usage;
@@ -38,6 +39,7 @@ struct AppState {
     plan_namespaces: Mutex<AuthNamespaces>,
     muse_attachment: Mutex<attachments::DraftAttachment>,
     file_drop: Mutex<chat_files::PendingDrop>,
+    pending_restore: Mutex<Option<(String, melly_core::portable::Backup)>>,
     started: std::time::Instant,
     startup_recorded: std::sync::atomic::AtomicBool,
     shutdown_requested: std::sync::atomic::AtomicBool,
@@ -623,6 +625,7 @@ fn main() {
                 coding_approvals: Mutex::new(coding_tools::Approvals::default()),
                 muse_attachment: Mutex::new(attachments::DraftAttachment::default()),
                 file_drop: Mutex::new(chat_files::PendingDrop::default()),
+                pending_restore: Mutex::new(None),
                 started,
                 startup_recorded: std::sync::atomic::AtomicBool::new(false),
                 shutdown_requested: std::sync::atomic::AtomicBool::new(false),
@@ -639,6 +642,9 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            portable::export_data,
+            portable::prepare_restore,
+            portable::finish_restore,
             usage::context_preview,
             usage::provider_usage,
             usage::account_usage,

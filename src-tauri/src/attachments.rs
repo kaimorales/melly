@@ -61,6 +61,15 @@ pub(crate) async fn pick_path(app: &tauri::AppHandle, directory: bool) -> Reply<
     receive.await.map_err(|_| "File picker closed")?
 }
 
+pub(crate) async fn save_path(app: &tauri::AppHandle, name: &str) -> Reply<Option<PathBuf>> {
+    let (send, receive) = tokio::sync::oneshot::channel();
+    let handle = app.clone();
+    let name = name.to_owned();
+    app.run_on_main_thread(move || begin_picker(&handle, false, Some(name), send))
+        .map_err(|_| "Could not open save dialog")?;
+    receive.await.map_err(|_| "Save dialog closed")?
+}
+
 #[cfg(target_os = "macos")]
 fn begin_picker(
     app: &tauri::AppHandle,

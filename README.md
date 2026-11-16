@@ -46,6 +46,8 @@ The small ring beside the model selector opens **Context**: approximate input si
 Each connection’s Settings panel has **Usage & costs**. It shows this month’s usage recorded in Melly, reported charges where available, and clearly separated estimates from optional per-model rates. Incomplete usage and unpriced requests remain marked unknown. OpenRouter has an explicit refresh for the current API key’s usage and configured budget. Subscription allowance is unavailable unless exposed by the provider; token totals cannot stand in for a subscription percentage.
 
 
+Use a chat’s menu to export Markdown, **Project files → Export project** for a portable project, and **Settings → Your data** for backup/restore. Backups contain readable chats, managed files and attachments, but exclude credentials, linked directories and billing records. Restore adds new identities alongside existing data, with project context off.
+
 ## Browser preview without credentials
 
 The browser preview starts empty and selects **Demo · Mock**. The native desktop starts with provider setup. It makes no network requests. Click **Try an example** to add synthetic Job search chats, or create the project and chats yourself:

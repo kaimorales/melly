@@ -138,13 +138,13 @@ test('deletion failures remain in the confirmation and keep the chat', async ({ 
 test('row actions stay concise, with keyboard movement in the header', async ({ page }) => {
   const trigger = page.getByRole('button', { name: 'Chat options for Reading notes', exact: true });
   await trigger.focus(); await page.keyboard.press('Enter');
-  await expect(page.getByRole('menuitem')).toHaveText(['Rename chat', 'Delete chat']);
+  await expect(page.getByRole('menuitem')).toHaveText(['Rename chat', 'Export conversation…', 'Delete chat']);
   await expect(page.getByRole('combobox', { name: 'Move to project' })).toHaveCount(0);
   await expect(page.getByRole('menuitem', { name: 'Rename chat' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(trigger).toBeFocused();
   await page.getByRole('button', { name: 'Reading notes', exact: true }).click({ button: 'right' });
-  await expect(page.getByRole('menuitem')).toHaveText(['Rename chat', 'Delete chat']);
+  await expect(page.getByRole('menuitem')).toHaveText(['Rename chat', 'Export conversation…', 'Delete chat']);
   await expect(page.getByRole('combobox', { name: 'Move to project' })).toHaveCount(0);
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Reading notes', exact: true }).click();
