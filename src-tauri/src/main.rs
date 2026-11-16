@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod attachments;
+mod chat_files;
 mod cli;
 mod coding_tests;
 mod coding_tools;
@@ -10,7 +11,11 @@ mod file_history;
 mod inline_secret;
 mod linked_projects;
 mod login_state;
+mod ocr;
+mod pdf;
+mod project_files;
 mod secure_input;
+mod usage;
 use melly_core::{
     auth,
     auth_namespace::AuthNamespaces,
@@ -28,9 +33,11 @@ struct AppState {
     file_edits: Mutex<file_edits::FileEdits>,
     coding_approvals: Mutex<coding_tools::Approvals>,
     project_operations: Arc<Mutex<()>>,
+    project_scans: Mutex<std::collections::HashMap<String, CancellationToken>>,
     login: Mutex<login_state::LoginState>,
     plan_namespaces: Mutex<AuthNamespaces>,
     muse_attachment: Mutex<attachments::DraftAttachment>,
+    file_drop: Mutex<chat_files::PendingDrop>,
     started: std::time::Instant,
     startup_recorded: std::sync::atomic::AtomicBool,
     shutdown_requested: std::sync::atomic::AtomicBool,
@@ -107,6 +114,17 @@ async fn delete_chat(s: State<'_, AppState>, chat_id: String) -> Reply<()> {
     s.engine.delete_chat(&chat_id).map_err(error)
 }
 #[tauri::command]
+async fn branch_chat(
+    s: State<'_, AppState>,
+    chat_id: String,
+    message_id: String,
+    include_message: bool,
+) -> Reply<Chat> {
+    s.engine
+        .branch_chat(&chat_id, &message_id, include_message)
+        .map_err(error)
+}
+#[tauri::command]
 async fn move_chat(
     s: State<'_, AppState>,
     chat_id: String,
@@ -124,7 +142,7 @@ async fn create_folder(s: State<'_, AppState>, title: String) -> Reply<Folder> {
         .store
         .lock()
         .unwrap()
-        .create_folder(&title)
+        .create_project(&title)
         .map_err(error)
 }
 #[tauri::command]
@@ -311,7 +329,9 @@ async fn open_provider_key_field(
         .into_iter()
         .find(|provider| provider.id == provider_id)
         .ok_or("Unknown provider")?;
-    if matches!(provider.id.as_str(), "mock" | "chatgpt") || provider.disabled_reason.is_some() {
+    if matches!(provider.id.as_str(), "mock" | "chatgpt" | "ollama-local")
+        || provider.disabled_reason.is_some()
+    {
         return Err("This connection does not accept an API key".into());
     }
     inline_secret::open(window, generation, provider_id, rect, theme, configured).await
@@ -462,12 +482,32 @@ async fn disconnect_chatgpt(s: State<'_, AppState>) -> Reply<()> {
     result.map_err(error)
 }
 #[tauri::command]
+async fn disconnect_local(s: State<'_, AppState>) -> Reply<()> {
+    s.engine
+        .store
+        .lock()
+        .unwrap()
+        .clear_connection("ollama-local")
+        .map_err(error)
+}
+#[tauri::command]
 async fn models(s: State<'_, AppState>, provider_id: String) -> Reply<Vec<ModelInfo>> {
     let c = s.engine.connection(&provider_id).map_err(error)?;
     let key = s.engine.credential(&c).await.map_err(error)?;
-    providers::list_models(&c, key.as_deref(), CancellationToken::new())
+    let models = providers::list_models(&c, key.as_deref(), CancellationToken::new())
         .await
-        .map_err(error)
+        .map_err(error)?;
+    let store = s.engine.store.lock().unwrap();
+    for model in &models {
+        if let Some(capacity) = model.context_window {
+            let mut connection = c.clone();
+            connection.model_id = model.id.clone();
+            store
+                .save_model_limit(&connection, capacity)
+                .map_err(error)?;
+        }
+    }
+    Ok(models)
 }
 #[tauri::command]
 async fn start_chat(
@@ -475,6 +515,7 @@ async fn start_chat(
     s: State<'_, AppState>,
     input: SendInput,
     attachment_id: Option<String>,
+    attachment_ids: Option<Vec<String>>,
     draft_key: Option<String>,
 ) -> Reply<Message> {
     let mut draft = s.muse_attachment.lock().unwrap();
@@ -504,6 +545,7 @@ async fn start_chat(
         .start_with_coding_tools(
             input,
             attachment,
+            &attachment_ids.unwrap_or_default(),
             Arc::new(move |update| {
                 if update.kind == "done"
                     && let Some(grant) = &auto_edit
@@ -520,6 +562,7 @@ async fn start_chat(
         draft.remove(&id);
     }
     if consume && let Some(key) = draft_key {
+        // Admission succeeded. A newer draft with different text remains intact.
         let store = s.engine.store.lock().unwrap();
         let _ = store.consume_composer_draft(&key, &sent_content);
         let _ = store.consume_composer_draft(&result.chat_id, &sent_content);
@@ -530,29 +573,6 @@ async fn start_chat(
 async fn stop_chat(s: State<'_, AppState>, chat_id: String) -> Reply<()> {
     s.engine.stop(&chat_id);
     Ok(())
-}
-#[tauri::command]
-async fn context_preview(
-    s: State<'_, AppState>,
-    chat_id: Option<String>,
-    provider_id: String,
-    model_id: String,
-    draft: String,
-    draft_context: Option<melly_core::context::ContextLimit>,
-) -> Reply<ContextPreview> {
-    let engine = s.engine.clone();
-    tokio::task::spawn_blocking(move || {
-        engine.context_preview(
-            chat_id.as_deref(),
-            &provider_id,
-            &model_id,
-            &draft,
-            draft_context,
-        )
-    })
-    .await
-    .map_err(|_| "Context preview interrupted".to_owned())?
-    .map_err(error)
 }
 #[tauri::command]
 async fn demo_seed(s: State<'_, AppState>) -> Reply<Bootstrap> {
@@ -595,12 +615,14 @@ fn main() {
             engine.select_plan_vault(namespaces.selected_vault());
             app.manage(AppState {
                 engine,
+                project_operations: Arc::new(Mutex::new(())),
+                project_scans: Mutex::new(std::collections::HashMap::new()),
                 login: Mutex::new(login_state::LoginState::default()),
                 plan_namespaces: Mutex::new(namespaces),
                 file_edits: Mutex::new(file_edits::FileEdits::default()),
                 coding_approvals: Mutex::new(coding_tools::Approvals::default()),
-                project_operations: Arc::new(Mutex::new(())),
                 muse_attachment: Mutex::new(attachments::DraftAttachment::default()),
+                file_drop: Mutex::new(chat_files::PendingDrop::default()),
                 started,
                 startup_recorded: std::sync::atomic::AtomicBool::new(false),
                 shutdown_requested: std::sync::atomic::AtomicBool::new(false),
@@ -609,16 +631,58 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            if let tauri::WindowEvent::DragDrop(event) = event {
+                chat_files::handle_drop(window, event);
+            }
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 window.state::<AppState>().engine.stop_all();
             }
         })
         .invoke_handler(tauri::generate_handler![
+            usage::context_preview,
+            usage::provider_usage,
+            usage::account_usage,
+            usage::save_usage_rates,
+            coding_tools::confirm_coding_action,
+            coding_tools::coding_activity,
+            compaction::context_summary,
+            compaction::compact_context,
+            compaction::clear_context_summary,
+            drafts::composer_draft,
+            drafts::save_composer_draft,
+            file_history::file_changes,
+            file_history::undo_file_changes,
+            file_edits::file_edit_mode,
+            file_edits::set_file_edit_mode,
+            file_edits::applied_file_edit,
+            file_edits::review_file_edit,
+            file_edits::apply_file_edit,
+            chat_files::pick_chat_files,
+            chat_files::copy_message_files,
+            chat_files::accept_file_drop,
+            chat_files::discard_chat_file,
+            linked_projects::project_link,
+            linked_projects::link_project_directory,
+            linked_projects::refresh_linked_project,
+            linked_projects::unlink_project,
+            linked_projects::cancel_project_scan,
+            project_files::set_project_context,
+            project_files::archived_projects,
+            project_files::archive_project,
+            project_files::delete_project,
+            project_files::file_source,
+            project_files::open_pdf_source,
+            project_files::project_files,
+            project_files::import_project_file,
+            project_files::remove_project_file,
+            project_files::show_project_directory,
+            project_files::open_project_file,
             frontend_ready,
             bootstrap,
             create_chat,
             rename_chat,
             delete_chat,
+            branch_chat,
             move_chat,
             create_folder,
             rename_folder,
@@ -642,29 +706,12 @@ fn main() {
             remove_search_key,
             connect_chatgpt,
             disconnect_chatgpt,
-            linked_projects::project_link,
-            linked_projects::link_project_directory,
-            linked_projects::unlink_project,
-            coding_tools::confirm_coding_action,
-            coding_tools::coding_activity,
-            compaction::context_summary,
-            compaction::compact_context,
-            compaction::clear_context_summary,
-            drafts::composer_draft,
-            drafts::save_composer_draft,
-            file_history::file_changes,
-            file_history::undo_file_changes,
-            file_edits::file_edit_mode,
-            file_edits::set_file_edit_mode,
-            file_edits::applied_file_edit,
-            file_edits::review_file_edit,
-            file_edits::apply_file_edit,
             attachments::pick_muse_attachment,
             attachments::remove_muse_attachment,
+            disconnect_local,
             models,
             start_chat,
             stop_chat,
-            context_preview,
             demo_seed,
             open_source
         ]);

@@ -25,6 +25,7 @@ const rows: Array<[string, string, string, string, string, string, boolean, bool
   ['qwen-token-plan', 'QwenCloud · Token Plan', 'Token Plan · Singapore', 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1', 'auto', 'chat-completions', false, true, null],
   ['moonshot', 'Kimi / Moonshot', 'Moonshot general API', 'https://api.moonshot.ai/v1', 'kimi-k3.1-pro', 'chat-completions', false, true, null],
   ['ollama', 'Ollama Cloud', 'API key · plan or usage credits', 'https://ollama.com/v1', 'gemma4:31b', 'chat-completions', false, true, null],
+  ['ollama-local', 'Ollama Local', 'On this Mac', 'http://127.0.0.1:11434', 'llama3.2:3b', 'ollama-local', false, false, null],
   ['custom', 'Custom compatible', 'Selected endpoint · unverified', '', '', 'chat-completions', false, false, null],
 ];
 const providers: ProviderView[] = rows.map(([id, name, billingRoute, baseUrl, defaultModel, protocol, nativeSearch, tools, disabledReason]) => ({
@@ -42,7 +43,7 @@ let timestamp = Date.now();
 const tick = () => ++timestamp;
 const id = () => crypto.randomUUID();
 const copy = <T,>(value: T): T => structuredClone(value);
-const snapshot = (): Bootstrap => copy({ folders, chats: [...chats].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 300), settings, providers, searchConfigured: false });
+const snapshot = (): Bootstrap => copy({ folders: folders.filter((f) => !f.archived), chats: [...chats].filter((c) => !folders.find((f) => f.id === c.folderId)?.archived).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 300), settings, providers, searchConfigured: false });
 function emit(event: string, payload: unknown) { listeners.get(event)?.forEach((callback) => callback(copy(payload))); }
 function stream(message: Message, kind: string, text = '', sources: Source[] = []) {
   emit('chat-stream', { chatId: message.chatId, messageId: message.id, kind, text, sources } satisfies StreamUpdate);
@@ -110,10 +111,21 @@ $$
 \int_0^1 x^2\,dx=\frac{1}{3}
 $$`;
   if (/longer|long answer/i.test(content)) answer += '\n\n' + 'For this preview, the reply continues long enough to try stopping a response. Partial text remains in the chat, and retry uses the same user message. '.repeat(4);
+  const showThinking = /^demonstrate thinking/i.test(content.trim());
+  const reasoning = showThinking ? 'This is synthetic thinking for the interface preview. I will separate the useful facts, compare the options, and check the result before writing a concise answer. No model or account is used.' : '';
+  const thinkingChunks = reasoning.match(/.{1,12}/g) || [];
+  if (showThinking) answer = 'The answer is 42. This is a synthetic preview of the thinking display.';
   const chunks = answer.match(/.{1,13}|\n/g) || [];
+  let thinkingCursor = 0;
   let cursor = 0;
   const advance = () => {
     if (!runs.has(chat.id)) return;
+    if (thinkingCursor < thinkingChunks.length) {
+      const chunk = thinkingChunks[thinkingCursor++]; reply.reasoning = (reply.reasoning || '') + chunk;
+      stream(reply, 'reasoning', chunk);
+      runs.set(chat.id, { message: reply, timer: setTimeout(advance, 100) });
+      return;
+    }
     if (cursor === 0 && input.folderContext) stream(reply, 'tool', 'Looking in other chats in this folder…');
     if (cursor < chunks.length) {
       const chunk = chunks[cursor++]; reply.content += chunk; stream(reply, 'delta', chunk);
@@ -135,6 +147,26 @@ export const mockBackend: Backend = {
   async invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
     let result: unknown;
     switch (command) {
+      case 'set_project_context': { const folder = folders.find((f) => f.id === args.folderId); if (!folder || folder.archived) throw new Error('Project not available'); folder.contextEnabled = Boolean(args.enabled); break; }
+      case 'archived_projects': result = copy(folders.filter((f) => f.archived)); break;
+      case 'archive_project': {
+        const folder = folders.find((f) => f.id === args.folderId); if (!folder) throw new Error('Project not found');
+        if (chats.some((c) => c.folderId === folder.id && runs.has(c.id))) throw new Error('Stop replies in this project first');
+        folder.archived = Boolean(args.archived); break;
+      }
+      case 'delete_project': {
+        const folder = folders.find((f) => f.id === args.folderId); if (!folder) throw new Error('Project not found');
+        if (chats.some((c) => c.folderId === folder.id && runs.has(c.id))) throw new Error('Stop replies in this project first');
+        const ids = new Set(chats.filter((c) => c.folderId === folder.id).map((c) => c.id));
+        for (let i = messages.length - 1; i >= 0; i--) if (ids.has(messages[i].chatId)) messages.splice(i, 1);
+        for (let i = chats.length - 1; i >= 0; i--) if (ids.has(chats[i].id)) chats.splice(i, 1);
+        folders.splice(folders.indexOf(folder), 1); break;
+      }
+      case 'project_link': result = null; break;
+      case 'cancel_project_scan': break;
+      case 'link_project_directory': case 'refresh_linked_project': case 'unlink_project': throw new Error('Use the desktop app to link folders.');
+      case 'project_files': result = []; break;
+      case 'import_project_file': case 'show_project_directory': case 'open_project_file': throw new Error('Use the desktop app to manage project files.');
       case 'context_summary': result = null; break;
       case 'clear_context_summary': break;
       case 'compact_context': throw new Error('Context compaction requires a connected model in the native app.');
@@ -145,6 +177,34 @@ export const mockBackend: Backend = {
         break;
       }
       case 'bootstrap': result = snapshot(); break;
+      case 'chat': result = copy(chats.find((chat) => chat.id === args.chatId) || null); break;
+      case 'create_chat': {
+        const folderId = (args.folderId as string | null) ?? null;
+        const empty = chats.filter(chat => chat.folderId === folderId && !messages.some(message => message.chatId === chat.id));
+        const existing = empty.find(chat => chat.id === args.preferredId) ?? empty.filter(chat => chat.title === 'New chat').at(-1);
+        result = copy(existing ?? newChat(folderId));
+        break;
+      }
+      case 'branch_chat': {
+        const original = findChat(String(args.chatId));
+        if (runs.has(original.id)) throw new Error('Stop this reply before branching');
+        const point = messages.find((m) => m.id === args.messageId && m.chatId === original.id);
+        if (!point || (!args.includeMessage && point.role !== 'user')) throw new Error('Message unavailable');
+        const history = messages.filter((m) => m.chatId === original.id && (m.createdAt < point.createdAt || (args.includeMessage && m.id === point.id))).map(copy);
+        const branch = newChat(original.folderId, `${original.title.slice(0, 108)} · branch`);
+        history.forEach((m) => messages.push({ ...m, id: id(), chatId: branch.id, createdAt: tick() }));
+        result = copy(branch); break;
+      }
+      case 'rename_chat': findChat(args.chatId as string).title = String(args.title).trim(); break;
+      case 'delete_chat': {
+        const chatId = args.chatId as string; if (runs.has(chatId)) throw new Error('Stop this reply before deleting the chat');
+        const at = chats.findIndex((chat) => chat.id === chatId); if (at >= 0) chats.splice(at, 1);
+        for (let i = messages.length - 1; i >= 0; i--) if (messages[i].chatId === chatId) messages.splice(i, 1);
+        break;
+      }
+      case 'move_chat': { if (runs.has(args.chatId as string)) throw new Error('Stop this reply before moving the chat'); const folderId = args.folderId as string | null; if (folderId && !folders.some((folder) => folder.id === folderId)) throw new Error('Folder not found.'); findChat(args.chatId as string).folderId = folderId; break; }
+      case 'create_folder': { const folder = { id: id(), title: String(args.title).trim() }; if (!folder.title) throw new Error('Enter a folder name.'); folders.push(folder); result = copy(folder); break; }
+      case 'rename_folder': { const folder = folders.find((entry) => entry.id === args.folderId); if (!folder) throw new Error('Folder not found.'); folder.title = String(args.title).trim(); break; }
       case 'set_chat_context_limit': {
         const key = String(args.chatId);
         if (typeof args.limit === 'number' || args.limit === 'auto') chatContextLimits.set(key, args.limit);
@@ -161,26 +221,11 @@ export const mockBackend: Backend = {
           omittedMessages: 0, sources: [], draftExceedsLimit: false };
         break;
       }
-      case 'chat': result = copy(chats.find((chat) => chat.id === args.chatId) || null); break;
-      case 'create_chat': {
-        const folderId = (args.folderId as string | null) ?? null;
-        const empty = chats.filter(chat => chat.folderId === folderId && !messages.some(message => message.chatId === chat.id));
-        const existing = empty.find(chat => chat.id === args.preferredId) ?? empty.filter(chat => chat.title === 'New chat').at(-1);
-        result = copy(existing ?? newChat(folderId));
-        break;
-      }
-      case 'rename_chat': findChat(args.chatId as string).title = String(args.title).trim(); break;
-      case 'delete_chat': {
-        const chatId = args.chatId as string; if (runs.has(chatId)) throw new Error('Stop this reply before deleting the chat');
-        const at = chats.findIndex((chat) => chat.id === chatId); if (at >= 0) chats.splice(at, 1);
-        for (let i = messages.length - 1; i >= 0; i--) if (messages[i].chatId === chatId) messages.splice(i, 1);
-        break;
-      }
-      case 'move_chat': { if (runs.has(args.chatId as string)) throw new Error('Stop this reply before moving the chat'); const folderId = args.folderId as string | null; if (folderId && !folders.some((folder) => folder.id === folderId)) throw new Error('Folder not found.'); findChat(args.chatId as string).folderId = folderId; break; }
-      case 'create_folder': { const folder = { id: id(), title: String(args.title).trim() }; if (!folder.title) throw new Error('Enter a folder name.'); folders.push(folder); result = copy(folder); break; }
-      case 'rename_folder': { const folder = folders.find((entry) => entry.id === args.folderId); if (!folder) throw new Error('Folder not found.'); folder.title = String(args.title).trim(); break; }
+      case 'provider_usage': result = { input: 0, output: 0, requests: 0, missingUsage: 0, reportedCost: 0, estimatedCost: 0, unpricedRequests: 0, reportedRequests: 0, estimatedRequests: 0, rates: null }; break;
+      case 'export_data': case 'prepare_restore': case 'finish_restore': case 'pick_chat_files': case 'accept_file_drop': case 'copy_message_files': throw new Error('Use the desktop app to manage files.');
+      case 'discard_chat_file': break;
       case 'messages': result = copy(messages.filter((message) => message.chatId === args.chatId && (args.before == null || message.createdAt < Number(args.before))).slice(-60)); break;
-      case 'search_chats': { const query = String(args.query).toLocaleLowerCase(); result = copy(chats.filter((chat) => chat.title.toLocaleLowerCase().includes(query) || messages.some((message) => message.chatId === chat.id && message.content.toLocaleLowerCase().includes(query))).slice(0, 100)); break; }
+      case 'search_chats': { const query = String(args.query).toLocaleLowerCase(); result = copy(chats.filter((chat) => !folders.find((f) => f.id === chat.folderId)?.archived).filter((chat) => chat.title.toLocaleLowerCase().includes(query) || messages.some((message) => message.chatId === chat.id && message.content.toLocaleLowerCase().includes(query))).slice(0, 100)); break; }
       case 'save_settings': {
         settings = copy(args.settings as Settings);
         try { localStorage.setItem('melly-preview-appearance', JSON.stringify({ theme: settings.theme, fontSize: settings.fontSize, reduceMotion: settings.reduceMotion, sendBehavior: settings.sendBehavior })); } catch { /* In-memory preview remains usable. */ }
@@ -195,6 +240,7 @@ export const mockBackend: Backend = {
       }
       case 'remove_provider_key': case 'enter_search_key': case 'remove_search_key': throw new Error('Use the desktop app to manage keys.');
       case 'connect_chatgpt': case 'disconnect_chatgpt': throw new Error('ChatGPT sign-in is available in the native desktop app. Browser preview cannot connect a plan.');
+      case 'disconnect_local': { const local = providers.find((p) => p.id === 'ollama-local')!; local.configured = false; break; }
       case 'models': { if (args.providerId !== 'mock') throw new Error('Model discovery runs in the native desktop app after connecting a provider. You can still enter a model ID.'); result = [{ id: 'melly-demo', name: 'Demo' }]; break; }
       case 'start_chat': result = start(args.input as SendInput); break;
       case 'stop_chat': { const run = runs.get(args.chatId as string); if (run) { clearTimeout(run.timer); runs.delete(args.chatId as string); run.message.status = 'stopped'; stream(run.message, 'stopped'); } break; }

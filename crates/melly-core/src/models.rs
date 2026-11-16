@@ -6,6 +6,12 @@ use serde_json::Value;
 pub struct Folder {
     pub id: String,
     pub title: String,
+    #[serde(default)]
+    pub archived: bool,
+    #[serde(default)]
+    pub deleting: bool,
+    #[serde(default)]
+    pub context_enabled: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +39,10 @@ pub struct Message {
     pub chat_id: String,
     pub role: String,
     pub content: String,
+    #[serde(default)]
+    pub reasoning: String,
+    #[serde(default)]
+    pub attachments: Vec<AttachmentInfo>,
     pub status: String,
     pub sources: Vec<Source>,
     pub created_at: i64,
@@ -90,7 +100,7 @@ pub struct ProviderView {
 pub struct ModelInfo {
     pub id: String,
     pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub context_window: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_context_window: Option<usize>,
@@ -148,10 +158,13 @@ impl std::fmt::Debug for ClaudeContinuation {
 #[derive(Clone, Debug)]
 pub enum ProviderEvent {
     Delta(String),
+    Reasoning(String),
     ToolCall(ToolCall),
     Sources(Vec<Source>),
     Activity(String),
     ClaudeSearchPaused(ClaudeContinuation),
+    Usage(crate::usage::Usage),
+    ContextCapacity(usize),
     Done,
 }
 pub type ProviderSink = std::sync::Arc<dyn Fn(ProviderEvent) + Send + Sync>;
@@ -196,12 +209,11 @@ pub struct ChatModel {
     pub model_id: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct ContextPreview {
-    pub selection: crate::context::ContextSelection,
-    pub estimated_tokens: usize,
-    pub capacity: Option<usize>,
-    pub omitted_messages: usize,
-    pub draft_exceeds_limit: bool,
+pub struct AttachmentInfo {
+    pub id: String,
+    pub name: String,
+    pub bytes: u64,
+    pub kind: String,
 }

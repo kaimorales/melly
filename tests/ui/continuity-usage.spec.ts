@@ -1,16 +1,37 @@
 import { expect, test } from '@playwright/test';
 
+test('editing creates a new branch and preserves the original conversation', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Synthetic original question');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Retry response' })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(page.getByText('Editing in a new branch', { exact: true })).toBeVisible();
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Synthetic revised question');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Retry response' })).toBeVisible();
+  await expect(page.locator('.user-message')).toHaveText('Synthetic revised question');
+  await page.getByRole('button', { name: 'Synthetic original question', exact: true }).click();
+  await expect(page.locator('.user-message')).toHaveText('Synthetic original question');
+});
+
 test('context shows a compact estimate when capacity is unknown', async ({ page }) => {
   await page.goto('/');
-  const message = page.getByRole('textbox', { name: 'Message', exact: true });
-  await message.fill('A synthetic draft for context inspection');
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('A synthetic draft for context inspection');
   await page.getByRole('button', { name: 'Context and tokens' }).press('Enter');
-  const dialog = page.getByRole('dialog', { name: 'Context', exact: true });
+  const dialog = page.getByRole('dialog');
   await expect(dialog.locator('.context-total')).toHaveText(/≈ [\d,]+ tokens/);
+  await expect(dialog).not.toContainText('Reported input');
   await expect(dialog.getByText('Details', { exact: true })).toHaveCount(0);
   await expect(dialog.locator('.context-bar')).toHaveCount(0);
   await page.keyboard.press('Escape');
-  await expect(message).toHaveValue('A synthetic draft for context inspection');
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toHaveValue('A synthetic draft for context inspection');
+});
+
+test('browser preview does not offer native attachment imports', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Attach files', exact: true })).toHaveCount(0);
+  await expect(page.locator('.attachment-draft')).toHaveCount(0);
 });
 
 

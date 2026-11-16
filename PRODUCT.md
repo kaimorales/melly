@@ -6,7 +6,7 @@ product
 
 ## Users
 
-Mac users who want fast, quiet cloud conversations with their chosen providers, often moving between a bright workspace and a dim evening room. Both light and dark appearance are first-class.
+Mac users who want fast, quiet conversations with cloud providers and external local models, often moving between a bright workspace and a dim evening room. Both light and dark appearance are first-class.
 
 ## Product Purpose
 
@@ -18,7 +18,7 @@ Quiet, precise, confident. Follow the approved Ollama-inspired restraint: system
 
 ## Anti-references
 
-Dashboards, heavy cards, decorative gradients, oversized headings, noisy status badges, silver icon frames and coding tools inside ordinary chat. Files, coding and a knowledge graph are brainstorming only until separately authorized.
+Dashboards, heavy cards, decorative gradients, oversized headings, noisy status badges, silver icon frames and coding tools inside ordinary chat. Projects support imported files, read-only linked folders, citations and shared context. File editing, command execution and a knowledge graph remain future work.
 
 ## Design Principles
 

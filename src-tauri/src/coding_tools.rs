@@ -3,6 +3,7 @@ use crate::{
     coding_tests::Suite,
     error,
     file_edits::{Grant, file_edit_target::Target, same_link, workspace_for_chat},
+    linked_projects::excluded,
 };
 use anyhow::{Context, Result, bail, ensure};
 use melly_core::{
@@ -439,9 +440,8 @@ fn relative(path: &str) -> Result<&Path> {
     validate_path(path)?;
     let path = Path::new(path);
     ensure!(
-        path.iter().all(|name| name
-            .to_str()
-            .is_some_and(|name| !melly_core::projects::excluded(name))),
+        path.iter()
+            .all(|name| name.to_str().is_some_and(|name| !excluded(name))),
         "This file is excluded from the linked project"
     );
     Ok(path)

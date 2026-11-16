@@ -16,9 +16,9 @@ export type ChatActionsProps = {
 export function ChatActions({ chat, folders, busy, onRename, onDelete, onMove, onClose, showMove = true }: ChatActionsProps & { showMove?: boolean }) {
   return <>
     <button className="menu-item" role="menuitem" onClick={() => { onClose(); onRename(chat); }}>Rename chat</button>
-    {showMove && <label className="menu-field">Move to folder
-      <select aria-label="Move to folder" disabled={busy} value={chat.folderId || ''} onChange={(event) => { onClose(); onMove(chat, event.target.value || null); }}>
-        <option value="">No folder</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.title}</option>)}
+    {showMove && <label className="menu-field">Move to project
+      <select aria-label="Move to project" disabled={busy} value={chat.folderId || ''} onChange={(event) => { onClose(); onMove(chat, event.target.value || null); }}>
+        <option value="">No project</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.title}</option>)}
       </select>
     </label>}
     <button className="menu-item danger" role="menuitem" disabled={busy} title={busy ? 'Stop the response before deleting this chat' : undefined} onClick={() => { onClose(); onDelete(chat); }}>Delete chat</button>

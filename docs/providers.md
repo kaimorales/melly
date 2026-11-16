@@ -19,6 +19,7 @@ Each native connection has one immutable base URL. Credentials are keyed by a SH
 | QwenCloud Standard API key | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | Chat Completions | `qwen3.8-flash` |
 | QwenCloud Token Plan | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | Chat Completions | `auto` |
 | Kimi / Moonshot API key | `https://api.moonshot.ai/v1` | Chat Completions | `kimi-k3.1-pro` |
+| Ollama Local | `http://127.0.0.1:11434` | Native chat / NDJSON | User-installed model |
 | Ollama Cloud API key | `https://ollama.com/v1` | Chat Completions | `gemma4:31b` |
 | Custom compatible | Explicit public HTTPS base | Chat Completions | User-entered ID |
 
@@ -76,7 +77,7 @@ For a human-operable native Stop demonstration, send **“Demonstrate streaming 
 
 ## Transport boundaries
 
-- HTTPS only; URL userinfo, local hostnames, private/reserved literal IPs, and endpoint query/fragment parameters are rejected.
+- Cloud routes require HTTPS and reject URL userinfo, local hostnames, private/reserved literal IPs, and endpoint query/fragment parameters. Ollama Local uses its own fixed-loopback client and takes no key.
 - A custom DNS resolver rejects empty or mixed public/private answers and supplies exactly the checked addresses to reqwest. There is no validation/connection second lookup. All redirects are refused and environment proxies disabled. TLS certificate validation remains enabled.
 - Cancellation interrupts connection setup, waiting for response headers, and blocked stream reads. The engine additionally protects the stop/write race. Dropping a request does not prove that the provider stopped billing work already accepted.
 - Errors include provider and HTTP status when available. Raw HTTP bodies, redirect locations, key values, and provider-supplied error messages are not exposed or logged.
@@ -105,3 +106,17 @@ The subsequent live ChatGPT fix added seven transport regressions; the full suit
 Native ChatGPT web search subsequently passed with `gpt-6.1-sol` on the tested account, returning a completed reply with a source citation and no external search key. The local allowlist is conservative; it does not prove other model IDs lack search. See [the proposed app-owned search service](research/search-service.md) for a path that avoids end-user search keys across providers; that service has not been deployed.
 
 Still pending for ChatGPT: renewal/revocation, usage-limit and entitlement failures, and other account/model combinations. Still pending for **other live providers**: account authorization, the selected model, actual inference and tool follow-up, native search/citation shape, region/plan entitlement and billing confirmation, real-service cancellation, and account-specific errors. Meta Model API live inference requires its own API key.
+
+
+Ollama Local checks `/api/show` metadata before inference and rejects remote models. It streams native `/api/chat` replies with bounded recent history, explicit project excerpts and cancellable reads. Configuration and decoder tests pass. Installed-model discovery, live inference, Stop/Retry, reasoning separation and reported token counts were verified with the local `lfm2.5-8b-abliterated:latest` installation on November 14; see the verification record for the exact build and scope. [Native chat API](https://docs.ollama.com/api/chat), [Installed models API](https://docs.ollama.com/api/tags).
+
+Readable reasoning is now a separate display channel. Ollama's native `message.thinking` and legacy leading think tags are separated from the answer; compatible/native summary fields use the same UI. Only provider-supplied readable text is displayed. Encrypted reasoning and signatures are not exposed. Model thinking settings are left at their existing defaults. [Ollama thinking fields](https://docs.ollama.com/capabilities/thinking).
+
+
+## Context and usage accounting
+
+Provider events normalize optional input/output, cache and reasoning counts; absent fields remain unknown. Compatible/Responses/Claude/Gemini usage frames and final Ollama counts feed a content-free ledger, including partial counts on Stop. Usage frames merge cumulatively within each request; tool rounds count separately. The ledger covers this Melly installation, not a complete account history.
+
+OpenRouter-reported request cost takes precedence over optional, user-supplied per-model estimates. Cache discounts, tool/search charges and taxes are not inferred from token counts. An explicit OpenRouter key refresh reads the fixed `/api/v1/key` endpoint with that connection’s own key; it never runs at startup. Other plan allowances remain unavailable when no supported account-usage endpoint exists. Local Ollama does not incur a provider API charge. No new cloud spend or allowance endpoint was live-verified in this session.
+
+Model discovery and local metadata can report context limits. The UI labels character-based input estimates; request construction separately bounds bytes and reserves output capacity. Tool arguments and native continuation blocks count toward the input budget before each provider round. Unknown capacity is displayed without a percentage.

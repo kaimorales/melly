@@ -339,7 +339,7 @@ mod tests {
         let profile = test_directory();
         let project = test_directory();
         let store = Store::open(&profile.join("test.sqlite3"))?;
-        let folder = store.create_folder("Test project")?;
+        let folder = store.create_project("Test project")?;
         store.set_project_link(&folder.id, &project)?;
         let workspace = store.project_link(&folder.id)?.unwrap();
         let chat = store.create_chat(Some(&folder.id))?;

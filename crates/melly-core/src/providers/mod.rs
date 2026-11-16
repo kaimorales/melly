@@ -5,9 +5,11 @@ use anyhow::{Result, ensure};
 use tokio_util::sync::CancellationToken;
 
 mod catalog;
+mod local;
 mod mock;
 mod network;
 mod protocol;
+mod reasoning;
 mod sse;
 mod transport;
 pub(crate) use catalog::spec;
@@ -28,6 +30,9 @@ pub async fn list_models(
             context_window: None,
             default_context_window: None,
         }]);
+    }
+    if connection.provider_id == "ollama-local" {
+        return local::models(cancel).await;
     }
     let url = model_list_url(connection)?;
     let client = if compatible::is_custom(&connection.provider_id) {
@@ -92,8 +97,12 @@ pub(crate) async fn stream_with_context(
             sink(event);
         }
     });
+    let guarded = reasoning::display_sink(guarded);
     if request.connection.provider_id == "mock" {
         return mock::stream(request, guarded, cancel).await;
+    }
+    if request.connection.provider_id == "ollama-local" {
+        return local::stream(request, guarded, cancel, context).await;
     }
     let (url, mut body, protocol) = protocol::request(&request)?;
     let provider = &request.connection.provider_id;
@@ -203,7 +212,7 @@ mod tests {
     fn model_discovery_requests_documented_page_sizes_without_changing_other_routes() {
         for spec in catalog()
             .into_iter()
-            .filter(|p| !matches!(p.id.as_str(), "mock" | "custom"))
+            .filter(|p| !matches!(p.id.as_str(), "mock" | "custom" | "ollama-local"))
         {
             let connection = Connection {
                 provider_id: spec.id.clone(),
@@ -231,4 +240,38 @@ mod tests {
             }
         }
     }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountUsage {
+    pub used_usd: f64,
+    pub limit_usd: Option<f64>,
+    pub remaining_usd: Option<f64>,
+}
+pub async fn account_usage(connection: &Connection, key: &str) -> Result<AccountUsage> {
+    validate_connection(connection)?;
+    ensure!(
+        connection.provider_id == "openrouter",
+        "This provider does not expose account usage to Melly"
+    );
+    let cancel = CancellationToken::new();
+    let request = authenticated(
+        network::client()?.get(public_url("https://openrouter.ai/api/v1/key")?),
+        "openrouter",
+        Some(key),
+    )?;
+    let response = transport::send(request, "openrouter", &cancel).await?;
+    let value = transport::read_json(response, "openrouter", &cancel).await?;
+    let amount = |name: &str| {
+        value["data"][name]
+            .as_f64()
+            .filter(|v| v.is_finite() && *v >= 0.)
+    };
+    Ok(AccountUsage {
+        used_usd: amount("usage")
+            .ok_or_else(|| anyhow::anyhow!("OpenRouter did not report key usage"))?,
+        limit_usd: amount("limit"),
+        remaining_usd: amount("limit_remaining"),
+    })
 }

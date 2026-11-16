@@ -198,3 +198,158 @@ fn settings_are_validated_and_interrupted_runs_recover() {
     assert_eq!(db.message(&mid).unwrap().status, "interrupted");
     assert_eq!(db.settings().unwrap().theme, "light");
 }
+
+#[test]
+fn reasoning_survives_reopen_without_entering_search_or_context() {
+    let temporary = tempfile::tempdir().unwrap();
+    let path = temporary.path().join("history.sqlite3");
+    let (chat, message) = {
+        let store = Store::open(&path).unwrap();
+        let chat = store.create_chat(None).unwrap();
+        let message = store
+            .insert_message(
+                &chat.id,
+                "assistant",
+                "",
+                "streaming",
+                Some("ollama-local"),
+                Some("example"),
+                Some("Local"),
+            )
+            .unwrap();
+        store
+            .finish_message_with_reasoning(
+                &message.id,
+                "A visible answer",
+                "reasoning_canary",
+                "complete",
+                &[],
+            )
+            .unwrap();
+        (chat.id, message.id)
+    };
+    let store = Store::open(&path).unwrap();
+    assert_eq!(
+        store.message(&message).unwrap().reasoning,
+        "reasoning_canary"
+    );
+    assert_eq!(store.context(&chat).unwrap()[0].content, "A visible answer");
+    assert!(store.search_chats("reasoning_canary").unwrap().is_empty());
+}
+
+#[test]
+fn branching_preserves_the_original_and_respects_the_selected_boundary() {
+    let store = melly_core::storage::Store::memory().unwrap();
+    let original = store.create_chat(None).unwrap();
+    let first = store
+        .insert_message(
+            &original.id,
+            "user",
+            "First question",
+            "complete",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let answer = store
+        .insert_message(
+            &original.id,
+            "assistant",
+            "First answer",
+            "complete",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    store
+        .finish_message_with_reasoning(
+            &answer.id,
+            "First answer",
+            "Separate thought",
+            "complete",
+            &[],
+        )
+        .unwrap();
+    let later = store
+        .insert_message(
+            &original.id,
+            "user",
+            "Second question",
+            "complete",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let branch = store.branch_chat(&original.id, &answer.id, true).unwrap();
+    let copied = store.messages(&branch.id, None).unwrap();
+    assert_eq!(copied.len(), 2);
+    assert_ne!(copied[0].id, first.id);
+    assert_eq!(copied[1].reasoning, "Separate thought");
+    let edit = store.branch_chat(&original.id, &later.id, false).unwrap();
+    assert_eq!(store.messages(&edit.id, None).unwrap().len(), 2);
+    assert_eq!(store.messages(&original.id, None).unwrap().len(), 3);
+    assert!(
+        store
+            .branch_chat(&original.id, &copied[0].id, true)
+            .is_err()
+    );
+    assert!(store.branch_chat(&original.id, &answer.id, false).is_err());
+}
+
+#[test]
+fn earlier_chat_references_find_old_facts_without_crossing_chat_scope() {
+    let store = Store::memory().unwrap();
+    let chat = store.create_chat(None).unwrap();
+    let foreign = store.create_chat(None).unwrap();
+    let old = store
+        .insert_message(
+            &chat.id,
+            "user",
+            "Synthetic project codename is Juniper",
+            "complete",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    store
+        .insert_message(
+            &foreign.id,
+            "user",
+            "Synthetic project codename is Secret",
+            "complete",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    for i in 0..65 {
+        store
+            .insert_message(
+                &chat.id,
+                if i % 2 == 0 { "user" } else { "assistant" },
+                &format!("Unrelated synthetic sentence {i}"),
+                "complete",
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+    }
+    assert!(
+        !store
+            .context(&chat.id)
+            .unwrap()
+            .iter()
+            .any(|m| m.content.contains("Juniper"))
+    );
+    let refs = store
+        .earlier_references(&chat.id, "project codename")
+        .unwrap();
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs[0].message_id, Some(old.id));
+    assert!(!refs[0].snippet.contains("Secret"));
+}

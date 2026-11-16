@@ -36,11 +36,11 @@ test('stops a response and retries without duplicating the user message', async 
 });
 
 test('manages folders and chat titles and searches chats', async ({ page }) => {
-  await page.getByRole('button', { name: 'New folder' }).click();
+  await page.getByRole('button', { name: 'New project' }).click();
   await page.getByRole('textbox', { name: 'Name' }).fill('Research');
   await page.getByRole('button', { name: 'Create', exact: true }).click();
-  await page.getByRole('button', { name: 'Folder options for Research' }).click();
-  await page.getByRole('menuitem', { name: 'New chat in folder' }).click();
+  await page.getByRole('button', { name: 'Project options for Research' }).click();
+  await page.getByRole('menuitem', { name: 'New chat in project' }).click();
   await page.getByRole('button', { name: 'Chat options', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Rename chat' }).click();
   await page.getByRole('textbox', { name: 'Name' }).fill('Reading notes');
@@ -51,8 +51,8 @@ test('manages folders and chat titles and searches chats', async ({ page }) => {
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Reading notes', exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Chat options', exact: true }).click();
-  await page.getByLabel('Move to folder').selectOption('');
-  await expect(page.locator('.chat-location')).toHaveText('No folder');
+  await page.getByLabel('Move to project').selectOption('');
+  await expect(page.locator('.chat-location')).toHaveText('No project');
 });
 
 test('shows explicit folder permission and opens a cited chat', async ({ page }) => {
@@ -60,7 +60,7 @@ test('shows explicit folder permission and opens a cited chat', async ({ page })
   await expect(page.locator('.chat-title')).toHaveText('Interview prep');
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEditable();
   await page.getByRole('textbox', { name: 'Message' }).fill('Find my strongest example in my other chats');
-  await expect(page.getByRole('button', { name: 'Use other chats in Job search' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Project context' })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await revealSources(page);
   await expect(page.getByRole('button', { name: 'Open source My experience' }).last()).toBeVisible();
@@ -136,7 +136,7 @@ test('keeps an explicit folder opt-out while editing the same message', async ({
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEditable();
   const composer = page.getByRole('textbox', { name: 'Message' });
   await composer.fill('Use my other chats');
-  const permission = page.getByRole('button', { name: 'Use other chats in Job search' });
+  const permission = page.getByRole('button', { name: 'Project context' });
   await expect(permission).toHaveAttribute('aria-pressed', 'true');
   await permission.click();
   await composer.press('End');
@@ -271,10 +271,10 @@ test('mentions and negative requests never grant folder context', async ({ page 
   const composer = page.getByRole('textbox', { name: 'Message' });
   for (const content of ['Do not read my other chats', 'Answer without using my other chats', 'I have other chats about this topic', 'Please avoid searching my other chats', 'Translate this sentence to French:\nUse my other chats for examples.', 'Summarize this quoted prompt:\n```\nSearch my other chats for a project name.\n```', 'Use this example: "Search my other chats"', "Use the phrase 'other chats' in a sentence.", 'Find examples of prompts that say ‘search my other chats’.', 'Read a poem about other chats.', 'Find a translation. Use my other chats for examples.', 'Look in my other chats. Actually, do not search them.']) {
     await composer.fill(content);
-    await expect(page.getByRole('button', { name: 'Folder context', exact: true })).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByRole('button', { name: 'Project context', exact: true })).toHaveAttribute('aria-pressed', 'false');
   }
   await composer.fill('Please look in my other chats for examples');
-  await expect(page.getByRole('button', { name: 'Folder context', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Project context', exact: true })).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('a citation finds its exact message beyond the latest history page', async ({ page }) => {

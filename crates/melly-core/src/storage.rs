@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 pub struct Store {
     pub(crate) conn: SqlConnection,
+    pub(crate) project_root: Option<std::path::PathBuf>,
 }
 fn now() -> i64 {
     SystemTime::now()
@@ -46,11 +47,12 @@ fn row_message(r: &Row<'_>) -> rusqlite::Result<Message> {
         provider_id: r.get(7)?,
         model_id: r.get(8)?,
         billing_route: r.get(9)?,
+        reasoning: r.get(10)?,
+        attachments: serde_json::from_str(&r.get::<_, String>(11)?).unwrap_or_default(),
     })
 }
-const MESSAGE_COLUMNS: &str =
-    "id,chat_id,role,content,status,sources,created_at,provider_id,model_id,billing_route";
-fn fts_query(q: &str) -> String {
+const MESSAGE_COLUMNS: &str = "id,chat_id,role,content,status,sources,created_at,provider_id,model_id,billing_route,reasoning,attachments";
+pub(crate) fn fts_query(q: &str) -> String {
     let stop = [
         "the",
         "a",
@@ -87,7 +89,12 @@ impl Store {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let result = Self::initialize(SqlConnection::open(path)?)?;
+        let mut result = Self::initialize(SqlConnection::open(path)?)?;
+        result.project_root = Some(
+            path.parent()
+                .context("Missing profile directory")?
+                .join("projects"),
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -114,12 +121,29 @@ impl Store {
             CREATE TABLE IF NOT EXISTS chat_context_limits(chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE, tokens INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS chat_models(chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE, provider_id TEXT NOT NULL, model_id TEXT NOT NULL);
             UPDATE messages SET status='interrupted' WHERE status='streaming'; PRAGMA user_version=1;")?;
-        let store = Self { conn };
-        store.initialize_file_edits()?;
+        let has_reasoning = conn
+            .prepare("PRAGMA table_info(messages)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .iter()
+            .any(|name| name == "reasoning");
+        if !has_reasoning {
+            conn.execute_batch(
+                "ALTER TABLE messages ADD COLUMN reasoning TEXT NOT NULL DEFAULT '';",
+            )?;
+        }
+        let store = Self {
+            conn,
+            project_root: None,
+        };
+        store.initialize_projects()?;
         store.initialize_file_history()?;
         store.initialize_coding_resume()?;
         store.initialize_compaction()?;
         store.initialize_drafts()?;
+        store.initialize_attachments()?;
+        store.initialize_usage()?;
+        store.initialize_semantic()?;
         Ok(store)
     }
     fn timestamp(&self) -> Result<i64> {
@@ -133,11 +157,14 @@ impl Store {
     pub fn folders(&self) -> Result<Vec<Folder>> {
         let mut s = self
             .conn
-            .prepare("SELECT id,title FROM folders ORDER BY title COLLATE NOCASE LIMIT 500")?;
+            .prepare("SELECT f.id,f.title,coalesce(c.enabled,0) FROM folders f LEFT JOIN project_state p ON p.folder_id=f.id LEFT JOIN project_context c ON c.folder_id=f.id WHERE coalesce(p.archived,0)=0 AND coalesce(p.deleting,0)=0 ORDER BY f.title COLLATE NOCASE LIMIT 500")?;
         Ok(s.query_map([], |r| {
             Ok(Folder {
                 id: r.get(0)?,
                 title: r.get(1)?,
+                archived: false,
+                deleting: false,
+                context_enabled: r.get(2)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?)
@@ -146,6 +173,9 @@ impl Store {
         let folder = Folder {
             id: Uuid::new_v4().to_string(),
             title: title(name, 80)?,
+            archived: false,
+            deleting: false,
+            context_enabled: false,
         };
         self.conn.execute(
             "INSERT INTO folders VALUES(?1,?2)",
@@ -165,12 +195,15 @@ impl Store {
     }
     pub fn chats(&self) -> Result<Vec<Chat>> {
         let mut s = self.conn.prepare(
-            "SELECT id,title,folder_id,updated_at FROM chats ORDER BY updated_at DESC LIMIT 500",
+            "SELECT id,title,folder_id,updated_at FROM chats WHERE folder_id IS NULL OR folder_id NOT IN (SELECT folder_id FROM project_state WHERE archived=1 OR deleting=1) ORDER BY updated_at DESC LIMIT 500",
         )?;
         Ok(s.query_map([], row_chat)?
             .collect::<rusqlite::Result<_>>()?)
     }
     pub fn open_new_chat(&self, folder: Option<&str>, preferred: Option<&str>) -> Result<Chat> {
+        if let Some(folder) = folder {
+            self.ensure_active_project(folder)?;
+        }
         let existing = self
             .conn
             .query_row(
@@ -185,6 +218,9 @@ impl Store {
         existing.map_or_else(|| self.create_chat(folder), Ok)
     }
     pub fn create_chat(&self, folder: Option<&str>) -> Result<Chat> {
+        if let Some(folder) = folder {
+            self.ensure_active_project(folder)?;
+        }
         let c = Chat {
             id: Uuid::new_v4().to_string(),
             title: "New chat".into(),
@@ -218,6 +254,12 @@ impl Store {
         Ok(())
     }
     pub fn move_chat(&self, id: &str, folder: Option<&str>) -> Result<()> {
+        if let Some(folder) = folder {
+            self.ensure_active_project(folder)?;
+        }
+        if let Some(folder) = self.chat(id)?.folder_id {
+            self.ensure_active_project(&folder)?;
+        }
         ensure!(
             self.conn.execute(
                 "UPDATE chats SET folder_id=?1,updated_at=?2 WHERE id=?3",
@@ -230,6 +272,55 @@ impl Store {
     pub fn delete_chat(&self, id: &str) -> Result<()> {
         self.conn.execute("DELETE FROM chats WHERE id=?1", [id])?;
         Ok(())
+    }
+    pub fn branch_chat(
+        &self,
+        chat_id: &str,
+        message_id: &str,
+        include_message: bool,
+    ) -> Result<Chat> {
+        let original = self.chat(chat_id)?;
+        if let Some(folder) = &original.folder_id {
+            self.ensure_active_project(folder)?;
+        }
+        let point = self.message(message_id)?;
+        ensure!(point.chat_id == chat_id, "Message belongs to another chat");
+        ensure!(
+            include_message || point.role == "user",
+            "Only your messages can be edited"
+        );
+        let mut statement = self.conn.prepare(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE chat_id=?1 AND (created_at<?2 OR (?3 AND id=?4)) ORDER BY created_at LIMIT 2001"))?;
+        let history = statement
+            .query_map(
+                params![chat_id, point.created_at, include_message, message_id],
+                row_message,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        ensure!(
+            history.len() <= 2000
+                && history
+                    .iter()
+                    .map(|m| m.content.len() + m.reasoning.len())
+                    .sum::<usize>()
+                    <= 16 * 1024 * 1024,
+            "This branch is too large. Export the chat or start a new project chat."
+        );
+        let tx = self.conn.unchecked_transaction()?;
+        let mut branch = self.create_chat(original.folder_id.as_deref())?;
+        branch.title = format!("{} · branch", bounded(&original.title, 108));
+        self.rename_chat(&branch.id, &branch.title)?;
+        let start = self.timestamp()?;
+        for (index, message) in history.iter().enumerate() {
+            let next_id = Uuid::new_v4().to_string();
+            tx.execute("INSERT INTO messages(id,chat_id,role,content,status,sources,created_at,provider_id,model_id,billing_route,reasoning,attachments) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)", params![next_id,branch.id,message.role,message.content,if message.status == "streaming" {"interrupted"} else {&message.status},serde_json::to_string(&message.sources)?,start+index as i64,message.provider_id,message.model_id,message.billing_route,message.reasoning,serde_json::to_string(&message.attachments)?])?;
+            tx.execute("INSERT INTO attachment_messages SELECT attachment_id,?1 FROM attachment_messages WHERE message_id=?2", params![next_id,message.id])?;
+        }
+        tx.execute(
+            "UPDATE chats SET updated_at=?1 WHERE id=?2",
+            params![start + history.len() as i64, branch.id],
+        )?;
+        tx.commit()?;
+        self.chat(&branch.id)
     }
     #[allow(clippy::too_many_arguments)]
     pub fn insert_message(
@@ -248,6 +339,8 @@ impl Store {
             chat_id: chat_id.into(),
             role: role.into(),
             content: content.into(),
+            reasoning: String::new(),
+            attachments: vec![],
             status: status.into(),
             sources: vec![],
             created_at: self.timestamp()?,
@@ -271,14 +364,34 @@ impl Store {
         status: &str,
         sources: &[Source],
     ) -> Result<()> {
+        self.finish_message_with_reasoning(id, content, "", status, sources)
+    }
+    pub fn finish_message_with_reasoning(
+        &self,
+        id: &str,
+        content: &str,
+        reasoning: &str,
+        status: &str,
+        sources: &[Source],
+    ) -> Result<()> {
+        ensure!(
+            content.len() + reasoning.len() <= 1_048_576,
+            "Reply exceeded the storage limit"
+        );
         ensure!(
             matches!(status, "complete" | "stopped" | "error" | "interrupted"),
             "Invalid final status"
         );
         ensure!(
             self.conn.execute(
-                "UPDATE messages SET content=?1,status=?2,sources=?3 WHERE id=?4",
-                params![content, status, serde_json::to_string(sources)?, id]
+                "UPDATE messages SET content=?1,status=?2,sources=?3,reasoning=?5 WHERE id=?4",
+                params![
+                    content,
+                    status,
+                    serde_json::to_string(sources)?,
+                    id,
+                    reasoning
+                ]
             )? == 1,
             "Message not found"
         );
@@ -303,15 +416,27 @@ impl Store {
         Ok(rows)
     }
     pub fn context(&self, chat_id: &str) -> Result<Vec<WireMessage>> {
-        self.context_with_budget(chat_id, 60_000)
+        self.context_for_model(chat_id, false)
+    }
+    pub fn context_for_model(&self, chat_id: &str, local: bool) -> Result<Vec<WireMessage>> {
+        self.context_with_budget(chat_id, local, 60_000)
     }
     pub(crate) fn context_with_budget(
         &self,
         chat_id: &str,
+        local: bool,
         mut budget: usize,
     ) -> Result<Vec<WireMessage>> {
         let messages = self.messages(chat_id, None)?;
-        let through = self.context_summary(chat_id)?.map_or(0, |s| s.through);
+        let through = self
+            .context_summary(chat_id)?
+            .map_or(0, |summary| summary.through);
+        let query = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "user")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
         let mut wire = Vec::new();
         for m in messages
             .into_iter()
@@ -323,7 +448,17 @@ impl Store {
                 break;
             }
             budget -= n;
-            wire.push(WireMessage::text(&m.role, m.content));
+            let references = if local {
+                self.local_attachment_context(&m.id, &query)?
+            } else {
+                self.attachment_context(&m.id, &query)?
+            };
+            let content = format!("{}{}", m.content, references);
+            if content.len() > budget + n {
+                break;
+            }
+            budget -= references.len();
+            wire.push(WireMessage::text(&m.role, content));
         }
         wire.reverse();
         Ok(wire)
@@ -391,9 +526,9 @@ impl Store {
         );
         let fts = fts_query(q);
         let sql = if fts.is_empty() {
-            "SELECT id,title,folder_id,updated_at FROM chats WHERE title LIKE ?1 ESCAPE '!' ORDER BY updated_at DESC LIMIT 100"
+            "SELECT id,title,folder_id,updated_at FROM chats WHERE (folder_id IS NULL OR folder_id NOT IN (SELECT folder_id FROM project_state WHERE archived=1 OR deleting=1)) AND title LIKE ?1 ESCAPE '!' ORDER BY updated_at DESC LIMIT 100"
         } else {
-            "SELECT id,title,folder_id,updated_at FROM chats WHERE title LIKE ?1 ESCAPE '!' OR id IN (SELECT m.chat_id FROM messages_fts JOIN messages m ON m.rowid=messages_fts.rowid WHERE messages_fts MATCH ?2) ORDER BY updated_at DESC LIMIT 100"
+            "SELECT id,title,folder_id,updated_at FROM chats WHERE (folder_id IS NULL OR folder_id NOT IN (SELECT folder_id FROM project_state WHERE archived=1 OR deleting=1)) AND (title LIKE ?1 ESCAPE '!' OR id IN (SELECT m.chat_id FROM messages_fts JOIN messages m ON m.rowid=messages_fts.rowid WHERE messages_fts MATCH ?2)) ORDER BY updated_at DESC LIMIT 100"
         };
         let mut s = self.conn.prepare(sql)?;
         let result = if fts.is_empty() {
@@ -486,20 +621,6 @@ impl Store {
         row.map(|value| Ok(serde_json::from_str(&value)?))
             .transpose()
     }
-    pub(crate) fn model_context_window(&self, connection: &Connection) -> Result<Option<usize>> {
-        if !crate::providers::compatible::is_custom(&connection.provider_id) {
-            return Ok(None);
-        }
-        Ok(self
-            .compatible_connection(&connection.provider_id)?
-            .and_then(|entry| {
-                entry
-                    .models
-                    .into_iter()
-                    .find(|model| model.id == connection.model_id)
-                    .and_then(|model| model.context_window)
-            }))
-    }
     pub fn save_compatible_connection(
         &self,
         mut connection: crate::providers::compatible::CompatibleConnection,
@@ -575,5 +696,43 @@ impl Store {
         self.conn
             .execute("DELETE FROM connections WHERE provider_id=?1", [id])?;
         Ok(())
+    }
+}
+
+impl Store {
+    pub fn context_message_count(&self, chat_id: &str) -> Result<usize> {
+        Ok(self.conn.query_row(
+            "SELECT count(*) FROM messages WHERE chat_id=?1 AND status='complete'",
+            [chat_id],
+            |r| r.get(0),
+        )?)
+    }
+    pub fn earlier_references(&self, chat_id: &str, query: &str) -> Result<Vec<Source>> {
+        let q = fts_query(query);
+        if q.is_empty() {
+            return Ok(vec![]);
+        }
+        let history = self.messages(chat_id, None)?;
+        if history.len() < 60 {
+            return Ok(vec![]);
+        }
+        let before = history[0].created_at;
+        let title = self.chat(chat_id)?.title;
+        let mut statement=self.conn.prepare("SELECT m.id,snippet(messages_fts,0,'','',' … ',70) FROM messages_fts JOIN messages m ON m.rowid=messages_fts.rowid WHERE messages_fts MATCH ?1 AND m.chat_id=?2 AND m.created_at<?3 AND m.status='complete' ORDER BY bm25(messages_fts),m.created_at DESC LIMIT 3")?;
+        Ok(statement
+            .query_map(params![q, chat_id, before], |r| {
+                let id: String = r.get(0)?;
+                let text: String = r.get(1)?;
+                Ok(Source {
+                    id: format!("chat:{id}"),
+                    kind: "chat".into(),
+                    title: format!("{title} · earlier"),
+                    chat_id: Some(chat_id.into()),
+                    message_id: Some(id),
+                    snippet: bounded(&text, 600),
+                    ..Source::default()
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?)
     }
 }

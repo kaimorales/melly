@@ -116,7 +116,7 @@ mod macos {
                 }
                 let name = unsafe { CStr::from_ptr(entry.d_name.as_ptr()) };
                 if let Ok(name) = name.to_str()
-                    && !melly_core::projects::excluded(name)
+                    && !crate::linked_projects::excluded(name)
                 {
                     entries.push((name.to_owned(), entry.d_type == libc::DT_DIR));
                 }
@@ -317,7 +317,7 @@ mod macos {
                 .to_str()
                 .context("The proposed file must have a UTF-8 path")?;
             ensure!(
-                !melly_core::projects::excluded(name),
+                !crate::linked_projects::excluded(name),
                 "The proposal targets an excluded project path"
             );
         }

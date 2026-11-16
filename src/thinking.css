@@ -1,0 +1,58 @@
+.response-activity, .thinking-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+  color: var(--secondary);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 400;
+}
+.response-activity { padding: 3px 0; }
+.thinking { margin: 0 0 14px; }
+.thinking-toggle { padding: 3px 0; border-radius: 5px; text-align: left; transition: color 160ms ease; }
+.thinking-toggle:hover { color: var(--ink); }
+.thinking-toggle .thinking-chevron { width: 12px; height: 12px; margin-left: 1px; color: var(--muted); transition: transform 180ms ease; }
+.thinking-toggle[aria-expanded='true'] .thinking-chevron { transform: rotate(90deg); }
+.thinking-body {
+  margin: 8px 0 6px 9px;
+  padding: 0 16px 2px 20px;
+  border-left: 1px solid var(--rule);
+  max-height: 176px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--secondary);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.thinking-body[hidden] { display: none; }
+.thinking-grid {
+  display: inline-grid;
+  grid-template-columns: repeat(3, 4px);
+  grid-template-rows: repeat(3, 4px);
+  gap: 3px;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  color: var(--secondary);
+}
+.thinking-grid > span { border-radius: 1.25px; background: currentColor; opacity: .27; }
+.thinking-grid > span:nth-child(5) { opacity: .5; }
+.thinking-grid[data-active='true'] > span {
+  animation: thinking-orbit 1.8s cubic-bezier(.4, 0, .2, 1) infinite;
+  animation-delay: calc(var(--step) * 225ms - 1800ms);
+}
+.thinking-grid[data-active='true'] > span:nth-child(5) { animation: thinking-center 2.7s ease-in-out infinite; }
+@keyframes thinking-orbit {
+  0%, 100% { opacity: .95; transform: scale(1); }
+  24% { opacity: .5; transform: scale(.92); }
+  55%, 82% { opacity: .2; transform: scale(.82); }
+}
+@keyframes thinking-center { 0%, 100% { opacity: .24; } 50% { opacity: .58; } }
+@media (prefers-reduced-motion: reduce) {
+  .thinking-grid > span { animation: none !important; transform: none !important; }
+}
+[data-reduce-motion='true'] .thinking-grid > span { animation: none !important; transform: none !important; }

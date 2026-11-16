@@ -1,3 +1,4 @@
+pub mod attachments;
 pub mod auth;
 pub mod auth_namespace;
 pub mod coding;
@@ -14,3 +15,7 @@ pub mod models;
 pub mod projects;
 pub mod providers;
 pub mod storage;
+
+pub mod usage;
+
+pub mod semantic;

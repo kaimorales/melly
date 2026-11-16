@@ -34,6 +34,7 @@ fn catalog_has_explicit_isolated_billing_routes() {
             "qwen-token-plan",
             "moonshot",
             "ollama",
+            "ollama-local",
             "custom"
         ]
     );
@@ -393,4 +394,24 @@ async fn explicit_mock_stop_demo_stays_active_until_stopped() {
     let events = events.lock().unwrap();
     assert!(events.iter().any(|e| matches!(e, ProviderEvent::Delta(_))));
     assert!(!events.iter().any(|e| matches!(e, ProviderEvent::Done)));
+}
+
+#[test]
+fn local_route_has_one_loopback_endpoint_and_no_cloud_fallback() {
+    let mut local = connection("ollama-local");
+    providers::validate_connection(&local).unwrap();
+    for endpoint in [
+        "http://localhost:11434",
+        "http://127.0.0.1:8888",
+        "http://192.168.0.2:11434",
+        "https://ollama.com/v1",
+    ] {
+        local.base_url = endpoint.into();
+        assert!(providers::validate_connection(&local).is_err());
+    }
+    let cloud = connection("ollama");
+    assert_ne!(
+        providers::credential_id(&local),
+        providers::credential_id(&cloud)
+    );
 }

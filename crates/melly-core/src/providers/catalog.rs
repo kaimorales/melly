@@ -138,6 +138,17 @@ pub fn catalog() -> Vec<ProviderSpec> {
             None,
         ),
         (
+            "ollama-local",
+            "Ollama Local",
+            "On this Mac",
+            super::local::BASE,
+            "llama3.2:3b",
+            "ollama-local",
+            false,
+            false,
+            None,
+        ),
+        (
             "custom",
             "Custom compatible",
             "API key · Selected endpoint (unverified)",
@@ -185,10 +196,10 @@ pub fn validate_connection(connection: &Connection) -> Result<()> {
     if provider.disabled_reason.is_some() {
         bail!("Provider is unavailable");
     }
-    if provider.id == "mock" {
+    if matches!(provider.id.as_str(), "mock" | "ollama-local") {
         ensure!(
             connection.base_url == provider.base_url,
-            "Mock endpoint is fixed"
+            "This connection endpoint is fixed"
         );
         return Ok(());
     }

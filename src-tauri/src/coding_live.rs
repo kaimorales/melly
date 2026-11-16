@@ -151,8 +151,7 @@ async fn local_model_repairs_and_checks_a_disposable_project_with_native_tools()
     );
     let store = Store::memory()?;
     let folder = store.create_folder("Disposable synthetic fixture")?;
-    store.set_project_link(&folder.id, &path)?;
-    let link = store.project_link(&folder.id)?.unwrap();
+    let link = store.set_project_link(&folder.id, &path)?;
     let chat = store.create_chat(Some(&folder.id))?;
     let provider = "compatible:00000000-0000-4000-8000-000000000001";
     store.save_compatible_connection(CompatibleConnection {
@@ -180,7 +179,7 @@ async fn local_model_repairs_and_checks_a_disposable_project_with_native_tools()
     });
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let start = std::time::Instant::now();
-    engine.start_with_coding_tools(SendInput{chat_id:chat.id,provider_id:provider.into(),model_id:model,content:"Read calc.py and test_calc.py with the project functions. Fix add so it returns the sum instead of subtracting. Run the project tests with run_tests and report the actual outcome.".into(),folder_context:true,web_search:false,retry:false},None,Arc::new(move|u|{let _=tx.send(u);}),Some(fixture.clone()))?;
+    engine.start_with_coding_tools(SendInput{chat_id:chat.id,provider_id:provider.into(),model_id:model,content:"Read calc.py and test_calc.py with the project functions. Fix add so it returns the sum instead of subtracting. Run the project tests with run_tests and report the actual outcome.".into(),folder_context:true,web_search:false,retry:false},None,&[],Arc::new(move|u|{let _=tx.send(u);}),Some(fixture.clone()))?;
     let done = tokio::time::timeout(Duration::from_secs(180), async {
         while let Some(u) = rx.recv().await {
             if matches!(u.kind.as_str(), "done" | "stopped" | "error") {

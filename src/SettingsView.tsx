@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { backend, nativeApp } from './backend';
 import { ApiKeyField, type ApiKeyFieldHandle } from './ApiKeyField';
 import { Dialog } from './dialogs';
+import { ProviderUsage } from './Usage';
 import { CompatibleConnectionDialog } from './CompatibleConnections';
 import { Icon, ProviderIcon } from './icons';
 import { discoverModels, invalidateModelCatalog, useModelCatalog } from './model-catalog';
@@ -11,6 +12,7 @@ export const providerName = (provider: ProviderView) => provider.id === 'mock' ?
 export function routeLabel(provider: ProviderView) {
   if (provider.id.startsWith('compatible:')) return provider.billingRoute === 'On this Mac' ? 'Local' : 'API';
   if (provider.id === 'mock') return 'Mock';
+  if (provider.id === 'ollama-local') return 'Local';
   if (provider.id === 'chatgpt') return 'Plan';
   if (provider.id === 'muse-api') return 'Metered API';
   if (provider.id === 'qwen-token-plan') return 'Token Plan';
@@ -55,7 +57,7 @@ function ProviderDialog({ initialId, data, theme, onClose, refresh }: { initialI
   };
   const save = async () => {
     await persistConnection();
-    const saved = providerId !== 'chatgpt' && nativeApp ? await keyField.current!.save() : false;
+    const saved = providerId !== 'chatgpt' && providerId !== 'ollama-local' && nativeApp ? await keyField.current!.save() : false;
     if (saved) invalidateModelCatalog(providerId);
     await refresh(); setNotice(saved ? 'Key saved · checked when used' : 'Connection saved.');
   };
@@ -72,23 +74,25 @@ function ProviderDialog({ initialId, data, theme, onClose, refresh }: { initialI
     <div className="connection-status"><strong>{providerId === 'qwen-token-plan' ? 'Token Plan subscription' : providerId === 'qwen-standard' ? 'Standard API · metered billing' : provider.billingRoute}</strong><span>{pending ? 'Sign-in pending' : provider.status}</span></div>
     {provider.disabledReason ? <p style={{ marginTop: 18 }}>{provider.disabledReason} No connection is available.</p> : providerId === 'mock' ? <p style={{ marginTop: 18 }}>A synthetic conversation for trying Melly. No provider is contacted and no account is needed.</p> : <>
       {configureModels && <>
+      {providerId === 'ollama-local' && <p className="billing-note">Run Ollama on this Mac and download a model there. Melly connects to 127.0.0.1 on port 11434. Local replies use a bounded recent history and up to two project excerpts.</p>}
       {providerId === 'ollama' && <p className="billing-note">Plan credits first; purchased credits can follow.</p>}
       {providerId === 'custom' && <label className="field">Base URL<input aria-label="Base URL" value={connection.baseUrl} placeholder="https://api.example.com/v1" spellCheck={false} onChange={(event) => setConnection({ ...connection, baseUrl: event.target.value })} /><small>Each endpoint has its own key.</small></label>}
       <label className="field">Model<input aria-label="Model" value={connection.modelId} spellCheck={false} placeholder="Enter a model name" onChange={(event) => setConnection({ ...connection, modelId: event.target.value })} /></label>
-      <button className="button" disabled={busy || !provider.configured || (providerId === 'custom' && connection.baseUrl !== provider.connection.baseUrl)} onClick={() => run(async () => {
-        if (connection.modelId !== provider.connection.modelId || connection.baseUrl !== provider.connection.baseUrl) await persistConnection();
+      <button className="button" disabled={busy || (!provider.configured && providerId !== 'ollama-local') || (providerId === 'custom' && connection.baseUrl !== provider.connection.baseUrl)} onClick={() => run(async () => {
+        if (providerId === 'ollama-local' || connection.modelId !== provider.connection.modelId || connection.baseUrl !== provider.connection.baseUrl) await persistConnection();
         const fresh = await refresh();
         await discoverModels(fresh.providers.find((entry) => entry.id === providerId)!, true); setNotice('Model list refreshed.');
       })}>Refresh models</button>
       {catalog.status === 'loading' && <p role="status" className="model-discovery-status">Loading models…</p>}
       {catalog.status === 'error' && !error && <div className="dialog-error" role="alert">{catalog.error}</div>}
       {catalog.models.length > 0 && <div className="models-discovered" aria-label="Discovered models">{catalog.models.map((model) => <button key={model.id} onClick={() => setConnection({ ...connection, modelId: model.id })}>{model.name || model.id}</button>)}</div>}
-      {providerId !== 'chatgpt' && <ApiKeyField key={`${providerId}-${provider.configured && connection.baseUrl === provider.connection.baseUrl}`} ref={keyField} providerId={providerId} theme={theme} configured={provider.configured && connection.baseUrl === provider.connection.baseUrl} onError={setError} />}
+      {providerId !== 'chatgpt' && providerId !== 'ollama-local' && <ApiKeyField key={`${providerId}-${provider.configured && connection.baseUrl === provider.connection.baseUrl}`} ref={keyField} providerId={providerId} theme={theme} configured={provider.configured && connection.baseUrl === provider.connection.baseUrl} onError={setError} />}
       </>}
+      {provider.configured && <ProviderUsage key={`${providerId}-${provider.connection.baseUrl}-${connection.modelId}`} providerId={providerId} modelId={connection.modelId} />}
       {error && <div className="dialog-error" role="alert">{error}</div>}
       {notice && <p role="status" style={{ marginTop: 14 }}>{notice}</p>}
       <div className="dialog-actions spread">
-        {providerId === 'chatgpt' ? (provider.configured || pending ? <button className="button" disabled={busy} onClick={() => run(async () => { await backend.invoke('disconnect_chatgpt'); invalidateModelCatalog(providerId); setPending(false); await refresh(); setNotice(pending ? 'Sign-in cancelled.' : 'Disconnected.'); })}>{pending ? 'Cancel sign-in' : 'Disconnect'}</button> : <button className="button" disabled={busy} onClick={connect}>Continue with ChatGPT</button>) : provider.configured ? <button className="button" disabled={busy} onClick={() => run(async () => { await backend.invoke('remove_provider_key', { providerId }); invalidateModelCatalog(providerId); await refresh(); setNotice('Key removed.'); })}>Remove key</button> : <span />}
+        {providerId === 'chatgpt' ? (provider.configured || pending ? <button className="button" disabled={busy} onClick={() => run(async () => { await backend.invoke('disconnect_chatgpt'); invalidateModelCatalog(providerId); setPending(false); await refresh(); setNotice(pending ? 'Sign-in cancelled.' : 'Disconnected.'); })}>{pending ? 'Cancel sign-in' : 'Disconnect'}</button> : <button className="button" disabled={busy} onClick={connect}>Continue with ChatGPT</button>) : providerId === 'ollama-local' ? (provider.configured ? <button className="button" disabled={busy} onClick={() => run(async () => { await backend.invoke('disconnect_local'); invalidateModelCatalog(providerId); await refresh(); setNotice('Disconnected.'); })}>Disconnect</button> : <span />) : provider.configured ? <button className="button" disabled={busy} onClick={() => run(async () => { await backend.invoke('remove_provider_key', { providerId }); invalidateModelCatalog(providerId); await refresh(); setNotice('Key removed.'); })}>Remove key</button> : <span />}
         {configureModels && <button data-provider-save className="button primary" disabled={busy || !connection.modelId.trim() || !connection.baseUrl.trim()} onClick={() => run(save)}>Save</button>}
       </div>
     </>}
@@ -113,7 +117,7 @@ export function SettingsView({ data, theme, onSettings, refresh, onSeed, report 
     const name = qwen ? 'QwenCloud' : providerName(provider);
     const route = qwen ? 'Standard API or Token Plan' : provider.id === 'mock' ? 'Synthetic preview' : provider.id === 'moonshot' ? 'General API key' : provider.id === 'ollama' ? 'API key · plan or usage credits' : provider.id === 'custom' ? 'API key · OpenAI-compatible' : routeLabel(provider);
     const status = qwen && isConfigured ? 'Key saved' : provider.status;
-    const action = provider.disabledReason ? 'Details' : isConfigured ? 'Manage' : provider.id === 'chatgpt' ? 'Connect' : qwen || provider.id === 'custom' ? 'Configure' : 'Add key';
+    const action = provider.disabledReason ? 'Details' : isConfigured ? 'Manage' : provider.id === 'chatgpt' ? 'Connect' : qwen || provider.id === 'custom' || provider.id === 'ollama-local' ? 'Configure' : 'Add key';
     const initialId = qwen && !provider.configured && tokenPlanConfigured ? 'qwen-token-plan' : provider.id;
     const rows = isConfigured ? configured : available;
     rows.push(<div className="provider-row" key={provider.id}>

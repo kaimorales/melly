@@ -7,10 +7,12 @@ import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import { backend, nativeApp } from './backend';
+import { NameDialog, SearchDialog } from './dialogs';
+import { ArchivedProjects, DeleteProject, FileCitation, ProjectFiles } from './ProjectFiles';
+import { ChatList } from './ChatList';
+import { Thinking } from './Thinking';
 import { CodingActivity, type CodingActivityState } from './CodingActivity';
 import { FileEditMode, InlineFileEdit, splitFileEdit } from './InlineFileEdit';
-import { NameDialog, SearchDialog } from './dialogs';
-import { ChatList } from './ChatList';
 import { ContextMeter } from './Usage';
 import { ChatActions, DeleteChatDialog } from './ChatActions';
 import { MarkdownCodeBlock } from './CodeBlock';
@@ -20,7 +22,7 @@ import { Icon, ProviderIcon } from './icons';
 import { modelLabel, providerName, routeLabel, SettingsView } from './SettingsView';
 import { CompatibleModelPicker, ModelPicker, ProviderPicker } from './ModelPickers';
 import { discoverModels, invalidateModelCatalog } from './model-catalog';
-import type { Bootstrap, Chat, ChatModel, ContextLimit, Folder, Message, ProviderView, Settings, Source, StreamUpdate } from './types';
+import type { AttachmentInfo, Bootstrap, Chat, ChatModel, ContextLimit, Folder, Message, ProviderView, Settings, Source, StreamUpdate } from './types';
 
 const errorText = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
 function requestsFolderContext(value: string) {
@@ -35,62 +37,69 @@ function requestsFolderContext(value: string) {
   return direct.test(opening) || findIn.test(opening);
 }
 type NameAction = { kind: 'new-folder' | 'rename-folder' | 'rename-chat'; id?: string; title?: string };
-type StreamBuffer = { chatId: string; text: string; sources?: Source[]; activity: string } & StreamReveal;
+type StreamBuffer = { chatId: string; text: string; reasoning: string; phase?: 'thinking' | 'answer'; sources?: Source[]; activity: string } & StreamReveal;
 type StreamReveal = { visible?: number; deadline?: number; done?: StreamUpdate };
 
-function MessageView({ message, activity, codingActivity, theme, highlight, onSource, onRetry, busy, retryEnabled, report }: { message: Message; activity?: string; codingActivity?: CodingActivityState; theme: string; highlight: boolean; onSource: (source: Source) => void; onRetry: () => void; busy: boolean; retryEnabled: boolean; report: (text: string) => void }) {
+function MessageView({ message, activity, codingActivity, theme, highlight, onSource, onRetry, onBranch, onEdit, canChange, retryEnabled, report }: { message: Message; activity?: string; codingActivity?: CodingActivityState; theme: string; highlight: boolean; onSource: (source: Source) => void; onRetry: () => void; onBranch: () => void; onEdit: () => void; canChange: boolean; retryEnabled: boolean; report: (text: string) => void }) {
   const reply = message.role === 'assistant' ? splitFileEdit(message.content, message.status === 'streaming') : { text: message.content, proposed: false };
   const markdown = useMemo(() => message.role === 'assistant' ? normalizeMathDelimiters(reply.text) : reply.text, [reply.text, message.role]);
-  if (message.role === 'user') return <div id={`message-${message.id}`} className={`message user-message ${highlight ? 'highlighted' : ''}`}>{message.content}</div>;
+  if (message.role === 'user') return <div className="user-message-group"><div id={`message-${message.id}`} className={`message user-message ${highlight ? 'highlighted' : ''}`}>{message.content}{!!message.attachments?.length && <div className="sent-files">{message.attachments.map(file => <span key={file.id} title={file.kind === 'image-text' ? 'Recognized text from image' : 'Shared file text'}><Icon name="folder" />{file.name}{file.kind === 'image-text' ? ' · text' : ''}</span>)}</div>}</div><div className="user-message-actions"><button disabled={!canChange} onClick={onEdit}>Edit</button><button disabled={!canChange} onClick={onBranch}>Branch</button></div></div>;
   if (message.role !== 'assistant') return null;
   const stopped = message.status === 'stopped' || message.status === 'cancelled';
   const failed = ['error', 'failed', 'interrupted'].includes(message.status);
   const keptChanges = codingActivity?.results.some(result => 'action' in result);
   return <article id={`message-${message.id}`} className={`message assistant ${highlight ? 'highlighted' : ''}`} aria-label="Melly response">
 
-    {activity && message.status === 'streaming' && <div className="stream-activity" role="status">{activity}</div>}
+    <Thinking message={message} activity={activity} />
     {reply.text ? <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm, remarkMath, remarkMathPresentation]} urlTransform={(url) => url.startsWith('melly-source:') ? url : defaultUrlTransform(url)} components={{
       a: ({ href, children }) => {
         if (href?.startsWith('melly-source:')) {
           const source = message.sources.find((entry) => entry.id === href.slice('melly-source:'.length));
-          return source ? <button className="source inline-source" aria-label={`Open source ${source.title}`} title={source.snippet} onClick={() => onSource(source)}><Icon name={source.kind === 'chat' ? 'message' : 'globe'} /><span>{children}</span><Icon name={source.kind === 'chat' ? 'right' : 'external'} /></button> : <span>{children}</span>;
+          return source ? <button className="source inline-source" aria-label={`Open source ${source.title}`} title={source.snippet} onClick={() => onSource(source)}><Icon name={source.kind === 'file' ? 'folder' : source.kind === 'chat' ? 'message' : 'globe'} /><span>{children}</span><Icon name={source.kind === 'web' ? 'external' : 'right'} /></button> : <span>{children}</span>;
         }
         return <a href={href} onClick={(event) => { event.preventDefault(); if (href) onSource({ id: '', kind: 'web', title: String(children), url: href, chatId: null, messageId: null, snippet: '' }); }}>{children}</a>;
       },
       img: ({ alt }) => <span className="message-status">[Image{alt ? `: ${alt}` : ''}]</span>,
       pre: MarkdownCodeBlock,
       code: MarkdownInlineCode,
-    }}>{markdown}</ReactMarkdown></div> : message.status === 'streaming' ? <span className="stream-pending" aria-label="Preparing response" /> : null}
+    }}>{markdown}</ReactMarkdown></div> : null}
     {codingActivity && <CodingActivity activity={codingActivity} />}
-    {nativeApp && reply.proposed && message.status === 'complete' && <InlineFileEdit chatId={message.chatId} messageId={message.id} busy={busy} />}
+    {nativeApp && reply.proposed && message.status === 'complete' && <InlineFileEdit chatId={message.chatId} messageId={message.id} busy={!canChange} />}
     <ResponseReferences sources={message.sources} onSource={onSource} />
     {message.status !== 'streaming' && <div className="message-tools">
       {reply.text && <button className="icon-button" aria-label="Copy response" title="Copy response" onClick={() => { void navigator.clipboard.writeText(reply.text).then(() => report('Response copied.')).catch(() => report('Could not copy the response.')); }}><Icon name="copy" /></button>}
+      <button className="text-action retry-quiet" disabled={!canChange} aria-label="Branch from response" onClick={onBranch}>Branch</button>
       {stopped && <span className="message-status">Response stopped</span>}
       {failed && <span className="message-status">{message.status === 'interrupted' ? 'Response interrupted' : 'Response failed'}</span>}
       {(stopped || failed) && keptChanges && <span className="message-status">Changes kept</span>}
       {retryEnabled && <button className={`text-action ${stopped || failed ? '' : 'retry-quiet'}`} aria-label={codingActivity ? 'Continue task' : 'Retry response'} onClick={onRetry}>{codingActivity ? 'Continue' : 'Retry'}</button>}
-      {nativeApp && !reply.proposed && <UndoChanges chatId={message.chatId} messageId={message.id} busy={busy} />}
+      {nativeApp && !reply.proposed && <UndoChanges chatId={message.chatId} messageId={message.id} busy={!canChange} />}
       {message.providerId && <span className="sr-only">{message.providerId === 'mock' ? 'Synthetic Demo reply' : `${message.modelId}, ${message.billingRoute}`}</span>}
     </div>}
   </article>;
 }
 
 export default function App() {
-  const [workspace, setWorkspace] = useState<{ folderId: string; name: string } | null>(null);
-  const [workspaceRevision, setWorkspaceRevision] = useState(0);
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const [deleteProject, setDeleteProject] = useState<Folder | null>(null);
+  const [fileCitation, setFileCitation] = useState<Source | null>(null);
+  const [projectFiles, setProjectFiles] = useState<Folder | null>(null);
   const [data, setData] = useState<Bootstrap | null>(null); const [bootError, setBootError] = useState('');
+  const dataRef = useRef(data); dataRef.current = data;
   const [selectedId, setSelectedId] = useState<string | null>(null); const selectedRef = useRef<string | null>(null);
   const [view, setView] = useState<'chat' | 'settings'>('chat');
   const [items, setItems] = useState<Message[]>([]); const [loading, setLoading] = useState(false);
   const [hasOlder, setHasOlder] = useState(false); const [viewingOlder, setViewingOlder] = useState(false);
   const [webSearch, setWebSearch] = useState(false); const [manualFolder, setManualFolder] = useState<boolean | null>(null);
-  const [attachment, setAttachment] = useState<{ id: string; name: string } | null>(null);
+  const [draggingFiles, setDraggingFiles] = useState(false);
+  const attachmentOperation = useRef(false);
+  const attachmentEpoch = useRef(0);
+  const fileState = useRef({ selectedId, view, starting: false, activeRun: false });
   const [pickingAttachment, setPickingAttachment] = useState(false);
   const [running, setRunning] = useState<Set<string>>(new Set()); const [starting, setStarting] = useState(false); const sendingRef = useRef(false);
   const [notice, setNotice] = useState('');
   const composer = useComposerDraft(selectedId, !!data, setNotice);
-  const { content: draft, setContent: setDraft } = composer;
+  const { content: draft, setContent: setDraft, attachments, setAttachments, editing, setEditing } = composer;
   const [sidebar, setSidebar] = useState(window.innerWidth > 600);
   const [moving, setMoving] = useState<Set<string>>(new Set()); const movingIds = useRef(new Set<string>());
   const removedChatIds = useRef(new Set<string>());
@@ -123,7 +132,7 @@ export default function App() {
   }, []);
   const mergeStreams = useCallback((messages: Message[]) => messages.map((message) => {
     const buffer = streamBuffers.current.get(message.id);
-    return buffer && message.status === 'streaming' ? { ...message, content: buffer.text.slice(0, buffer.visible ?? buffer.text.length) || message.content, sources: buffer.sources || message.sources } : message;
+    return buffer && message.status === 'streaming' ? { ...message, content: buffer.text.slice(0, buffer.visible ?? buffer.text.length) || message.content, reasoning: buffer.reasoning || message.reasoning, phase: buffer.phase, sources: buffer.sources || message.sources } : message;
   }), []);
   const loadMessages = useCallback(async (chatId: string, target?: string, retainHistory = false) => {
     const request = ++messageRequest.current;
@@ -222,13 +231,14 @@ export default function App() {
           });
           return;
         }
-        if (update.kind === 'delta' || update.kind === 'sources' || update.kind === 'tool') {
-          const buffer: StreamBuffer = streamBuffers.current.get(update.messageId) || { chatId: update.chatId, text: '', activity: '' };
+        if (update.kind === 'delta' || update.kind === 'reasoning' || update.kind === 'sources' || update.kind === 'tool') {
+          const buffer: StreamBuffer = streamBuffers.current.get(update.messageId) || { chatId: update.chatId, text: '', reasoning: '', phase: undefined, activity: '' };
           if (update.kind === 'delta' && update.text) {
             if ((buffer.visible ?? buffer.text.length) >= buffer.text.length) buffer.deadline = performance.now() + streamRevealWindow;
             buffer.visible ??= buffer.text.length;
-            buffer.text += update.text;
+            buffer.text += update.text; buffer.phase = 'answer'; buffer.activity = '';
           }
+          if (update.kind === 'reasoning' && update.text) { buffer.reasoning += update.text; buffer.phase = 'thinking'; buffer.activity = ''; }
           if (update.kind === 'sources') buffer.sources = update.sources;
           if (update.kind === 'tool') buffer.activity = update.text;
           streamBuffers.current.set(update.messageId, buffer);
@@ -309,28 +319,6 @@ export default function App() {
 
   const selectedChat = data?.chats.find((chat) => chat.id === selectedId);
   const selectedFolder = data?.folders.find((folder) => folder.id === selectedChat?.folderId);
-  const folderId = selectedFolder?.id;
-  const linked = !!folderId && workspace?.folderId === folderId;
-  useEffect(() => {
-    if (!nativeApp || !folderId) return;
-    let current = true;
-    void backend.invoke<{ folderId: string; name: string } | null>('project_link', { folderId }).then(link => {
-      if (current) setWorkspace(link);
-    }).catch(() => { if (current) setWorkspace(null); });
-    return () => { current = false; };
-  }, [folderId, workspaceRevision]);
-  const connectFolder = async (folder: Folder, unlink: boolean) => {
-    try {
-      if (unlink) {
-        await backend.invoke('unlink_project', { folderId: folder.id });
-      } else if (!await backend.invoke<boolean>('link_project_directory', { folderId: folder.id })) {
-        return;
-      }
-      setManualFolder(null);
-      setWorkspaceRevision(value => value + 1);
-      setNotice(unlink ? 'Local folder unlinked.' : 'Local folder linked.');
-    } catch (reason) { setNotice(errorText(reason)); }
-  };
   const visibleProviders = data?.providers.filter((entry) => !nativeApp || entry.id !== 'mock') || [];
   const connectedProviders = visibleProviders.filter((entry) => entry.configured && !entry.disabledReason);
   const defaultModel = { providerId: data?.settings.defaultProvider || '', modelId: data?.settings.defaultModel || '' };
@@ -342,32 +330,62 @@ export default function App() {
   const displayModel = namedConnection?.models.find(item => item.id === model)?.name || (provider ? modelLabel(provider, model) : '');
   const activeRun = !!selectedId && (running.has(selectedId) || compactingChat === selectedId);
   const explicitFolder = requestsFolderContext(draft);
-  const canUseFolderContext = !!provider && (linked || provider.tools);
-  const folderContext = !!selectedFolder && canUseFolderContext && (manualFolder === true || (explicitFolder && manualFolder !== false));
+  const folderContext = !!selectedFolder && !!provider && (manualFolder ?? (explicitFolder || !!selectedFolder.contextEnabled));
+  const toggleProjectContext = async () => {
+    if (!selectedFolder) return;
+    const folderId = selectedFolder.id;
+    const enabled = !folderContext;
+    try {
+      await backend.invoke('set_project_context', { folderId, enabled });
+      setData((current) => current && { ...current, folders: current.folders.map((folder) => folder.id === folderId ? { ...folder, contextEnabled: enabled } : folder) });
+      if (selectedRef.current === selectedId) setManualFolder(enabled);
+    } catch (reason) { setNotice(errorText(reason)); }
+  };
   const museRoute = provider?.id === 'muse-api';
   const webAvailable = !!provider && (provider.id === 'mock' || provider.nativeSearch || ((provider.tools || museRoute) && !!data?.searchConfigured));
   const sendAvailable = !!provider?.configured && !provider.disabledReason;
 
-  const clearAttachment = () => {
-    if (attachment) void backend.invoke('remove_muse_attachment', { id: attachment.id }).catch(() => {});
-    setAttachment(null);
-  };
-  const pickAttachment = async () => {
-    const chat = selectedRef.current;
-    setPickingAttachment(true);
+  fileState.current = { selectedId, view, starting, activeRun };
+  const fileDiscards = useRef<Promise<void>>(Promise.resolve());
+  const discardFiles = (files: AttachmentInfo[]) => { fileDiscards.current = fileDiscards.current.then(async () => { await composer.flush(); await Promise.allSettled(files.map(file => backend.invoke('discard_chat_file', { id: file.id }))); }); };
+  const clearAttachment = () => { attachmentEpoch.current += 1; discardFiles(attachments); setAttachments([]); };
+  const removeAttachment = (file: AttachmentInfo) => { discardFiles([file]); setAttachments(current => current.filter(entry => entry.id !== file.id)); };
+  const receiveFiles = async (command: string, args?: Record<string, unknown>) => {
+    const target = selectedRef.current; const epoch = attachmentEpoch.current;
+    attachmentOperation.current = true; setPickingAttachment(true);
     try {
-      const file = await backend.invoke<{ id: string; name: string } | null>('pick_muse_attachment');
-      if (file && chat === selectedRef.current) setAttachment(file);
-      else if (file) await backend.invoke('remove_muse_attachment', { id: file.id });
+      await fileDiscards.current;
+      const files = await backend.invoke<AttachmentInfo[]>(command, args);
+      if (epoch === attachmentEpoch.current && target === selectedRef.current && fileState.current.view === 'chat') setAttachments(current => [...current, ...files]);
+      else discardFiles(files);
     } catch (reason) { setNotice(errorText(reason)); }
-    finally { setPickingAttachment(false); }
+    finally { attachmentOperation.current = false; setPickingAttachment(false); }
   };
+  const pickAttachment = () => receiveFiles('pick_chat_files');
+  useEffect(() => {
+    if (!nativeApp) return;
+    let disposed = false;
+    const cleanup: Array<() => void> = [];
+    void Promise.all([
+      backend.listen<boolean>('file-drag', entered => { const current = fileState.current; setDraggingFiles(entered && current.view === 'chat' && !current.starting && !current.activeRun && !attachmentOperation.current && !document.querySelector('[role="dialog"]')); }),
+      backend.listen<string>('file-drop', ticket => {
+        setDraggingFiles(false);
+        const current = fileState.current;
+        const accept = current.view === 'chat' && !current.starting && !current.activeRun && !attachmentOperation.current && !document.querySelector('[role="dialog"]');
+        if (accept) void receiveFiles('accept_file_drop', { ticket, accept: true });
+        else { void backend.invoke('accept_file_drop', { ticket, accept: false }).catch(() => {}); setNotice('Open an idle chat to attach files.'); }
+      }),
+    ]).then(listeners => { if (disposed) listeners.forEach(stop => stop()); else cleanup.push(...listeners); }).catch(reason => setNotice(errorText(reason)));
+    return () => { disposed = true; cleanup.forEach(stop => stop()); };
+  }, []);
 
   const selectChat = (chat: Chat, preserveAttachment = false) => {
     setDraftModel(null);
     setDraftContext(null);
-    if (!preserveAttachment && chat.id !== selectedRef.current) clearAttachment();
-    if (preserveAttachment && chat.id !== selectedRef.current) composer.adopt(chat.id);
+    if (chat.id !== selectedRef.current) {
+      attachmentEpoch.current += 1;
+      if (preserveAttachment) composer.adopt(chat.id);
+    }
     selectedRef.current = chat.id; setSelectedId(chat.id);
     setData((current) => current && !current.chats.some((entry) => entry.id === chat.id) ? { ...current, chats: [...current.chats, chat] } : current);
     setView('chat'); setHighlight(null); setNotice(''); followBottom.current = true;
@@ -407,7 +425,7 @@ export default function App() {
     const modelId = next.connection.modelId || next.defaultModel;
     if (next.id.startsWith('compatible:') || namedConnection || draftModel || (selectedId && data.chatModels?.[selectedId])) await chooseChatModel({ providerId: next.id, modelId });
     else await saveSettings({ ...data.settings, defaultProvider: next.id, defaultModel: modelId });
-    clearAttachment(); setWebSearch(false); setManualFolder(null); setPicker('models');
+    setWebSearch(false); setManualFolder(null); setPicker('models');
   };
   const chooseModel = async (modelId: string) => {
     if (!data || !provider || !modelId.trim()) return;
@@ -417,11 +435,15 @@ export default function App() {
     setWebSearch(false); closePicker();
   };
   const send = async (retry = false) => {
-    if (!composer.ready || !data || !provider || !sendAvailable || activeRun || pickingAttachment || savingContext.current || sendingRef.current || (retry && (viewingOlder || loading || !!attachment)) || (!retry && !draft.trim())) return;
+    if (!composer.ready || !data || !provider || !sendAvailable || activeRun || compactingChat !== null || pickingAttachment || savingContext.current || sendingRef.current || (retry && (viewingOlder || loading || attachments.length > 0)) || (!retry && !draft.trim())) return;
     sendingRef.current = true; setStarting(true); setNotice(''); setHighlight(null); followBottom.current = true;
     let chatId = selectedId;
     try {
       await composer.flush();
+      if (editing && !retry) {
+        const branch = await backend.invoke<Chat>('branch_chat', { chatId: editing.chatId, messageId: editing.id, includeMessage: false });
+        chatId = branch.id; composer.adopt(branch.id); setSelectedId(branch.id); await refresh();
+      }
       if (!chatId) {
         const chat = await createChat(null, true);
         chatId = chat.id;
@@ -431,12 +453,20 @@ export default function App() {
       await composer.flush();
       selectedRef.current = chatId;
       setRunning((current) => new Set(current).add(chatId!));
-      await backend.invoke<Message>('start_chat', { input: { chatId, content: draft.trim(), providerId: provider.id, modelId: model, webSearch: webSearch && webAvailable, folderContext, retry }, attachmentId: !retry && museRoute ? attachment?.id : undefined, draftKey: composer.key });
-      if (!retry) { composer.clear(composer.key); if (chatId !== composer.key) composer.clear(chatId); clearAttachment(); } setManualFolder(null); await loadMessages(chatId); await refresh();
+      await backend.invoke<Message>('start_chat', { input: { chatId, content: draft.trim(), providerId: provider.id, modelId: model, webSearch: webSearch && webAvailable, folderContext, retry }, attachmentIds: retry ? [] : attachments.map(file => file.id), draftKey: composer.key });
+      if (!retry) { composer.clear(composer.key); if (chatId !== composer.key) composer.clear(chatId); } setManualFolder(null); await loadMessages(chatId); await refresh();
     } catch (reason) { setNotice(errorText(reason)); if (chatId) setRunning((current) => { const next = new Set(current); next.delete(chatId!); return next; }); }
     finally { sendingRef.current = false; setStarting(false); textarea.current?.focus(); }
   };
+  const branchMessage = async (message: Message) => {
+    if (sendingRef.current) return;
+    sendingRef.current = true; setStarting(true);
+    try { const branch = await backend.invoke<Chat>('branch_chat', { chatId: message.chatId, messageId: message.id, includeMessage: true }); await refresh(); selectChat(branch); setNotice('New branch created. The original chat is unchanged.'); }
+    catch (reason) { setNotice(errorText(reason)); }
+    finally { sendingRef.current = false; setStarting(false); }
+  };
   const source = async (value: Source) => {
+    if (value.kind === 'file') { setFileCitation(value); return; }
     if (value.kind === 'chat' && value.chatId) {
       let chat = data?.chats.find((entry) => entry.id === value.chatId);
       if (!chat) chat = await backend.invoke<Chat | null>('chat', { chatId: value.chatId }) || undefined;
@@ -494,10 +524,27 @@ export default function App() {
     removedChatIds.current.add(chat.id);
     setData((current) => current && { ...current, chats: current.chats.filter((entry) => entry.id !== chat.id) });
     if (selectedRef.current === chat.id) {
-      clearAttachment(); selectedRef.current = null; setSelectedId(null); setItems([]); setManualFolder(null);
+      attachmentEpoch.current += 1; if (selectedId) composer.forget(selectedId); discardFiles(attachments); selectedRef.current = null; setSelectedId(null); setItems([]); setManualFolder(null);
       setActivities({}); setHighlight(null); setHasOlder(false); setViewingOlder(false); ++messageRequest.current;
     }
     setNotice('Chat deleted.');
+  };
+  const projectChanged = async (folderId: string) => {
+    const fresh = await backend.invoke<Bootstrap>('bootstrap');
+    const hidden = !fresh.folders.some((folder) => folder.id === folderId);
+    const selected = dataRef.current?.chats.find((chat) => chat.id === selectedRef.current);
+    if (hidden && selected?.folderId === folderId) {
+      attachmentEpoch.current += 1; if (selectedId) composer.forget(selectedId); discardFiles(attachments); selectedRef.current = null; setSelectedId(null); setItems([]); setManualFolder(null);
+      setActivities({}); setHighlight(null); setHasOlder(false); setViewingOlder(false); setLoading(false); ++messageRequest.current;
+    }
+    setData((current) => {
+      const selected = current?.chats.find((chat) => chat.id === selectedRef.current);
+      return selected && !fresh.chats.some((chat) => chat.id === selected.id) ? { ...fresh, chats: [...fresh.chats, selected] } : fresh;
+    });
+  };
+  const archiveProject = async (folder: Folder) => {
+    try { await backend.invoke('archive_project', { folderId: folder.id, archived: true }); await projectChanged(folder.id); }
+    catch (reason) { setNotice(errorText(reason)); }
   };
   if (bootError) return <div className="loading-state"><div role="alert">{bootError}<br /><button className="text-action" onClick={() => window.location.reload()}>Try again</button></div></div>;
   if (!data) return <div className="loading-state">Opening Melly…</div>;
@@ -506,10 +553,9 @@ export default function App() {
     {sidebar && <aside className="sidebar" aria-label="Chats">
       <div className="chrome" data-tauri-drag-region><span className="preview-brand" data-tauri-drag-region>Melly</span><button className="icon-button" aria-label="Hide sidebar" onClick={() => setSidebar(false)}><Icon name="sidebar" /></button></div>
       <nav className="nav" aria-label="Main"><button className="nav-row" onClick={() => { void createChat().catch((reason) => setNotice(errorText(reason))); }}><Icon name="edit" />New Chat</button><button className={`nav-row ${view === 'settings' ? 'selected' : ''}`} onClick={() => { setView('settings'); setNotice(''); }}><Icon name="settings" />Settings</button>{view === 'chat' && <button className="nav-row chat-search" onClick={() => setSearchOpen(true)}><Icon name="search" />Search chats</button>}</nav>
-      {view === 'chat' && <ChatList chats={data.chats} folders={data.folders} selectedId={selectedId} busy={new Set([...running, ...moving])}
+      {view === 'chat' && <ChatList onArchive={archiveProject} onDeleteProject={setDeleteProject} onArchived={() => setArchivedOpen(true)} onFiles={setProjectFiles} chats={data.chats} folders={data.folders} selectedId={selectedId} busy={new Set([...running, ...moving])}
         onSelect={selectChat} onMove={moveChat} onDelete={setDeleteTarget} onRename={(chat) => setNameAction({ kind: 'rename-chat', id: chat.id, title: chat.title })}
         onNewChat={(folderId) => { void createChat(folderId).catch((reason) => setNotice(errorText(reason))); }} onNewFolder={() => setNameAction({ kind: 'new-folder' })}
-        onLocalFolder={nativeApp ? (folder, unlink) => void connectFolder(folder, unlink) : undefined}
         onRenameFolder={(folder) => setNameAction({ kind: 'rename-folder', id: folder.id, title: folder.title })} />}
       {!nativeApp && <div className="sidebar-foot">Browser preview · Mock</div>}
     </aside>}
@@ -517,7 +563,7 @@ export default function App() {
       <header className="main-header" data-tauri-drag-region>
         {!sidebar && <button className="icon-button" aria-label="Show sidebar" onClick={() => setSidebar(true)}><Icon name="sidebar" /></button>}
         {view === 'settings' && <button className="icon-button" aria-label="Back to chat" title="Back to chat" onClick={() => { setView('chat'); setNotice(''); }}><Icon name="right" style={{ transform: 'rotate(180deg)' }} /></button>}
-        {view === 'settings' ? <h1 data-tauri-drag-region>Settings</h1> : selectedChat ? <div className="chat-heading" data-tauri-drag-region><span className="chat-title" data-tauri-drag-region>{selectedChat.title}</span><span className="chat-location" data-tauri-drag-region>{selectedFolder?.title || 'No folder'}</span></div> : <span />}
+        {view === 'settings' ? <h1 data-tauri-drag-region>Settings</h1> : selectedChat ? <div className="chat-heading" data-tauri-drag-region><span className="chat-title" data-tauri-drag-region>{selectedChat.title}</span><span className="chat-location" data-tauri-drag-region>{selectedFolder?.title || 'No project'}</span></div> : <span />}
         {!sidebar && !nativeApp && <span className="preview-badge">Browser preview · Mock</span>}
         {view === 'chat' && selectedChat && <div className="chat-menu-button" data-menu-root><button className="icon-button" aria-label="Chat options" aria-expanded={chatMenu} onClick={() => setChatMenu(!chatMenu)}><Icon name="more" /></button>{chatMenu && <div className="menu chat-menu" role="menu"><ChatActions chat={selectedChat} folders={data.folders} busy={activeRun || moving.has(selectedChat.id)} onRename={(chat) => setNameAction({ kind: 'rename-chat', id: chat.id, title: chat.title })} onDelete={setDeleteTarget} onMove={moveChat} onClose={() => setChatMenu(false)} /></div>}</div>}
       </header>
@@ -527,34 +573,35 @@ export default function App() {
           {!items.length && !loading ? <div className="empty-state"><h1>{selectedFolder ? `A new thought in ${selectedFolder.title}` : 'What’s on your mind?'}</h1>{!nativeApp && provider?.id === 'mock' && <><p>Try a synthetic conversation, or connect a provider in Settings.</p><button className="text-action" onClick={() => { void seed().catch((reason) => setNotice(errorText(reason))); }}>Try an example</button></>}</div> : <div className={`transcript ${hasOlder || viewingOlder ? 'has-older' : ''}`} aria-label="Conversation">
             {hasOlder && <button className="load-older" disabled={loading} onClick={() => { void older(); }}>{loading ? 'Loading…' : 'Load older messages'}</button>}
             {viewingOlder && <button className="load-older" onClick={() => { if (selectedId) { setHighlight(null); followBottom.current = true; void loadMessages(selectedId); } }}>Back to latest messages</button>}
-            {items.map((message, index) => <MessageView key={message.id} message={message} theme={theme} activity={activities[message.id]} codingActivity={codingActivities[message.id]} highlight={highlight === message.id} onSource={(value) => { void source(value).catch((reason) => setNotice(errorText(reason))); }} onRetry={() => { void send(true); }} busy={activeRun || starting || loading} retryEnabled={index === items.length - 1 && !viewingOlder && !loading && !activeRun && !starting} report={setNotice} />)}
+            {items.map((message, index) => <MessageView key={message.id} message={message} theme={theme} activity={activities[message.id]} codingActivity={codingActivities[message.id]} highlight={highlight === message.id} onSource={(value) => { void source(value).catch((reason) => setNotice(errorText(reason))); }} onRetry={() => { void send(true); }} onBranch={() => { void branchMessage(message); }} onEdit={() => { clearAttachment(); setEditing(message); setDraft(message.content); if (message.attachments?.length) void receiveFiles('copy_message_files', { messageId: message.id }); textarea.current?.focus(); }} canChange={!activeRun && !starting && !loading && !pickingAttachment} retryEnabled={index === items.length - 1 && !viewingOlder && !loading && !activeRun && !starting} report={setNotice} />)}
           </div>}
         </div>
         <div className="composer-area" data-menu-root>
-          {selectedFolder && (folderContext || explicitFolder || manualFolder !== null) && <div className="folder-consent">
-            {linked ? <span>{folderContext ? `Named files may be shared with ${provider ? providerName(provider) : 'the selected provider'}.` : 'Project context is off.'}</span>
-              : <button aria-label={`Use other chats in ${selectedFolder.title}`} aria-pressed={folderContext} disabled={!canUseFolderContext} onClick={() => setManualFolder(!folderContext)}><Icon name={folderContext ? 'check' : 'folder'} />{provider?.tools ? `Use other chats in ${selectedFolder.title}` : 'This provider does not support folder references'}</button>}
-          </div>}
-          {!selectedFolder && explicitFolder && <div className="folder-consent"><Icon name="folder" /><span>Move this chat into a folder to use other chats.</span></div>}
+          {draggingFiles && <div className="file-drop-overlay" aria-hidden="true"><Icon name="plus" /><span>Add files to this conversation</span><small>Shared when you send</small></div>}
+          {selectedFolder && folderContext && <div className="folder-consent"><span>Project files and matching chats may be sent to {provider ? providerName(provider) : 'the selected provider'}.</span></div>}
+          {!selectedFolder && explicitFolder && <div className="folder-consent"><Icon name="folder" /><span>Move this chat into a project to use its files and other chats.</span></div>}
+          {editing && <div className="editing-note"><span>Editing in a new branch</span><button onClick={() => { clearAttachment(); setEditing(null); setDraft(''); }}>Cancel</button></div>}
           <form className="composer" onSubmit={(event) => { event.preventDefault(); void send(); }}>
-            {museRoute && attachment && <div className="attachment-draft"><span title={attachment.name}>{attachment.name}</span><button type="button" className="icon-button" aria-label="Remove attachment" disabled={starting} onClick={clearAttachment}><Icon name="close" /></button></div>}
+            {!!attachments.length && <div className="attachment-list">{attachments.map(file => <div className="attachment-draft" key={file.id}><span title={file.name}>{file.name}{file.kind === 'image-text' && <small>Recognized text</small>}</span><button type="button" className="icon-button" aria-label={`Remove ${file.name}`} disabled={starting} onClick={() => removeAttachment(file)}><Icon name="close" /></button></div>)}</div>}
+            {pickingAttachment && <div className="attachment-progress" role="status">Reading files on your Mac…</div>}
+
             <textarea ref={textarea} aria-label="Message" rows={1} placeholder="Send a message" disabled={!composer.ready || starting} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.key !== 'Enter') return;
               const shouldSend = data.settings.sendBehavior === 'cmd-enter' ? event.metaKey || event.ctrlKey : !event.shiftKey && !event.altKey;
               if (shouldSend) { event.preventDefault(); void send(); }
             }} />
             <div className="composer-controls">
-              {nativeApp && linked && selectedId && folderId && <FileEditMode key={`${selectedId}:${workspaceRevision}`} chatId={selectedId} projectId={folderId} report={setNotice} />}
-              {museRoute && nativeApp && <button type="button" className="round-control" aria-label="Attach text file" title="Attach one UTF-8 text file, up to 24 KiB" disabled={starting || activeRun || pickingAttachment} onClick={() => { void pickAttachment(); }}><Icon name="plus" /></button>}
-              {selectedFolder && <button type="button" className="round-control" aria-label={linked ? "Project context" : "Folder context"} aria-pressed={folderContext} disabled={!canUseFolderContext} title={linked ? "Share explicitly named project files" : provider?.tools ? `Use other chats in ${selectedFolder.title}` : 'Folder context is unavailable for this provider'} onClick={() => setManualFolder(!folderContext)}><Icon name="folder" /></button>}
+              {nativeApp && selectedId && selectedFolder && !projectFiles && <FileEditMode key={selectedId} chatId={selectedId} projectId={selectedFolder.id} report={setNotice} />}
+              {nativeApp && <button type="button" className="round-control" aria-label="Attach files" title="Text, PDF, or text from images · up to 8 files" disabled={starting || activeRun || pickingAttachment} onClick={() => { void pickAttachment(); }}><Icon name="plus" /></button>}
+              {selectedFolder && <button type="button" className="round-control" aria-label="Project context" aria-pressed={folderContext} title={`Use files and other chats in ${selectedFolder.title}`} onClick={() => { void toggleProjectContext(); }}><Icon name="folder" /></button>}
               <button type="button" className="round-control" aria-label="Search the web" aria-pressed={webSearch && webAvailable} aria-disabled={!webAvailable} title={webAvailable ? (provider?.id === 'mock' ? 'Synthetic web search in Demo' : provider?.nativeSearch ? 'Use built-in web search' : 'Use external web search') : 'Set up external search in Settings'} onClick={() => { if (webAvailable) setWebSearch(!webSearch); else setNotice(provider?.tools || museRoute ? 'Add an external search key in Settings to use web search with this provider.' : 'Web search is not available for this provider.'); }}><Icon name="globe" /></button>
               {provider ? <div className="model-pill" role="group" aria-label="Provider and model">
                 <button ref={providerButton} type="button" className="provider-picker-trigger" aria-label="Choose provider" title={`${providerName(provider)} · choose provider`} aria-expanded={picker === 'providers'} aria-haspopup="listbox" onClick={() => setPicker(picker === 'providers' ? null : 'providers')}><ProviderIcon id={provider.id} theme={theme} small /></button>
                 <span className="provider-divider" aria-hidden="true" />
                 <button ref={modelButton} type="button" className="model-picker-trigger" aria-label="Choose model" title="Choose model" aria-expanded={picker === 'models'} aria-haspopup="listbox" onClick={() => setPicker(picker === 'models' ? null : 'models')}><span className="model-name">{displayModel}</span><span className="divider" /><span className="route">{routeLabel(provider)}</span><Icon name="down" /></button>
               </div> : <button ref={providerButton} type="button" className="button" onClick={() => { if (connectedProviders.length) setPicker('providers'); else setView('settings'); }}>{connectedProviders.length ? 'Choose provider' : 'Connect provider'}</button>}
-              {provider && <ContextMeter onCompacting={setCompactingChat} draftContext={draftContext} contextRevision={contextRevision} onLimit={chooseContext} chatId={selectedId} providerId={provider.id} modelId={model} draft={draft} revision={selectedChat?.updatedAt || 0} busy={activeRun || starting || pickingAttachment} />}
-              {activeRun ? <button type="button" className="round-control stop" aria-label="Stop response" title="Stop response" onClick={() => { if (selectedId) void backend.invoke('stop_chat', { chatId: selectedId }).catch((reason) => setNotice(errorText(reason))); }}><span className="stop-square" /></button> : <button type="submit" className="round-control send" aria-label="Send message" disabled={!composer.ready || !draft.trim() || starting || pickingAttachment || !sendAvailable}><Icon name="up" /></button>}
+              {provider && <ContextMeter onCompacting={setCompactingChat} draftContext={draftContext} contextRevision={contextRevision} onLimit={chooseContext} chatId={selectedId} providerId={provider.id} modelId={model} draft={draft} attachments={attachments} folderContext={folderContext} revision={selectedChat?.updatedAt || 0} busy={activeRun || starting || pickingAttachment || compactingChat !== null} onSource={value => { void source(value).catch(reason => setNotice(errorText(reason))); }} />}
+              {activeRun ? <button type="button" className="round-control stop" aria-label="Stop response" title="Stop response" onClick={() => { if (selectedId) void backend.invoke('stop_chat', { chatId: selectedId }).catch((reason) => setNotice(errorText(reason))); }}><span className="stop-square" /></button> : <button type="submit" className="round-control send" aria-label="Send message" disabled={!composer.ready || !draft.trim() || starting || compactingChat !== null || pickingAttachment || !sendAvailable}><Icon name="up" /></button>}
             </div>
           </form>
           {!sendAvailable && provider && <p className="composer-note">{providerName(provider)} is not connected. <button onClick={() => setView('settings')}>Open Settings</button></p>}
@@ -565,8 +612,12 @@ export default function App() {
         </div>
       </>}
     </main>
+    {archivedOpen && <ArchivedProjects onClose={() => setArchivedOpen(false)} onChanged={refresh} onDelete={setDeleteProject} />}
+    {deleteProject && <DeleteProject project={deleteProject} onClose={() => setDeleteProject(null)} onChanged={() => projectChanged(deleteProject.id)} />}
+    {fileCitation && <FileCitation source={fileCitation} onClose={() => setFileCitation(null)} />}
+    {projectFiles && <ProjectFiles project={projectFiles} onClose={() => setProjectFiles(null)} />}
     {searchOpen && <SearchDialog folders={data.folders} onClose={() => setSearchOpen(false)} onSelect={selectChat} />}
-    {nameAction && <NameDialog title={nameAction.kind === 'new-folder' ? 'New folder' : nameAction.kind === 'rename-folder' ? 'Rename folder' : 'Rename chat'} initial={nameAction.title} action={nameAction.kind === 'new-folder' ? 'Create' : 'Save'} onClose={() => setNameAction(null)} onSave={nameSave} />}
+    {nameAction && <NameDialog title={nameAction.kind === 'new-folder' ? 'New project' : nameAction.kind === 'rename-folder' ? 'Rename project' : 'Rename chat'} initial={nameAction.title} action={nameAction.kind === 'new-folder' ? 'Create' : 'Save'} onClose={() => setNameAction(null)} onSave={nameSave} />}
     {deleteTarget && <DeleteChatDialog chat={deleteTarget} busy={running.has(deleteTarget.id) || moving.has(deleteTarget.id)} onClose={() => setDeleteTarget(null)} onDelete={deleteChat} />}
   </div>;
 }

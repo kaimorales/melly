@@ -122,6 +122,7 @@ async fn coding_rounds_hide_tool_requests_and_use_test_results() -> anyhow::Resu
             retry: false,
         },
         None,
+        &[],
         Arc::new(move |update| {
             let _ = tx.send(update);
         }),
@@ -237,6 +238,7 @@ async fn continuation_replays_results_without_deleting_the_interrupted_turn() ->
             retry: true,
         },
         None,
+        &[],
         Arc::new(move |u| {
             let _ = tx.send(u);
         }),
@@ -365,6 +367,7 @@ async fn native_coding_calls_keep_ids_signatures_and_real_tool_results() -> anyh
             retry: false,
         },
         None,
+        &[],
         Arc::new(move |u| {
             let _ = tx.send(u);
         }),

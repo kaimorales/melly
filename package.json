@@ -14,10 +14,10 @@
     "test:ui": "playwright test --config tests/ui/playwright.config.ts",
     "test:core": "node scripts/rust.mjs test -p melly-core",
     "launch": "node scripts/launch.mjs",
-    "perf": "node scripts/rust.mjs run --release -p melly-core --example performance",
     "install:local": "npm run build && node scripts/install-local.mjs",
     "test:install": "node --test scripts/test-install-local.mjs",
-    "prepare:homebrew": "node scripts/prepare-homebrew.mjs"
+    "prepare:homebrew": "node scripts/prepare-homebrew.mjs",
+    "perf": "node scripts/rust.mjs run --release -p melly-core --example performance"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.0",

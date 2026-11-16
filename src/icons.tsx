@@ -35,7 +35,7 @@ export function ProviderIcon({ id, theme, small = false }: { id: string; theme: 
     'qwen-standard': 'qwen.png', 'qwen-token-plan': 'qwen.png', moonshot: `kimi-${theme === 'light' ? 'light' : 'dark'}.svg`,
   };
   const className = small ? 'provider-logo' : 'provider-icon';
-  if (id === 'ollama') return <span className={`${className} provider-ollama`}><img src="/providers/ollama.svg" alt="" /></span>;
+  if ((id === 'ollama' || id === 'ollama-local')) return <span className={`${className} provider-ollama`}><img src="/providers/ollama.svg" alt="" /></span>;
   if (file[id]) return <img className={className} src={`/providers/${file[id]}`} alt="" />;
   if (id === 'custom' || id.startsWith('compatible:') || id === 'mock') return <Icon name={id === 'mock' ? 'spark' : 'tune'} className={`${className} provider-icon-custom`} />;
   const initials: Record<string, string> = { claude: 'C', gemini: 'G', 'muse-api': 'M', deepseek: 'D', moonshot: 'K' };

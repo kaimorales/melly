@@ -163,6 +163,17 @@ impl Decoder {
                     "{} stream failed",
                     self.provider
                 );
+                for candidate in [
+                    &value["usage"],
+                    &value["response"]["usage"],
+                    &value["message"]["usage"],
+                    &value["interaction"]["usage"],
+                    &value["usageMetadata"],
+                ] {
+                    if let Some(usage) = crate::usage::Usage::from_value(candidate) {
+                        sink(ProviderEvent::Usage(usage));
+                    }
+                }
                 self.citations(&value, sink);
                 match self.protocol {
                     Protocol::Compatible => self.compatible(&value, sink)?,
@@ -193,15 +204,28 @@ impl Decoder {
                     "Unexpected multiple response choices"
                 );
                 let delta = &choice["delta"];
-                if let Some(text) = delta["content"].as_str() {
-                    sink(ProviderEvent::Delta(text.into()));
+                let reasoning = delta["reasoning_content"]
+                    .as_str()
+                    .or_else(|| delta["reasoning"].as_str());
+                if let Some(text) = reasoning.filter(|text| !text.is_empty()) {
+                    self.reasoning.push_str(text);
+                    sink(ProviderEvent::Reasoning(text.into()));
                 }
-                append(&mut self.reasoning, &delta["reasoning_content"]);
-                if delta["reasoning_content"].is_null() {
-                    append(&mut self.reasoning, &delta["reasoning"]);
+                if let Some(text) = delta["content"].as_str().filter(|text| !text.is_empty()) {
+                    sink(ProviderEvent::Delta(text.into()));
                 }
                 if let Some(details) = delta["reasoning_details"].as_array() {
                     for detail in details {
+                        if reasoning.is_none() {
+                            let display = match detail["type"].as_str() {
+                                Some("reasoning.text") => detail["text"].as_str(),
+                                Some("reasoning.summary") => detail["summary"].as_str(),
+                                _ => None,
+                            };
+                            if let Some(text) = display.filter(|text| !text.is_empty()) {
+                                sink(ProviderEvent::Reasoning(text.into()));
+                            }
+                        }
                         let index = if detail.get("index").is_some_and(|v| !v.is_null()) {
                             index(detail, "index")?
                         } else {
@@ -259,6 +283,11 @@ impl Decoder {
     }
     fn responses(&mut self, kind: &str, value: &Value, sink: &ProviderSink) -> Result<()> {
         match kind {
+            "response.reasoning_summary_text.delta" => {
+                if let Some(text) = value["delta"].as_str().filter(|text| !text.is_empty()) {
+                    sink(ProviderEvent::Reasoning(text.into()));
+                }
+            }
             "response.output_text.delta" => {
                 if let Some(text) = value["delta"].as_str() {
                     sink(ProviderEvent::Delta(text.into()));
@@ -395,6 +424,7 @@ impl Decoder {
                     "thinking_delta" => {
                         if let Some(text) = delta["thinking"].as_str() {
                             append_value(block, "thinking", text);
+                            sink(ProviderEvent::Reasoning(text.into()));
                         }
                     }
                     "signature_delta" => {
@@ -491,6 +521,13 @@ impl Decoder {
                         }
                     }
                     "thought_summary" => {
+                        if let Some(text) = delta["content"]["text"]
+                            .as_str()
+                            .or_else(|| delta["content"].as_str())
+                            .filter(|text| !text.is_empty())
+                        {
+                            sink(ProviderEvent::Reasoning(text.into()));
+                        }
                         if step["summary"].is_null() {
                             step["summary"] = json!([]);
                         }

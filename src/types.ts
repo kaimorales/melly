@@ -1,9 +1,10 @@
 // JSON counterparts of crates/melly-core/src/models.rs. Rust owns all persisted state.
-export interface Folder { id: string; title: string }
+export interface Folder { id: string; title: string; archived?: boolean; deleting?: boolean; contextEnabled?: boolean }
 export interface Chat { id: string; title: string; folderId: string | null; updatedAt: number }
 export interface Source { id: string; kind: string; title: string; url: string | null; chatId: string | null; messageId: string | null; snippet: string }
 export interface Message {
-  id: string; chatId: string; role: string; content: string; status: string; sources: Source[];
+  id: string; chatId: string; role: string; content: string; reasoning?: string; phase?: 'thinking' | 'answer'; status: string; sources: Source[];
+  attachments?: AttachmentInfo[];
   createdAt: number; providerId: string | null; modelId: string | null; billingRoute: string | null;
 }
 export interface Settings {
@@ -29,3 +30,5 @@ export interface Backend {
   invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
   listen<T>(event: string, callback: (payload: T) => void): Promise<Unlisten>;
 }
+
+export interface AttachmentInfo { id: string; name: string; bytes: number; kind: string }

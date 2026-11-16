@@ -56,7 +56,7 @@ pub async fn remove_muse_attachment(s: State<'_, AppState>, id: String) -> Reply
 pub(crate) async fn pick_path(app: &tauri::AppHandle, directory: bool) -> Reply<Option<PathBuf>> {
     let (send, receive) = tokio::sync::oneshot::channel();
     let handle = app.clone();
-    app.run_on_main_thread(move || begin_picker(&handle, directory, send))
+    app.run_on_main_thread(move || begin_picker(&handle, directory, None, send))
         .map_err(|_| "Could not open the file picker")?;
     receive.await.map_err(|_| "File picker closed")?
 }
@@ -65,6 +65,7 @@ pub(crate) async fn pick_path(app: &tauri::AppHandle, directory: bool) -> Reply<
 fn begin_picker(
     app: &tauri::AppHandle,
     directory: bool,
+    save_name: Option<String>,
     send: tokio::sync::oneshot::Sender<Reply<Option<PathBuf>>>,
 ) {
     use cocoa::{
@@ -78,7 +79,11 @@ fn begin_picker(
     // Never nest runModal inside a Tauri main-thread dispatch.
     unsafe {
         let pool = NSAutoreleasePool::new(nil);
-        let panel: id = msg_send![class!(NSOpenPanel), new];
+        let panel: id = if save_name.is_some() {
+            msg_send![class!(NSSavePanel), new]
+        } else {
+            msg_send![class!(NSOpenPanel), new]
+        };
         let window = app
             .get_webview_window("main")
             .and_then(|window| window.ns_window().ok());
@@ -88,23 +93,30 @@ fn begin_picker(
             pool.drain();
             return;
         };
-        let directories: BOOL = if directory { YES } else { NO };
-        let files: BOOL = if directory { NO } else { YES };
-        let _: () = msg_send![panel, setCanChooseDirectories: directories];
-        let _: () = msg_send![panel, setCanChooseFiles: files];
-        let _: () = msg_send![panel, setAllowsMultipleSelection: NO];
-        let _: () = msg_send![panel, setResolvesAliases: NO];
-        // File validation belongs to the bounded Rust importer. Clear any
-        // remembered panel type restriction before showing a new selection.
-        let _: () = msg_send![panel, setAllowedFileTypes: nil];
-        let _: () = msg_send![panel, setAllowsOtherFileTypes: YES];
-        let actual_files: BOOL = msg_send![panel, canChooseFiles];
-        let actual_directories: BOOL = msg_send![panel, canChooseDirectories];
-        if actual_files != files || actual_directories != directories {
-            let _ = send.send(Err("Could not configure file selection".into()));
-            let _: () = msg_send![panel, release];
-            pool.drain();
-            return;
+        if let Some(name) = save_name {
+            use cocoa::foundation::NSString;
+            let name = NSString::alloc(nil).init_str(&name);
+            let _: () = msg_send![panel, setNameFieldStringValue:name];
+            let _: () = msg_send![name, release];
+        } else {
+            let directories: BOOL = if directory { YES } else { NO };
+            let files: BOOL = if directory { NO } else { YES };
+            let _: () = msg_send![panel, setCanChooseDirectories: directories];
+            let _: () = msg_send![panel, setCanChooseFiles: files];
+            let _: () = msg_send![panel, setAllowsMultipleSelection: NO];
+            let _: () = msg_send![panel, setResolvesAliases: NO];
+            // File validation belongs to the bounded Rust importer. Clear any
+            // remembered panel type restriction before showing a new selection.
+            let _: () = msg_send![panel, setAllowedFileTypes: nil];
+            let _: () = msg_send![panel, setAllowsOtherFileTypes: YES];
+            let actual_files: BOOL = msg_send![panel, canChooseFiles];
+            let actual_directories: BOOL = msg_send![panel, canChooseDirectories];
+            if actual_files != files || actual_directories != directories {
+                let _ = send.send(Err("Could not configure file selection".into()));
+                let _: () = msg_send![panel, release];
+                pool.drain();
+                return;
+            }
         }
         let sender = RefCell::new(Some(send));
         let completion = block::ConcreteBlock::new(move |answer: isize| {
@@ -139,6 +151,7 @@ fn begin_picker(
 fn begin_picker(
     _: &tauri::AppHandle,
     _: bool,
+    _: Option<String>,
     send: tokio::sync::oneshot::Sender<Reply<Option<PathBuf>>>,
 ) {
     let _ = send.send(Err("Native file selection requires macOS".into()));

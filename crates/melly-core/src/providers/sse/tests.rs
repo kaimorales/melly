@@ -446,3 +446,83 @@ fn openrouter_reasoning_details_accept_documented_optional_index() {
         "synthetic"
     );
 }
+
+#[test]
+fn readable_reasoning_is_separate_and_encrypted_metadata_stays_hidden() {
+    let bytes = concat!(
+        "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Compare the options.\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"reasoning_details\":[{\"type\":\"reasoning.encrypted\",\"data\":\"opaque-canary\"}],\"content\":\"Answer.\"},\"finish_reason\":\"stop\"}]}\n\n",
+        "data: [DONE]\n\n"
+    );
+    let (result, events) = parse(Protocol::Compatible, bytes.as_bytes(), 1);
+    result.unwrap();
+    assert!(matches!(&events[0], ProviderEvent::Reasoning(text) if text == "Compare the options."));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, ProviderEvent::Delta(text) if text == "Answer."))
+    );
+    assert!(!events.iter().any(|event| matches!(event, ProviderEvent::Delta(text) | ProviderEvent::Reasoning(text) if text.contains("opaque-canary"))));
+}
+
+#[test]
+fn reasoning_summaries_and_claude_thinking_do_not_become_answer_text() {
+    for (protocol, bytes) in [
+        (
+            Protocol::Responses,
+            concat!(
+                "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"Comparing.\"}\n\n",
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Answer.\"}\n\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n"
+            ),
+        ),
+        (
+            Protocol::Messages,
+            concat!(
+                "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n",
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Comparing.\"}}\n\n",
+                "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n",
+                "data: {\"type\":\"message_stop\"}\n\n"
+            ),
+        ),
+    ] {
+        let (result, events) = parse(protocol, bytes.as_bytes(), 1);
+        result.unwrap();
+        assert!(
+            events.iter().any(
+                |event| matches!(event, ProviderEvent::Reasoning(text) if text == "Comparing.")
+            )
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, ProviderEvent::Delta(text) if text == "Comparing."))
+        );
+    }
+}
+
+#[test]
+fn usage_only_frames_and_split_native_totals_are_preserved() {
+    let compatible = concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"},\"finish_reason\":\"stop\"}]}\n\n",
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20,\"cost\":0.0003}}\n\n",
+        "data: [DONE]\n\n"
+    );
+    let (result, events) = parse(Protocol::Compatible, compatible.as_bytes(), 1);
+    result.unwrap();
+    assert!(events.iter().any(|event| matches!(event, ProviderEvent::Usage(u) if u.input==Some(100) && u.output==Some(20) && u.cost_usd==Some(0.0003))));
+    let native = concat!(
+        "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":100,\"cache_read_input_tokens\":50,\"output_tokens\":1}}}\n\n",
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":20}}\n\n",
+        "data: {\"type\":\"message_stop\"}\n\n"
+    );
+    let (result, events) = parse(Protocol::Messages, native.as_bytes(), 1);
+    result.unwrap();
+    let mut usage = crate::usage::Usage::default();
+    for event in events {
+        if let ProviderEvent::Usage(next) = event {
+            usage.merge(next);
+        }
+    }
+    assert_eq!((usage.input, usage.output), (Some(150), Some(20)));
+}

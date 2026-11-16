@@ -75,11 +75,18 @@ pub(crate) fn request(input: &ProviderRequest) -> Result<(url::Url, Value, Proto
             let mut messages = vec![json!({"role":"system","content":input.system_prompt})];
             messages.extend(input.messages.iter().map(compatible_message));
             let mut body = json!({"model":model,"messages":messages,"stream":true});
+            if matches!(
+                spec.id.as_str(),
+                "deepseek" | "qwen-standard" | "qwen-token-plan" | "moonshot"
+            ) {
+                body["stream_options"] = json!({"include_usage":true});
+            }
             if !tools.is_empty() {
                 body["tools"] = json!(tools);
             }
             if spec.id == "openrouter" {
                 body["provider"] = json!({"allow_fallbacks":false});
+                body["usage"] = json!({"include":true});
             }
             ("chat/completions", body, Protocol::Compatible)
         }

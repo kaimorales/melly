@@ -110,6 +110,36 @@ impl Transport for Fake {
             round
         };
         match self.mode {
+            "usage" | "usage-stop" => {
+                sink(ProviderEvent::Usage(melly_core::usage::Usage {
+                    input: Some(25),
+                    output: Some(1),
+                    ..Default::default()
+                }));
+                sink(ProviderEvent::Usage(melly_core::usage::Usage {
+                    output: Some(5),
+                    ..Default::default()
+                }));
+                sink(ProviderEvent::Delta("Synthetic answer".into()));
+                if self.mode == "usage-stop" {
+                    cancel.cancelled().await;
+                    return Ok(());
+                }
+            }
+            "reasoning" | "reasoning-stop" | "reasoning-error" => {
+                sink(ProviderEvent::Reasoning(
+                    "Private-display-canary: compare the alternatives.".into(),
+                ));
+                if self.mode == "reasoning-stop" {
+                    cancel.cancelled().await;
+                    sink(ProviderEvent::Reasoning("LATE_CANARY".into()));
+                    return Ok(());
+                }
+                if self.mode == "reasoning-error" {
+                    anyhow::bail!("Synthetic interrupted inference");
+                }
+                sink(ProviderEvent::Delta("A concise answer.".into()));
+            }
             "claude-pause-stoppable" if round > 0 => {
                 cancel.cancelled().await;
                 return Ok(());
@@ -128,6 +158,9 @@ impl Transport for Fake {
                     ],
                 }));
             }
+            "create-file" => sink(ProviderEvent::Delta(
+                "Proposed a new file.\n\n```melly-file-edit\n{\"path\":\"example.py\",\"content\":\"print(42)\\n\"}\n```".into(),
+            )),
             "oversize" => {
                 sink(ProviderEvent::Delta("x".repeat(1_048_577)));
                 cancel.cancelled().await;
@@ -467,15 +500,18 @@ async fn malicious_scope_argument_never_reaches_storage() {
     let tool = calls[1].messages.iter().find(|m| m.role == "tool").unwrap();
     assert!(!tool.content.contains("CERULEAN"));
     assert!(tool.content.contains("denied"));
-    assert!(
-        e.store
-            .lock()
-            .unwrap()
-            .message(&m.id)
-            .unwrap()
-            .sources
-            .is_empty()
-    );
+    let store = e.store.lock().unwrap();
+    let folder = store.chat(&c).unwrap().folder_id;
+    for source in store.message(&m.id).unwrap().sources {
+        assert!(!source.snippet.contains("CERULEAN"));
+        assert_eq!(
+            store
+                .chat(source.chat_id.as_deref().unwrap())
+                .unwrap()
+                .folder_id,
+            folder
+        );
+    }
 }
 #[tokio::test]
 async fn folder_tool_requires_explicit_turn_permission() {
@@ -672,4 +708,272 @@ async fn active_chat_cannot_move_or_be_deleted_during_a_turn() {
     e.stop(&c);
     finish(&e, &c).await;
     assert!(e.move_chat(&c, None).is_ok());
+}
+
+#[tokio::test]
+async fn project_context_reaches_a_provider_without_tool_calling() {
+    let (engine, fake, chat) = fixture("muse-api");
+    let connection = engine.connection("muse-api").unwrap();
+    engine
+        .vault
+        .set(
+            &melly_core::providers::credential_id(&connection),
+            "synthetic-key",
+        )
+        .unwrap();
+    let mut request = input(&chat);
+    request.provider_id = connection.provider_id;
+    request.model_id = connection.model_id;
+    let reply = engine.start(request, Arc::new(|_| {})).unwrap();
+    finish(&engine, &chat).await;
+    let calls = fake.calls.lock().unwrap();
+    assert!(calls[0].tools.is_empty());
+    assert!(calls[0].messages.last().unwrap().content.contains("18%"));
+    assert!(
+        !calls[0]
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .contains("CERULEAN")
+    );
+    assert!(
+        !engine
+            .store
+            .lock()
+            .unwrap()
+            .message(&reply.id)
+            .unwrap()
+            .sources
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn reasoning_is_separate_persists_on_stop_and_never_reenters_context_or_search() {
+    for mode in ["reasoning", "reasoning-stop", "reasoning-error"] {
+        let (engine, _, chat) = fixture(mode);
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let capture = updates.clone();
+        let mut request = input(&chat);
+        request.folder_context = false;
+        let message = engine
+            .start(
+                request,
+                Arc::new(move |event| capture.lock().unwrap().push(event)),
+            )
+            .unwrap();
+        if mode == "reasoning-stop" {
+            tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                while updates
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|event| event.kind != "reasoning")
+                {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            engine.stop(&chat);
+        }
+        finish(&engine, &chat).await;
+        let store = engine.store.lock().unwrap();
+        let saved = store.message(&message.id).unwrap();
+        assert!(saved.reasoning.contains("Private-display-canary"));
+        assert!(!saved.reasoning.contains("LATE_CANARY"));
+        assert!(!saved.content.contains("Private-display-canary"));
+        assert_eq!(
+            saved.status,
+            match mode {
+                "reasoning-stop" => "stopped",
+                "reasoning-error" => "error",
+                _ => "complete",
+            }
+        );
+        assert!(
+            store
+                .context(&chat)
+                .unwrap()
+                .iter()
+                .all(|message| !message.content.contains("Private-display-canary"))
+        );
+        assert!(
+            store
+                .search_chats("Private-display-canary")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            updates
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|event| event.kind == "delta")
+                .all(|event| !event.text.contains("Private-display-canary"))
+        );
+    }
+}
+
+#[tokio::test]
+async fn usage_is_admitted_before_inference_and_preserved_on_cancel() {
+    let (engine, transport, chat) = fixture("usage-stop");
+    let connection = engine.connection("mock").unwrap();
+    let reply = engine.start(input(&chat), Arc::new(|_| {})).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while transport.calls.lock().unwrap().is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    {
+        let store = engine.store.lock().unwrap();
+        let summary = store.usage_summary(&connection).unwrap();
+        assert_eq!(summary.requests, 1);
+        assert_eq!(
+            summary.missing_usage, 1,
+            "An unfinished request must already be visible as unknown"
+        );
+    }
+    engine.stop(&chat);
+    finish(&engine, &chat).await;
+    let store = engine.store.lock().unwrap();
+    let summary = store.usage_summary(&connection).unwrap();
+    assert_eq!(
+        (summary.requests, summary.input, summary.output),
+        (1, 25, 5)
+    );
+    assert_eq!(summary.unpriced_requests, 1);
+    assert_eq!(store.message(&reply.id).unwrap().status, "stopped");
+}
+
+#[tokio::test]
+async fn context_preflight_rejects_oversized_drafts_without_consuming_files_or_history() {
+    let (engine, transport, chat) = fixture("usage");
+    let connection = engine.connection("mock").unwrap();
+    let (file, before) = {
+        let store = engine.store.lock().unwrap();
+        store.save_model_limit(&connection, 1024).unwrap();
+        (
+            store
+                .save_draft_attachment(
+                    "note.txt",
+                    "text",
+                    "Synthetic reference",
+                    b"Synthetic reference",
+                )
+                .unwrap(),
+            store.messages(&chat, None).unwrap().len(),
+        )
+    };
+    let mut request = input(&chat);
+    request.folder_context = false;
+    request.content = "x".repeat(8000);
+    let error = engine
+        .start_with_files(
+            request,
+            None,
+            std::slice::from_ref(&file.id),
+            Arc::new(|_| {}),
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("input budget"));
+    let store = engine.store.lock().unwrap();
+    assert_eq!(store.messages(&chat, None).unwrap().len(), before);
+    store.validate_attachment_ids(&[file.id]).unwrap();
+    assert!(transport.calls.lock().unwrap().is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unavailable_project_excerpts_do_not_interrupt_a_new_file_proposal() {
+    use melly_core::{
+        file_edits::Proposal,
+        linked,
+        projects::{ProjectFile, text_passages},
+    };
+    let temporary = tempfile::tempdir().unwrap();
+    let store = Store::open(&temporary.path().join("profile.sqlite3")).unwrap();
+    let folder = store.create_folder("Synthetic linked project").unwrap();
+    let root = temporary.path().join("linked");
+    std::fs::create_dir(&root).unwrap();
+    let link = store.set_project_link(&folder.id, &root).unwrap();
+    let chat = store.create_chat(Some(&folder.id)).unwrap();
+    let mut indexed = Vec::new();
+    for (file, snippet) in [
+        ("changed.md", "sample OUTDATED_CANARY"),
+        ("missing.md", "sample MISSING_CANARY"),
+        ("current.md", "sample CURRENT_CANARY"),
+    ] {
+        std::fs::write(root.join(file), snippet).unwrap();
+        indexed.push((
+            ProjectFile {
+                id: uuid::Uuid::new_v4().to_string(),
+                folder_id: folder.id.clone(),
+                name: file.into(),
+                bytes: snippet.len() as u64,
+                revision: linked::revision(snippet.as_bytes()),
+                linked_path: Some(file.into()),
+            },
+            text_passages(snippet, None),
+        ));
+    }
+    store
+        .replace_linked_index(&link, &indexed, "ready")
+        .unwrap();
+    assert_eq!(
+        store
+            .search_project_files(&chat.id, "sample")
+            .unwrap()
+            .len(),
+        3
+    );
+    std::fs::write(root.join("changed.md"), "sample modified on disk").unwrap();
+    std::fs::remove_file(root.join("missing.md")).unwrap();
+
+    let fake = Arc::new(Fake {
+        mode: "create-file",
+        calls: Mutex::new(vec![]),
+    });
+    let engine = Arc::new(Engine::with_transport(
+        Arc::new(Mutex::new(store)),
+        Arc::new(MemorySecrets::default()),
+        fake.clone(),
+    ));
+    let updates = Arc::new(Mutex::new(Vec::new()));
+    let captured = updates.clone();
+    let mut request = input(&chat.id);
+    request.content = "Create a new Python file for a sample.".into();
+    let reply = engine
+        .start(
+            request,
+            Arc::new(move |update| captured.lock().unwrap().push(update)),
+        )
+        .unwrap();
+    finish(&engine, &chat.id).await;
+    let reply = engine.store.lock().unwrap().message(&reply.id).unwrap();
+    assert_eq!(reply.status, "complete", "{}", reply.content);
+    let proposal = Proposal::parse(&reply.content).unwrap();
+    assert_eq!(proposal.path, "example.py");
+    assert_eq!(proposal.apply_to(None).unwrap(), "print(42)\n");
+    assert!(!root.join("example.py").exists());
+    assert_eq!(reply.sources.len(), 1);
+    assert!(reply.sources[0].snippet.contains("CURRENT_CANARY"));
+
+    let calls = fake.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    let forwarded = &calls[0].messages.last().unwrap().content;
+    assert!(forwarded.contains("CURRENT_CANARY"));
+    assert!(!forwarded.contains("OUTDATED_CANARY"));
+    assert!(!forwarded.contains("MISSING_CANARY"));
+    assert!(
+        updates
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|update| &update.sources)
+            .all(|source| source.snippet.contains("CURRENT_CANARY"))
+    );
 }

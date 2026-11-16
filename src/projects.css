@@ -1,0 +1,19 @@
+
+.project-dialog { max-height: calc(100vh - 48px); overflow-y: auto; width: min(560px, calc(100vw - 32px)); }
+.project-note { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.project-file-list { max-height: 220px; overflow-y: auto; margin: 16px 0; }
+.project-file { display: flex; gap: 16px; align-items: center; width: 100%; padding: 12px 4px; text-align: left; border-bottom: 1px solid var(--border); }
+.project-file span { flex: 1; overflow-wrap: anywhere; }
+.project-file small { color: var(--muted); white-space: nowrap; }
+.project-file-name { flex: 1; min-width: 0; text-align: left; overflow-wrap: anywhere; }
+.project-file-actions { display: flex; gap: 10px; color: var(--secondary); font-size: 12px; opacity: 0; }
+.project-file:hover .project-file-actions, .project-file:focus-within .project-file-actions { opacity: 1; }
+.file-confirm { padding: 12px 0; font-size: 13px; line-height: 1.5; color: var(--secondary); }
+
+.file-passage { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 55vh; overflow: auto; font: inherit; line-height: 1.6; }
+
+.archived-projects-button { margin: 8px; padding: 5px; color: var(--muted); font-size: 12px; text-align: left; }
+
+.project-section-title { font-size: 13px; font-weight: 400; margin: 20px 0 8px; }
+.linked-file-list { max-height: 180px; }
+.project-link-actions { display: flex; flex-wrap: wrap; gap: 6px; }
