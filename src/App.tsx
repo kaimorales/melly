@@ -2,11 +2,9 @@ import { ResponseReferences } from './ResponseReferences';
 import { useComposerDraft } from './useComposerDraft';
 import { useConversationScroll } from './useConversationScroll';
 import { UndoChanges } from './UndoChanges';
-import { advanceStream, streamRevealWindow } from './stream-reveal';
+import { advanceStream, flushStream, queueStream, type StreamSchedule } from './stream-reveal';
+import { MarkdownAnswer } from './MarkdownAnswer';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
 import { backend, nativeApp } from './backend';
 import { NameDialog, SearchDialog } from './dialogs';
 import { ArchivedProjects, DeleteProject, FileCitation, ProjectFiles } from './ProjectFiles';
@@ -16,9 +14,6 @@ import { CodingActivity, type CodingActivityState } from './CodingActivity';
 import { FileEditMode, InlineFileEdit, splitFileEdit } from './InlineFileEdit';
 import { ContextMeter } from './Usage';
 import { ChatActions, DeleteChatDialog } from './ChatActions';
-import { MarkdownCodeBlock } from './CodeBlock';
-import { MarkdownInlineCode } from './MathFormula';
-import { normalizeMathDelimiters, remarkMathPresentation } from './math-markdown';
 import { Icon, ProviderIcon } from './icons';
 import { modelLabel, providerName, routeLabel, SettingsView } from './SettingsView';
 import { CompatibleModelPicker, ModelPicker, ProviderPicker } from './ModelPickers';
@@ -39,11 +34,15 @@ function requestsFolderContext(value: string) {
 }
 type NameAction = { kind: 'new-folder' | 'rename-folder' | 'rename-chat'; id?: string; title?: string };
 type StreamBuffer = { chatId: string; text: string; reasoning: string; phase?: 'thinking' | 'answer'; sources?: Source[]; activity: string } & StreamReveal;
-type StreamReveal = { visible?: number; deadline?: number; done?: StreamUpdate };
+type StreamReveal = { visible?: number; schedule?: StreamSchedule; done?: StreamUpdate };
 
 function MessageView({ message, activity, codingActivity, theme, highlight, onSource, onRetry, onBranch, onEdit, canChange, retryEnabled, report }: { message: Message; activity?: string; codingActivity?: CodingActivityState; theme: string; highlight: boolean; onSource: (source: Source) => void; onRetry: () => void; onBranch: () => void; onEdit: () => void; canChange: boolean; retryEnabled: boolean; report: (text: string) => void }) {
-  const reply = message.role === 'assistant' ? splitFileEdit(message.content, message.status === 'streaming') : { text: message.content, proposed: false };
-  const markdown = useMemo(() => message.role === 'assistant' ? normalizeMathDelimiters(reply.text) : reply.text, [reply.text, message.role]);
+  const reply = useMemo(() => message.role === 'assistant' ? splitFileEdit(message.content, message.status === 'streaming') : { text: message.content, proposed: false }, [message.content, message.role, message.status]);
+  // Keep the memoized answer's link handler current without reparsing history
+  // whenever the surrounding conversation or composer updates.
+  const sourceHandler = useRef(onSource);
+  useLayoutEffect(() => { sourceHandler.current = onSource; }, [onSource]);
+  const openSource = useCallback((source: Source) => sourceHandler.current(source), []);
   if (message.role === 'user') return <div className="user-message-group"><div id={`message-${message.id}`} className={`message user-message ${highlight ? 'highlighted' : ''}`}>{message.content}{!!message.attachments?.length && <div className="sent-files">{message.attachments.map(file => <span key={file.id} title={file.kind === 'image-text' ? 'Recognized text from image' : 'Shared file text'}><Icon name="folder" />{file.name}{file.kind === 'image-text' ? ' · text' : ''}</span>)}</div>}</div><div className="user-message-actions"><button disabled={!canChange} onClick={onEdit}>Edit</button><button disabled={!canChange} onClick={onBranch}>Branch</button></div></div>;
   if (message.role !== 'assistant') return null;
   const stopped = message.status === 'stopped' || message.status === 'cancelled';
@@ -52,18 +51,7 @@ function MessageView({ message, activity, codingActivity, theme, highlight, onSo
   return <article id={`message-${message.id}`} className={`message assistant ${highlight ? 'highlighted' : ''}`} aria-label="Melly response">
 
     <Thinking message={message} activity={activity} />
-    {reply.text ? <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm, remarkMath, remarkMathPresentation]} urlTransform={(url) => url.startsWith('melly-source:') ? url : defaultUrlTransform(url)} components={{
-      a: ({ href, children }) => {
-        if (href?.startsWith('melly-source:')) {
-          const source = message.sources.find((entry) => entry.id === href.slice('melly-source:'.length));
-          return source ? <button className="source inline-source" aria-label={`Open source ${source.title}`} title={source.snippet} onClick={() => onSource(source)}><Icon name={source.kind === 'file' ? 'folder' : source.kind === 'chat' ? 'message' : 'globe'} /><span>{children}</span><Icon name={source.kind === 'web' ? 'external' : 'right'} /></button> : <span>{children}</span>;
-        }
-        return <a href={href} onClick={(event) => { event.preventDefault(); if (href) onSource({ id: '', kind: 'web', title: String(children), url: href, chatId: null, messageId: null, snippet: '' }); }}>{children}</a>;
-      },
-      img: ({ alt }) => <span className="message-status">[Image{alt ? `: ${alt}` : ''}]</span>,
-      pre: MarkdownCodeBlock,
-      code: MarkdownInlineCode,
-    }}>{markdown}</ReactMarkdown></div> : null}
+    {reply.text && <MarkdownAnswer text={reply.text} sources={message.sources} onSource={openSource} />}
     {codingActivity && <CodingActivity activity={codingActivity} settled={message.status === 'complete'} />}
     {nativeApp && reply.proposed && message.status === 'complete' && <InlineFileEdit chatId={message.chatId} messageId={message.id} busy={!canChange} />}
     <ResponseReferences sources={message.sources} onSource={onSource} />
@@ -132,10 +120,20 @@ export default function App() {
     });
     return fresh;
   }, []);
-  const mergeStreams = useCallback((messages: Message[]) => messages.map((message) => {
-    const buffer = streamBuffers.current.get(message.id);
-    return buffer && message.status === 'streaming' ? { ...message, content: buffer.text.slice(0, buffer.visible ?? buffer.text.length) || message.content, reasoning: buffer.reasoning || message.reasoning, phase: buffer.phase, sources: buffer.sources || message.sources } : message;
-  }), []);
+  const mergeStreams = useCallback((messages: Message[]) => {
+    let changed = false;
+    const next = messages.map(message => {
+      const buffer = streamBuffers.current.get(message.id);
+      if (!buffer || message.status !== 'streaming') return message;
+      const content = buffer.text.slice(0, buffer.visible ?? buffer.text.length) || message.content;
+      const reasoning = buffer.reasoning || message.reasoning;
+      const sources = buffer.sources || message.sources;
+      if (content === message.content && reasoning === message.reasoning && buffer.phase === message.phase && sources === message.sources) return message;
+      changed = true;
+      return { ...message, content, reasoning, phase: buffer.phase, sources };
+    });
+    return changed ? next : messages;
+  }, []);
   const loadMessages = useCallback(async (chatId: string, target?: string, retainHistory = false) => {
     const request = ++messageRequest.current;
     if (selectedRef.current === chatId) setLoading(true);
@@ -183,6 +181,7 @@ export default function App() {
     const unlisteners: Array<() => void> = [];
     const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
     const reducedMotion = () => motionPreference.matches || document.documentElement.dataset.reduceMotion === 'true';
+    const animate = () => !reducedMotion() && !document.hidden;
     let lastPaint = -Infinity;
     const finishStream = (update: StreamUpdate) => {
       setRunning((current) => { const next = new Set(current); next.delete(update.chatId); return next; });
@@ -194,28 +193,41 @@ export default function App() {
       void refresh().catch((reason) => setNotice(errorText(reason)));
     };
     const queuePaint = () => {
+      if (document.hidden) { paintStreams(performance.now()); return; }
       if (frame.current === null) frame.current = requestAnimationFrame(paintStreams);
     };
     const paintStreams = (now: number) => {
       frame.current = null;
       if (!mounted.current) return;
-      if (now - lastPaint < 30 && !reducedMotion()) { queuePaint(); return; }
+      // Normal replies follow display frames (up to ~60 Hz); long Markdown
+      // answers retain the cheaper cadence to keep input and Stop responsive.
+      const interval = [...streamBuffers.current.values()].some(buffer => buffer.chatId === selectedRef.current && buffer.text.length > 32_768) ? 30 : 14;
+      if (now - lastPaint < interval && animate()) { queuePaint(); return; }
       lastPaint = now;
       let pending = false;
       const activities: Record<string, string> = {};
       for (const [messageId, buffer] of streamBuffers.current) {
         const visible = buffer.chatId === selectedRef.current;
-        buffer.visible = visible && !reducedMotion()
-          ? advanceStream(buffer.text, buffer.visible ?? buffer.text.length, now, buffer.deadline ?? now)
-          : buffer.text.length;
+        buffer.schedule ??= { base: buffer.text.length, bursts: [] };
+        buffer.visible = visible && animate()
+          ? advanceStream(buffer.text, buffer.visible ?? buffer.text.length, now, buffer.schedule)
+          : flushStream(buffer.schedule, buffer.text.length);
         if (buffer.visible < buffer.text.length) pending = true;
         else if (buffer.done) { finishStream(buffer.done); continue; }
         if (visible) activities[messageId] = buffer.activity;
       }
       setItems(mergeStreams);
-      setActivities(activities);
+      setActivities(previous => Object.keys(previous).length === Object.keys(activities).length && Object.entries(activities).every(([key, value]) => previous[key] === value) ? previous : activities);
       if (pending) queuePaint();
     };
+    const flushHidden = () => {
+      if (!document.hidden && !reducedMotion()) return;
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+      frame.current = null;
+      if (streamBuffers.current.size) paintStreams(performance.now());
+    };
+    document.addEventListener('visibilitychange', flushHidden);
+    motionPreference.addEventListener('change', flushHidden);
     const register = async () => {
       const unlisten = await backend.listen<StreamUpdate>('chat-stream', (update) => {
         if (update.kind === 'coding-approval' || update.kind === 'coding-approval-closed' || update.kind === 'coding-result') {
@@ -236,7 +248,8 @@ export default function App() {
         if (update.kind === 'delta' || update.kind === 'reasoning' || update.kind === 'sources' || update.kind === 'tool') {
           const buffer: StreamBuffer = streamBuffers.current.get(update.messageId) || { chatId: update.chatId, text: '', reasoning: '', phase: undefined, activity: '' };
           if (update.kind === 'delta' && update.text) {
-            if ((buffer.visible ?? buffer.text.length) >= buffer.text.length) buffer.deadline = performance.now() + streamRevealWindow;
+            buffer.schedule ??= { base: buffer.text.length, bursts: [] };
+            queueStream(buffer.schedule, update.text.length, performance.now());
             buffer.visible ??= buffer.text.length;
             buffer.text += update.text; buffer.phase = 'answer'; buffer.activity = '';
           }
@@ -247,7 +260,7 @@ export default function App() {
           queuePaint();
         } else if (['done', 'error', 'stopped'].includes(update.kind)) {
           const buffer = streamBuffers.current.get(update.messageId);
-          if (update.kind === 'done' && buffer && buffer.chatId === selectedRef.current && !reducedMotion()
+          if (update.kind === 'done' && buffer && buffer.chatId === selectedRef.current && animate()
             && (buffer.visible ?? 0) < buffer.text.length) {
             buffer.done = update;
             queuePaint();
@@ -272,7 +285,7 @@ export default function App() {
       if (mounted.current) { setData(initial); setSelectedId(initial.chats[0]?.id || null); }
     };
     void register().catch((reason) => { if (mounted.current) setBootError(errorText(reason)); });
-    return () => { mounted.current = false; unlisteners.forEach((unlisten) => unlisten()); if (frame.current !== null) cancelAnimationFrame(frame.current); frame.current = null; };
+    return () => { document.removeEventListener('visibilitychange', flushHidden); motionPreference.removeEventListener('change', flushHidden); mounted.current = false; unlisteners.forEach((unlisten) => unlisten()); if (frame.current !== null) cancelAnimationFrame(frame.current); frame.current = null; };
   }, [loadMessages, mergeStreams, refresh]);
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)');
