@@ -68,12 +68,12 @@ function MessageView({ message, activity, codingActivity, theme, highlight, onSo
     <ResponseReferences sources={message.sources} onSource={onSource} />
     {message.status !== 'streaming' && <div className="message-tools">
       {reply.text && <button className="icon-button" aria-label="Copy response" title="Copy response" onClick={() => { void navigator.clipboard.writeText(reply.text).then(() => report('Response copied.')).catch(() => report('Could not copy the response.')); }}><Icon name="copy" /></button>}
-      <button className="text-action retry-quiet" disabled={!canChange} aria-label="Branch from response" onClick={onBranch}>Branch</button>
+      {nativeApp && !reply.proposed && <UndoChanges chatId={message.chatId} messageId={message.id} busy={!canChange} />}
       {stopped && <span className="message-status">Response stopped</span>}
       {failed && <span className="message-status">{message.status === 'interrupted' ? 'Response interrupted' : 'Response failed'}</span>}
       {(stopped || failed) && keptChanges && <span className="message-status">Changes kept</span>}
       {retryEnabled && <button className={`text-action ${stopped || failed ? '' : 'retry-quiet'}`} aria-label={codingActivity ? 'Continue task' : 'Retry response'} onClick={onRetry}>{codingActivity ? 'Continue' : 'Retry'}</button>}
-      {nativeApp && !reply.proposed && <UndoChanges chatId={message.chatId} messageId={message.id} busy={!canChange} />}
+      <button className="text-action retry-quiet" disabled={!canChange} aria-label="Branch from response" onClick={onBranch}>Branch</button>
       {message.providerId && <span className="sr-only">{message.providerId === 'mock' ? 'Synthetic Demo reply' : `${message.modelId}, ${message.billingRoute}`}</span>}
     </div>}
   </article>;
