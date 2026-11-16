@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod attachments;
+mod cli;
 mod coding_tests;
 mod coding_tools;
 mod compaction;
@@ -568,6 +569,9 @@ async fn open_source(source: Source) -> Reply<()> {
     open::that(u.as_str()).map_err(|_| "Could not open the source in your browser".into())
 }
 fn main() {
+    if let Some(code) = cli::run() {
+        std::process::exit(code);
+    }
     let started = std::time::Instant::now();
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {

@@ -9,12 +9,15 @@
     "build:web": "tsc --noEmit && vite build",
     "build": "node scripts/tauri.mjs build --bundles app",
     "check": "tsc --noEmit && node scripts/rust.mjs fmt --all -- --check && node scripts/rust.mjs clippy --workspace --all-targets -- -D warnings",
-    "test": "npm run test:rust && npm run test:ui",
+    "test": "npm run test:install && npm run test:rust && npm run test:ui",
     "test:rust": "node scripts/rust.mjs test --workspace",
     "test:ui": "playwright test --config tests/ui/playwright.config.ts",
     "test:core": "node scripts/rust.mjs test -p melly-core",
-    "launch": "open target/release/bundle/macos/Melly.app",
-    "perf": "node scripts/rust.mjs run --release -p melly-core --example performance"
+    "launch": "node scripts/launch.mjs",
+    "perf": "node scripts/rust.mjs run --release -p melly-core --example performance",
+    "install:local": "npm run build && node scripts/install-local.mjs",
+    "test:install": "node --test scripts/test-install-local.mjs",
+    "prepare:homebrew": "node scripts/prepare-homebrew.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.0",

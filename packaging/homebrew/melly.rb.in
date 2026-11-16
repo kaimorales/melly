@@ -1,0 +1,17 @@
+cask "melly" do
+  version "@VERSION@"
+  sha256 "@SHA256@"
+
+  url "https://github.com/kaimorales/melly/releases/download/v#{version}/Melly-#{version}-macos-arm64.zip"
+  name "Melly"
+  desc "Quiet, fast local and cloud conversations"
+  homepage "https://github.com/kaimorales/melly"
+
+  depends_on arch: :arm64
+  depends_on macos: ">= :monterey"
+
+  app "Melly.app"
+  binary "#{appdir}/Melly.app/Contents/MacOS/melly-desktop", target: "melly"
+
+  uninstall quit: "com.melly.desktop"
+end
