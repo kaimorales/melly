@@ -12,9 +12,9 @@
 .file-edit-saved summary { cursor: pointer; display: flex; align-items: center; gap: 7px; width: fit-content; }
 .file-edit-saved[open] summary { margin-bottom: 8px; }
 .file-edit-saved[open] summary .icon:last-child { transform: rotate(90deg); }
-.file-edit-mode { display: inline-flex; align-items: center; gap: 4px; margin-right: auto; color: var(--secondary); white-space: nowrap; }
+.file-edit-mode { display: inline-flex; align-items: center; gap: 4px; margin-right: auto; flex-shrink: 0; color: var(--secondary); white-space: nowrap; }
 .file-edit-mode .icon { width: 14px; height: 14px; }
-.file-edit-mode select { border: 0; color: inherit; background: transparent; font-size: 12px; max-width: 104px; }
+.file-edit-mode select { border: 0; color: inherit; background: transparent; font-size: 12px; max-width: 104px; min-height: 32px; }
 .file-edit-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .file-edit-error { color: var(--danger); font-size: 12px; }
 
